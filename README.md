@@ -20,3 +20,27 @@
 - [原合规/路线图 v3（历史）](docs/product/AI-ERP-合规接入清单与模块路线图.md)
 
 **状态说明**：当前仓库的正式内容主要是架构规范和研究文件，M0 还没有完成。原则是先实现一个能启动、能连接、能读取真实店铺数据的程序，再逐项增加业务功能，不提前铺设复杂系统。
+
+## M0-01 工程（已开始，尚未在 Win/mac 实机验收）
+
+[运行步骤](docs/architecture/M0-01-IMPLEMENTATION.md) · [验证状态](docs/architecture/M0-01-STATUS.md)
+
+目前 `apps/desktop/` 是 Tauri + React 最小界面，`backend/` 是**仅本机运行**的 Go 健康检查 HTTP 服务。未提供公网 ERP API、OAuth、数据库或收费功能。暂未配置 `mkd.186512.xyz`；KYC 未完成前不做真实授权。
+
+Windows PowerShell 示例（在仓库根目录打开两个终端）：
+
+```powershell
+# 终端 A
+cd backend
+go test ./...
+go run ./cmd/api
+```
+
+```powershell
+# 终端 B
+cd apps/desktop
+npm install
+npm run tauri:dev
+```
+
+首次运行会生成依赖锁文件；应在实际构建验证后提交。当前 PR 未新增自动 GitHub Actions，避免无谓消耗额度。
