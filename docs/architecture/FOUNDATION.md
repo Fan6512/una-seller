@@ -26,12 +26,13 @@
 
 - 只做 **Mercado Libre**，首先服务自己的店铺与跨境 CBT UP 商品运营。
 - 客户端：**Tauri 2 + React + TypeScript (strict)**，共享 Windows/macOS UI；Rust 只做必要的系统接口（文件、凭据、打印等）。
-- 服务端：**一个业务 API 应用**，从简单模块开始；Go 是此前候选，M0 前与 TypeScript/Fastify 做一次极小验证，选择总体成本最低且团队能维护的方案，不为“性能好看”提前混用更多语言。
-- 数据：有实际持久化需要时使用 **PostgreSQL**；桌面本地先不建全量业务数据库，需要缓存时再用 SQLite。SQLCipher 仅在确有本地敏感数据时专项验证。
+- 服务端：**一个 Go API 应用**，M0 从标准库 HTTP 起步，部署于现有 Ubuntu 24.04.4 LTS（2 vCPU / 4 GB）服务器；不因预期规模增加微服务。M0 初期选定 Go，但仍以真实维护成本评估未来调整，不要求重写。
+- 数据：前期采用 **Supabase 托管 PostgreSQL**，只在需要实际持久化的 M0-02 起接入；桌面端不直连数据库、不持有数据库密码；客户端本地缓存按需选择 SQLite。SQLCipher 只在存在真实敏感离线数据需求时验证。
 - 美客多平台调用：只通过官方 REST API，OAuth 凭据保留在服务端；不得让 AI 或桌面前端持有平台 Token。
 - AI：先通过可替换的简单模型客户端生成标题、翻译和客服草稿；必要时可使用 UnaAPI 作为模型网关，但不共享 ERP 数据库/身份/账务。
 - 后台任务：开始可以由简单、可追踪的应用任务处理；涉及真实平台写操作或断点恢复时，使用 PostgreSQL 持久任务；Redis、River、消息总线均是**按需选择**，不是开工前的安装清单。
 - 云端保存已同步业务数据；跨设备先做到登录后读取同一份数据，复杂离线同步不是初期目标。
+- 公网 HTTPS：**Cloudflare（DNS/代理）→ 现有 Nginx（443/TLS）→ 单个 Go API（内网回环）**；域名 `mkd.186512.xyz`。证书优先自申请、自动续期的 Let's Encrypt；Cloudflare Full (strict)。不得影响同机 `we-mp-rss`。现仅 DNS 已由用户配置，公网服务/证书/OAuth 均未验收；详见 [M0 部署基线](DEPLOYMENT_M0.md)。
 
 ## 3. MVP 应保留的模块
 
@@ -77,4 +78,4 @@
 
 优先删减、复用而非新增。对技术栈更换、拆服务、引入队列/缓存和商业化等**高成本决策**写 ADR；普通组件与日常实现不强制写 ADR。开发中发现已选技术不合适，可根据实测结果调整，不为了“遵守最初设计”坚持错误方向。
 
-相关：[开发路线](DELIVERY.md) · [领域与执行最小契约](DOMAIN_AND_EXECUTION.md) · [跨平台规范](CROSS_PLATFORM.md) · [简化原则决策](../decisions/0004-simplicity-first.md)。
+相关：[开发路线](DELIVERY.md) · [M0 部署基线](DEPLOYMENT_M0.md) · [领域与执行最小契约](DOMAIN_AND_EXECUTION.md) · [跨平台规范](CROSS_PLATFORM.md) · [简化原则决策](../decisions/0004-simplicity-first.md) · [部署选型决策](../decisions/0005-m0-infrastructure.md)。

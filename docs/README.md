@@ -9,7 +9,8 @@
 2. [Delivery v2：M0～M3 精简开发路线](architecture/DELIVERY.md)
 3. [Domain v2：最小平台数据与写入契约](architecture/DOMAIN_AND_EXECUTION.md)
 4. [Windows/macOS 双平台规范](architecture/CROSS_PLATFORM.md)
-5. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) 与 [全部 ADR](decisions/README.md)
+5. [M0 基础设施、DNS/HTTPS/证书和 Supabase 部署基线](architecture/DEPLOYMENT_M0.md)
+6. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0005：M0 初期部署选型](decisions/0005-m0-infrastructure.md) · [全部 ADR](decisions/README.md)
 
 ## 历史规划与竞品资料
 

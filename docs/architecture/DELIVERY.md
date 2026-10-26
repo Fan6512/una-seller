@@ -9,14 +9,25 @@
 
 仅做：
 1. Tauri 2 + React + TypeScript 创建最小窗口，Windows 实际启动，macOS arm64/x64 至少构建并在可用设备上启动验证。
-2. 一个简单的后端 HTTP 服务（Go 或 TypeScript/Fastify 通过最小验证后决定）；一个健康接口，前端可以读取。
-3. 如接入店铺需要，建立最小 PostgreSQL 数据与迁移：店铺连接、授权信息等；暂不建设完整商品/订单库。
-4. 具备开发者应用凭据与受控店铺时，跑通 OAuth → /users/me 只读调用 → Token 刷新/解绑。暂时拿不到授权时记录 `BLOCKED`，不得假装真实接口已经通过。
-5. 最小检查：编译、基础单测、无提交密钥、一个 API 集成验证。CI 保持简单，避免频繁消耗 Actions。
+2. 使用 **Go 标准库**实现单体 HTTP API 的 `/healthz`，先完成桌面与开发 API 的真实联通。M0-01 仅绑定 `127.0.0.1:8787`，不得当作公网完成品。
+3. M0-02：在现有 **Ubuntu 24.04.4 LTS / 2 vCPU / 4 GB** 上复用 **Nginx**；Cloudflare 管理 `mkd.186512.xyz` 的 DNS/代理；申请并自动续期 Let's Encrypt 证书，完成独立 HTTPS 域名、反向代理与基础服务管理。不得覆盖现有 RSS/Docker 服务。
+4. M0-02：需要保存真实 OAuth 数据时，引入 **Supabase 托管 PostgreSQL** 和最小迁移，仅建授权、店铺连接相关数据；Go API 后端持有数据库凭据，桌面端不直连。IPv4-only 网络使用 Supabase 官方 Session Pooler。
+5. M0-03：开发者应用已成功创建且已获取 Client ID，但用户尚未确认 KYC 完成；待 HTTPS 回调与 Client Secret 的服务端安全配置就绪后，验证 OAuth → `/users/me` 只读调用 → Token 刷新/解绑。若权限或 KYC 阻止真实授权，标记 `BLOCKED`，不能伪报通过。
+6. 最小检查：构建、基础单测、无提交密钥、HTTPS 证书与续期验证、一个 API 集成验证；CI 控制费用。
 
-**完成标准**：Windows 端程序可运行并访问后端；Mac 端构建与启动验证有记录；数据库可迁移；如具备授权条件则真实只读接口通过。没有授权时 M0 只能标记为部分完成。
+**完成标准**：Windows 端程序可运行并访问后端，macOS 两架构构建/启动验证有记录；`mkd.186512.xyz` HTTPS 与真实 Go API 连通；需要授权数据时 Supabase 最小表可迁移；如权限允许则真实 OAuth 与 `/users/me` 通过。无法完成的环节逐项标记 `BLOCKED`/`UNVERIFIED`，不能宣称整段 M0 PASS。
 
 **明确不做**：漂亮但空白的后台、全套设计系统、复杂登录设备管理、多租户、队列平台、AI Agent、订阅与支付、批量商品写接口。
+
+### 当前实施状态（2026-10-26，不能等同于验收）
+
+- **M0-01**：桌面和 Go 健康接口代码在 [PR #2](https://github.com/Fan6512/una-seller/pull/2)，Windows/macOS 原生启动仍未验收。
+- **域名**：`mkd.186512.xyz` 的 Cloudflare DNS **用户报告已配置**，尚未从公网验证解析/代理。
+- **服务器**：用户实测是 Ubuntu 24.04.4、2 vCPU、约 3.6 GiB RAM、Nginx 活跃监听 80（443 暂未监听）、Docker 中存在 `we-mp-rss`；目前未部署 Una Seller API 到公网。
+- **开发者应用**：已创建并取得 Client ID；Client Secret 不写进仓库。用户此前 KYC 未完成，真实 OAuth 尚未验证。
+- **数据库**：Supabase 为已确定的初期选型，**尚未创建/接入/验证**。
+
+操作与验收说明见 [M0 部署基线](DEPLOYMENT_M0.md)。
 
 ## M1：商品真正能用
 
