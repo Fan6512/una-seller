@@ -1,27 +1,22 @@
-# una-seller — Mercado Libre AI ERP
+# Una Seller — Mercado Libre AI ERP
 
-> **阶段：架构准备 / 未开始应用实现。** 项目范围仅 Mercado Libre。客户端目标：Windows + macOS（Intel / Apple Silicon）；不提供独立 Web 卖家工作台。
+> **当前阶段：最简自用 ERP 的开发准备。** 只做 Mercado Libre；Windows/macOS 双平台；暂不建设支付、订阅、计费及商业化 SaaS 后台。
 
-## 从这里开始
+## 先读这两份
 
-- **[正式架构与技术栈](docs/architecture/FOUNDATION.md)**：Go 模块化单体 + Tauri 2/React/TypeScript + PostgreSQL + OpenAPI。
-- **[跨平台规范](docs/architecture/CROSS_PLATFORM.md)**：构建、系统适配、双平台验收。
-- **[领域模型与任务执行契约](docs/architecture/DOMAIN_AND_EXECUTION.md)**：CBT UP、订单、任务、同步、AI 权限。
-- **[交付路线](docs/architecture/DELIVERY.md)**：M0→M4，由单店实际业务闭环演进。
-- **[架构 ADR](docs/decisions/README.md)**：语言、数据库、队列、平台与 AI 的关键决策。
-- **[文档导航](docs/README.md)**：全部正式与历史资料。
+- [开发原则与技术地基（Foundation v2）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
+- [精简开发路线（Delivery v2）](docs/architecture/DELIVERY.md)：M0 能跑 → M1 商品可用 → M2 AI 有用 → M3 按需运营；M4 商业化冻结。
+
+## 其他正式文档
+
+- [Windows/macOS 双平台规范](docs/architecture/CROSS_PLATFORM.md)
+- [最小领域与写操作契约](docs/architecture/DOMAIN_AND_EXECUTION.md)
+- [架构决策 ADR](docs/decisions/README.md)
+- [全部文档索引](docs/README.md)
 
 ## 研究资料（与产品代码隔离）
 
-- [智赢静态研究说明](research/zying/README.md)
-- [智赢美客多逆向分析报告](research/zying/ZYing-美客多逆向分析报告.md)
-- [合规接入与模块路线图（历史 v3）](docs/product/AI-ERP-合规接入清单与模块路线图.md)
-- [研究生成器与派生数据](research/zying/analysis/)：原 `analysis/` 目录整体迁移，生成器依赖的内部路径不变。
+- [智赢静态研究](research/zying/README.md)
+- [原合规/路线图 v3（历史）](docs/product/AI-ERP-合规接入清单与模块路线图.md)
 
-## 本轮仓库整理
-
-只移动研究资料并新增工程规范，**没有创建可运行 ERP 代码、没有执行真实 Meli 请求、没有重跑静态分析**；研究中的原始绝对路径与机器生成数据仍需独立复核。
-
-## 合规边界
-
-仅通过 Mercado Libre 官方 API 构建自己的 ERP；竞品研究不作为复用私有协议、二进制、反编译源码、OAuth 凭据或 DOM 自动化的依据。实施以官方文档、目标账号授权结果和适用法律为准。
+**状态说明**：当前仓库的正式内容主要是架构规范和研究文件，M0 还没有完成。原则是先实现一个能启动、能连接、能读取真实店铺数据的程序，再逐项增加业务功能，不提前铺设复杂系统。

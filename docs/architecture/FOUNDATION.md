@@ -1,104 +1,80 @@
-# Una Seller 技术架构基线（Foundation v1）
+# Una Seller 技术架构基线（Foundation v2：简单优先）
 
-- 状态：**拟采用 / 开发前基线**，由 ADR-0001～0003 承接。
-- 日期：2026-10-26。
-- 产品定位：**仅面向 Mercado Libre**；Windows / macOS 桌面客户端优先，自用验证后再扩展多租户商业化。
-- 当前现状：仓库主要为研究报告和分析器，**尚无可运行客户端、API、迁移或 CI**。本文件是目标，不代表完成。
+> 更新：2026-10-26 · 状态：现行开发指导 · 范围：仅 Mercado Libre、自用优先、Windows/macOS 双平台。
+> 本文取代 Foundation v1 中过早面向商业 SaaS 的默认建设要求。历史竞品资料只是参考，不是开发清单。
+> **第一性原理：先解决真实运营问题，再选择能用最少复杂度解决问题的实现。**
 
-## 1. 核心约束
+## 1. 六条强制原则
 
-1. 官方 Mercado Libre REST API 是平台读写的唯一产品化入口。禁止复用第三方私有网关、Cookie 自动化、反编译代码和平台页面脚本。
-2. 桌面端与平台隔离：客户端仅持有 Una Seller 设备会话，**不持有 Meli access/refresh token、应用 client_secret 或服务端模型 Key**。
-3. 云端 PostgreSQL 为业务事实源；客户端仅存必要的受控缓存、未提交草稿和设备设置。断网草稿不能伪装为已发布。
-4. **模块化单体优先**：前期一个 Go API 进程、可选独立 Go Worker；模块按领域分界，不预设微服务、Event Bus、独立 AI 服务。
-5. 正式业务写操作统一走鉴权、校验、审批（按风险）、任务/命令记录、外部执行、回读验证。
-6. Go 后端与 TypeScript 桌面端以 OpenAPI 3.1 为接口契约；生成 TS SDK，不手写两份 DTO。
-7. AI 只调用业务工具，不直接掌握数据库权限、平台凭据或不受约束的 HTTP/SQL 能力。
-8. 兼容 Windows 与 macOS，不引入只能在 Windows 运行的 UI、打印及文件访问依赖。
+1. **先明确问题，再写代码**：每个新增功能要说明实际使用场景、输入、输出和验收；竞品有不代表必须做。
+2. **简单优先、可用优先**：能用一个模块不拆多个服务；优先可维护的直接实现，避免为扩展而提前抽象（YAGNI）。
+3. **不过度设计**：没有现实负载或业务需求，不引入微服务、Event Bus、复杂多租户、完整双向离线同步、额外网关和多层规则引擎。
+4. **安全适度但不失底线**：保留 HTTPS、OAuth state、Token 服务端保密、最低限度的鉴权授权、输入校验与可靠的数据写入；暂不建设企业级零信任平台、复杂风控或重型合规工作流。
+5. **暂不付费与商业化**：支付、套餐、订阅、计费、充值、销售后台、商业 SaaS 管理平台全部不纳入当前开发里程碑。
+6. **小步交付、验证再扩展**：每阶段必须有可运行、可测的功能；删掉长期用不到的代码比提前堆功能重要。
 
-## 2. 目标语言与职责
+### 新依赖和新抽象的准入测试
 
-| 层级 | 选择 | 职责 | 不能做的事 |
-| --- | --- | --- | --- |
-| 桌面 UI | React + TypeScript (strict) + Vite | 商品/订单/客服/任务视图、表单和交互 | 不拼平台 Token；不包含业务写入规则 |
-| 原生壳 | Tauri 2 + 少量 Rust | 文件/打印/密钥库/更新/窗口权限的跨平台适配 | 不复制 Go 领域逻辑 |
-| 业务 API | Go（标准库 net/http + chi 可选） | 租户/权限/商品/订单/审批/API/审计 | 不暴露原始平台适配 DTO |
-| 后台任务 | 同一 Go 代码库的 Worker | 同步、限流、重试、批量刊登、回读 | 不将内存队列作为唯一任务存储 |
-| 服务端数据 | PostgreSQL + pgx + sqlc + goose（候选） | 事务、约束、精确金额、迁移 | 不使用浮点金额 |
-| 客户端数据 | SQLite；SQLCipher 需额外验证 | 分页缓存/草稿/本地索引 | 不默认存全量买家 PII；不假设 Tauri SQL 插件自带 SQLCipher |
-| AI | Go 内的独立模块 + 可替换模型适配器 | 只读查询、建议、低风险受控工具 | 不直接提交无审批高风险动作 |
-| API 契约 | OpenAPI 3.1 + TS SDK 生成 | 版本化请求响应、错误码、客户端类型 | 不由数据库 ORM 对象直接充当 API DTO |
+只有明确回答下面三个问题，才允许增加新组件/服务：
+- 它解决的**已存在**问题是什么？不用会造成什么实际损失？
+- 是否有更简单的解决方式（现有库、单模块、普通数据库事务）？
+- 引入后的开发、部署、运维成本是什么，如何判断应当删除？
 
-初期 Redis、消息总线、独立向量库、独立 AI 微服务、独立 Web 卖家工作台均**不属于必需依赖**。引入前以指标与 ADR 决策，不能因为“未来可能需要”而先搭建。
+无法给出可信答案时，**不引入**。可在 ADR 中记录例外和触发条件。
 
-## 3. 逻辑架构
+## 2. 产品边界与架构
 
-    Windows / macOS Desktop (Tauri + React)
-                 │ HTTPS / REST (+ 可选 SSE)
-                 ▼
-           Go API modular monolith
-       ┌─────────┼──────────────────────┐
-       │Identity │Catalog / Orders      │
-       │Customer │Operations / Approval │
-       │AI Tools │Meli Adapter          │
-       └─────────┼──────────────────────┘
-                 │  PostgreSQL transaction + durable job
-            Go Worker(s) ──► Mercado Libre official API
-                 │
-            AI Provider Adapter ──► model gateway / UnaAPI (optional)
+- 只做 **Mercado Libre**，首先服务自己的店铺与跨境 CBT UP 商品运营。
+- 客户端：**Tauri 2 + React + TypeScript (strict)**，共享 Windows/macOS UI；Rust 只做必要的系统接口（文件、凭据、打印等）。
+- 服务端：**一个业务 API 应用**，从简单模块开始；Go 是此前候选，M0 前与 TypeScript/Fastify 做一次极小验证，选择总体成本最低且团队能维护的方案，不为“性能好看”提前混用更多语言。
+- 数据：有实际持久化需要时使用 **PostgreSQL**；桌面本地先不建全量业务数据库，需要缓存时再用 SQLite。SQLCipher 仅在确有本地敏感数据时专项验证。
+- 美客多平台调用：只通过官方 REST API，OAuth 凭据保留在服务端；不得让 AI 或桌面前端持有平台 Token。
+- AI：先通过可替换的简单模型客户端生成标题、翻译和客服草稿；必要时可使用 UnaAPI 作为模型网关，但不共享 ERP 数据库/身份/账务。
+- 后台任务：开始可以由简单、可追踪的应用任务处理；涉及真实平台写操作或断点恢复时，使用 PostgreSQL 持久任务；Redis、River、消息总线均是**按需选择**，不是开工前的安装清单。
+- 云端保存已同步业务数据；跨设备先做到登录后读取同一份数据，复杂离线同步不是初期目标。
 
-Go 模块通过明确的应用服务接口调用；不允许领域 A 直接写领域 B 的表。HTTP Handler 只做入参校验、鉴权和响应映射；外部 API DTO 在 integration 层转换为领域模型。
+## 3. MVP 应保留的模块
 
-## 4. 建议组件（初版锁定/候选）
+| 模块 | 当前目标 | 暂缓 |
+| --- | --- | --- |
+| 桌面 UI | 能启动、店铺连接、商品表格和编辑 | 商业版后台、复杂窗口系统 |
+| 平台连接 | 一家自有店铺 OAuth、Token 更新、读取商品 | 多应用、多层管理员审批 |
+| 商品管理 | CBT UP / MX/BR/AR 映射、列表、单条修改与回读 | 尚未验证的多仓/复杂 ERP 抽象 |
+| AI | 标题、翻译、属性、客服草稿；人工确认 | 自主 Agent 平台、模型计费 |
+| 订单/运营 | 经实际使用验证后逐项添加 | 一次做齐财务、广告、仓储 |
+| 任务与数据 | 简单日志、失败重试、基础数据一致性 | 完整事件溯源/微服务/数据仓库 |
 
-- UI：shadcn/ui + Base UI（可访问性组件）、Tailwind CSS + CSS variables、Lucide、TanStack Router、TanStack Query、TanStack Table + Virtual、React Hook Form + Zod、Zustand（只限 UI 状态）。
-- 需要尽早自建统一 `DataGrid`、`EntityEditor`、`TaskProgress` 三类业务组件；列宽、排序、批量选择、键盘操作与失败明细统一。
-- Go：pgx、sqlc、goose、slog、OpenTelemetry、标准 testing；chi 仅在标准路由不够时增加。
-- 持久任务：优先评估 PostgreSQL 事务队列（例如 River，**需复核授权、运维与功能范围**）；Redis 仅在缓存/协调/吞吐有实测需求后引入。
-- 测试：Go 单测和 PostgreSQL 集成测试、TS 类型测试、React 组件测试、Windows/macOS Tauri 构建及冒烟。
+技术组件实行**最小集**：
+- 桌面：React、Vite、Tauri；UI 从 Tailwind + 少量 shadcn/ui/Base UI 组件开始。
+- 需要复杂商品表格时加入 TanStack Table；数据量实测影响性能时再加 Virtual；Query、Router、Zustand、图表、表单库均按实际功能引入，而不是在第一天全部安装。
+- 后端：只选一个 HTTP 框架（或标准库）、一个数据库访问方法和迁移工具；不叠加 ORM、Repository、CQRS、DDD、Event Sourcing 多层模式。
+- API：前后端有明确 HTTP 契约；接口稳定且重复 DTO 增多时使用 OpenAPI 生成 TS Client，而非 M0 必须搭复杂生成流水线。
 
-版本策略：首批可运行骨架确定后固定 Go/Node/Rust/Tauri 版本、依赖锁文件和构建镜像；升级通过单独 PR 验证，不在此文档臆定尚未测试的精确版本。
+## 4. 必要安全及可靠性（不能因“简化”删除）
 
-## 5. 数据与安全不变量
+- HTTPS；OAuth state 验证、令牌刷新/覆盖、解绑；Token 不进日志、浏览器打包物或 AI 提示词。
+- 若服务端暴露给公网，必须验证 ERP 登录会话和店铺访问权限；不可因为自用就开放无鉴权写 API。
+- 商品修改请求限制目标店铺与站点、校验入参；提交后回读；外部调用超时后先核实状态再重试。
+- 关键数据库写入保持事务一致性；操作失败必须让使用者看得见。
+- 只做基础测试：启动、API 可用、Token 安全、一个真实只读平台调用、必要写操作防重复。
 
-- 表含明确的 `tenant_id` 或显式租户归属关系，服务端每次读取按当前 membership 及店铺授权判定，不信任客户端传来的租户 ID。
-- 外部账号、站点 Seller、UP / family / local item 分离建模，不用单个 `item_id` 兼任不同平台实体。
-- 金额使用 PostgreSQL NUMERIC 或显式精度整数 + currency，禁止浮点数直接用于支付/售价/费用。
-- Token Vault 服务端加密存储，密钥与密文分离；OAuth state、刷新锁和 refresh token 轮换测试为上线门槛。
-- 日志/错误/崩溃报告/模型请求不记录 token、buyer PII 或可恢复凭据。调试标记在发行构建中关闭。
-- 外部商品描述、买家消息、第三方文档视为不可信输入；模型建议经过结构校验、领域规则与审批后才能进入命令系统。
-- 含买家 PII 的本地缓存最小化、可清理、可审计；离线设备无法保证远程即时擦除。
+此处的“安全适度”指**避免不必要的产品级安全系统**，不等于弱化密钥管理、身份认证或外部写操作保护。
 
-## 6. 阶段及架构扩展原则
+## 5. 当前路线（以 DELIVERY.md 为准）
 
-- M0: Windows/macOS 可构建的 Tauri 骨架 + Go API + PostgreSQL 迁移 + 单店 OAuth 读链路。
-- M1: CBT UP 与 MX/BR/AR 本地商品映射、列表、草稿、可回读的受控写操作。
-- M2: AI 标题/翻译/属性建议 + 客服草稿，全部人工确认，模型独立替换。
-- M3: 订单/履约/促销/报表/跨设备、持久任务与对账。
-- M4: 多租户商业化、高级权限、区域化与可观测的水平扩展。
+- **M0 工程初始化**：能在 Windows 启动，macOS 构建并完成至少一次启动验证；前后端通信、基础数据库、可选真实 OAuth 只读闭环。
+- **M1 可用商品中心**：能读取、筛选、修改与回读 CBT UP/站点商品，解决实际运营问题。
+- **M2 AI 实用功能**：标题优化、多语言长度校验、属性建议、客服草稿，每项有用再保留。
+- **M3 按需补运营功能**：订单、库存、售后、促销、利润、同步，按照真实频率与问题排序。
+- **M4 商业化**：**冻结，不列入当前计划**。只有明确决定对外销售后，另开方案与 ADR。
 
-先按照领域接口分层；仅在实测负载、故障隔离、交付独立性需要时拆服务。不为了追求“纯微服务”复制事件系统、账务或 OAuth 服务。
+## 6. 未来代码组织：按出现的功能建立目录
 
-## 7. 建议的未来代码布局（尚未创建应用代码）
+建议从 `apps/desktop` + `backend`（单服务）开始。出现正式 API 契约时再创建 `contracts/`，出现多个领域后再在 `backend/internal/` 分模块；不要为了对齐理想目录先铺空文件。
+研究资料固定放在 `research/zying/`；不得编译或引用第三方反编译产物。
 
-    apps/desktop/                 Tauri + React
-    backend/cmd/api/              Go HTTP 入口
-    backend/cmd/worker/           Go Worker 入口
-    backend/internal/identity/
-    backend/internal/catalog/
-    backend/internal/orders/
-    backend/internal/operations/
-    backend/internal/ai/
-    backend/internal/integration/mercadolibre/
-    backend/migrations/
-    contracts/openapi.yaml
-    docs/architecture/            本规范
-    docs/decisions/               ADR
-    docs/product/                 产品/历史计划
-    research/zying/               竞品研究（仅供参考）
+## 7. 变更纪律
 
-不创建空壳应用工程；第一轮代码 PR 按 M0 落地目录、测试与 CI。
+优先删减、复用而非新增。对技术栈更换、拆服务、引入队列/缓存和商业化等**高成本决策**写 ADR；普通组件与日常实现不强制写 ADR。开发中发现已选技术不合适，可根据实测结果调整，不为了“遵守最初设计”坚持错误方向。
 
-## 8. 变更流程
-
-架构变化须提交 ADR，说明理由、替代方案、迁移与回退，引用可运行证据。新依赖必须评估维护状态、许可证、安全、Win/mac 支持和打包体积。
+相关：[开发路线](DELIVERY.md) · [领域与执行最小契约](DOMAIN_AND_EXECUTION.md) · [跨平台规范](CROSS_PLATFORM.md) · [简化原则决策](../decisions/0004-simplicity-first.md)。
