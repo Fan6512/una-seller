@@ -1,0 +1,43 @@
+{
+    "detects": [
+        {
+            "filetype": "PE32",
+            "info": "",
+            "offset": "0",
+            "parentfilepart": "Header",
+            "size": "4096",
+            "values": [
+                {
+                    "info": "",
+                    "name": "Microsoft Linker",
+                    "string": "Linker: Microsoft Linker",
+                    "type": "linker",
+                    "version": ""
+                },
+                {
+                    "info": "",
+                    "name": ".NET Core",
+                    "string": "Library: .NET Core(CLR 4.0.30319)",
+                    "type": "library",
+                    "version": "CLR 4.0.30319"
+                },
+                {
+                    "info": "codeview",
+                    "name": "Records",
+                    "string": "Debug data: Records[codeview]",
+                    "type": "debug data",
+                    "version": ""
+                },
+                {
+                    "info": "",
+                    "name": "Contains",
+                    "string": "(Heur)Debug data: Contains",
+                    "type": "~debug data",
+                    "version": ""
+                }
+            ]
+        }
+    ]
+}
+
+

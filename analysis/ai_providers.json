@@ -1,0 +1,71 @@
+[
+  {
+    "provider": "deepseek",
+    "display_name": "DeepSeek",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key_portal": "https://platform.deepseek.com/api_keys",
+    "default_model": "deepseek-flash",
+    "model_list": [
+      "deepseek-flash"
+    ],
+    "protocol": "openai"
+  },
+  {
+    "provider": "mimo",
+    "display_name": "小米 MiMo (MIMO)",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "api_key_portal": "https://platform.xiaomimimo.com",
+    "default_model": "mimo-v2.6-flash",
+    "model_list": [
+      "mimo-v2.6-flash"
+    ],
+    "protocol": "openai"
+  },
+  {
+    "provider": "glm",
+    "display_name": "智谱 AI (GLM)",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "api_key_portal": "https://bigmodel.cn/usercenter/apikeys",
+    "default_model": "glm-5.3-flash",
+    "model_list": [
+      "glm-5.3-flash",
+      "glm-4.7-flash"
+    ],
+    "protocol": "openai"
+  },
+  {
+    "provider": "aliyun",
+    "display_name": "阿里云百炼 (通义千问)",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key_portal": "https://bailian.console.aliyun.com/?apiKey=1",
+    "default_model": "qwen3.7-flash",
+    "model_list": [
+      "qwen3.8-flash",
+      "qwen3.7-flash"
+    ],
+    "protocol": "openai"
+  },
+  {
+    "provider": "tencent",
+    "display_name": "腾讯云混元",
+    "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
+    "api_key_portal": "https://console.cloud.tencent.com/hunyuan/api-key",
+    "default_model": "hunyuan-standard",
+    "model_list": [
+      "hy3"
+    ],
+    "protocol": "openai"
+  },
+  {
+    "provider": "volcengine",
+    "display_name": "火山引擎 (豆包)",
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "api_key_portal": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+    "default_model": "seed-2.1-turbo",
+    "model_list": [
+      "seed-2.1-turbo",
+      "seed-2.0-code"
+    ],
+    "protocol": "openai"
+  }
+]

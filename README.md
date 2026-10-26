@@ -11,6 +11,8 @@
   - `*-types.txt`、`user-type-names.json`、`resources.txt`：类型与资源清单；
   - `ext_endpoints.json`、`ext_campaign_report.txt`：官方接口直连与活动相关发现；
   - `managed-*.json`、`rea_user_identity.json`、`inspect-installer.json`：REA 静态检查证据；
+  - `die-*.json`、`die_summary.txt`、`die-protection-report.md`：Detect It Easy 识别结果与保护壳/构建指纹结论；
+  - `ai_providers.json`、`ai-gateway-findings.md`：AI 供应商注册表与批量核价编排协议的行为级观察；
   - `scripts/`：本次分析使用的脚本。
 
 ## 有意不提交（仅本地保留）

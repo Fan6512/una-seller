@@ -1,0 +1,57 @@
+{
+    "detects": [
+        {
+            "filetype": "PE64",
+            "info": "",
+            "offset": "0",
+            "parentfilepart": "Header",
+            "size": "437248",
+            "values": [
+                {
+                    "info": "",
+                    "name": "Microsoft Linker",
+                    "string": "Linker: Microsoft Linker(14.29.30133)",
+                    "type": "linker",
+                    "version": "14.29.30133"
+                },
+                {
+                    "info": "LTCG/C++",
+                    "name": "Microsoft Visual C/C++",
+                    "string": "Compiler: Microsoft Visual C/C++(19.29.30133)[LTCG/C++]",
+                    "type": "compiler",
+                    "version": "19.29.30133"
+                },
+                {
+                    "info": "",
+                    "name": ".NET Core",
+                    "string": "Library: .NET Core(Loader)",
+                    "type": "library",
+                    "version": "Loader"
+                },
+                {
+                    "info": "",
+                    "name": "Microsoft Visual Studio",
+                    "string": "Tool: Microsoft Visual Studio(2019, 16.11)",
+                    "type": "tool",
+                    "version": "2019, 16.11"
+                },
+                {
+                    "info": "codeview, vc_feature, pogo",
+                    "name": "Records",
+                    "string": "Debug data: Records[codeview, vc_feature, pogo]",
+                    "type": "debug data",
+                    "version": ""
+                },
+                {
+                    "info": "",
+                    "name": "Contains",
+                    "string": "(Heur)Debug data: Contains",
+                    "type": "~debug data",
+                    "version": ""
+                }
+            ]
+        }
+    ]
+}
+
+
