@@ -13,7 +13,11 @@
   - `managed-*.json`、`rea_user_identity.json`、`inspect-installer.json`：REA 静态检查证据；
   - `die-*.json`、`die_summary.txt`、`die-protection-report.md`：Detect It Easy 识别结果与保护壳/构建指纹结论；
   - `ai_providers.json`、`ai-gateway-findings.md`：AI 供应商注册表与批量核价编排协议的行为级观察；
-  - `scripts/`：本次分析使用的脚本。
+  - `command-inventory.csv`：237 个 ZClient 命令调用点（193 个命令名、38 个域前缀）连同服务器池、窗体类、方法、行号与请求/返回字段；
+  - `feature-map.md` + `menu-tree.json` + `field-index.json`：菜单功能 → 窗体类 → 命令 → 字段；29 个板块 265 个功能项，其中美客多板块 25 项有 18 项已落到具体命令；
+  - `api-map.md` + `meli-direct-endpoints.json`：68 个直连官方 REST 端点（按资源域分组），以及直连/命令转发/自有 HTTP 三条出口的分界、令牌链路、限流与退避实证；
+  - `data-model.md` + `record-families.json`：客户端无本地关系库这一结论的证据、15 个记录列前缀族、贯穿的连接键与 31 个直连 DTO；
+  - `scripts/`：本次分析使用的脚本（`build_*.py` 为上述清单的生成器，可重复执行）。
 
 ## 有意不提交（仅本地保留）
 
