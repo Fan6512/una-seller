@@ -32,3 +32,34 @@ __pycache__/
 *.log
 Thumbs.db
 Desktop.ini
+
+# ---- 迁移后的竞品研究与派生数据，不纳入原始第三方内容 ----
+research/zying/target/
+research/zying/analysis/decrypted/
+research/zying/analysis/decompiled/
+research/zying/analysis/strings/
+research/zying/analysis/dat/
+research/zying/analysis/zying_ext/
+research/zying/analysis/ext_slices/
+research/zying/analysis/mcp/
+research/zying/analysis/tools/
+research/zying/analysis/*.gbk
+research/zying/analysis/tmp_*
+research/zying/analysis/plugin_search.txt
+research/zying/analysis/meli_terms*
+research/zying/analysis/meli_partner*
+research/zying/analysis/*.err
+
+# ---- 应用开发通用敏感与构建产物 ----
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+build/
+coverage/
+src-tauri/target/
+*.pem
+*.p12
+*.pfx
+.DS_Store

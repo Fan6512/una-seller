@@ -1,9 +1,11 @@
+> **历史规划提示（2026-10-26 归档整理）**：原文 v3 内容为研究阶段构想，保留证据与演进脉络；**现行工程地基以 [FOUNDATION](../architecture/FOUNDATION.md)、[DOMAIN_AND_EXECUTION](../architecture/DOMAIN_AND_EXECUTION.md)、[CROSS_PLATFORM](../architecture/CROSS_PLATFORM.md) 及 [ADR](../decisions/README.md) 为准**。特别是原文的 NestJS/Fastify 后端、默认 Redis/Event Bus、SQLCipher 开箱可用、Windows EV 强制要求、完整同步引擎一次到位等设计，均已被新基线覆盖或改成按需决策。
+
 # 美客多 AI ERP：合规接入清单与模块路线图
 
 > 版本：2026-10-26（v3）  
 > 本版变更：移除“官方 MCP 作为 ERP 入口”主线；新增“参考智赢的官方 API 对接实现”“批量关闭活动插件专项”与“客户端版跨设备同步审查”；明确桌面客户端优先，路线图、验收与来源随之调整。  
 > 适用对象：以 Mercado Libre 卖家为目标客户、以 AI 为核心差异化的多租户 ERP/SaaS  
-> 配套材料：[ZYing 逆向分析报告](./ZYing-美客多逆向分析报告.md)（仅作业务流与接口地图参考，不作为合规范本）  
+> 配套材料：[ZYing 逆向分析报告](../../research/zying/ZYing-美客多逆向分析报告.md)（仅作业务流与接口地图参考，不作为合规范本）  
 > 说明：本文是工程与合规落地清单，不构成法律意见；涉及数据训练、跨境传输、消费者保护等事项，应由目标国法务复核。
 
 ---
@@ -1095,7 +1097,7 @@ Desktop：按 loginid + 分页查询 → 表格/详情
 
 ### 本地证据（智赢逆向）
 
-- [ZYing 逆向分析报告](./ZYing-美客多逆向分析报告.md)
+- [ZYing 逆向分析报告](../../research/zying/ZYing-美客多逆向分析报告.md)
 - [MeliApi.resolved.cs](file:///E:/美客多逆向/analysis/decrypted/MeliApi.resolved.cs)：OAuth、用户、刊登、订单发票、消息、索赔
 - [MeliApiBuilder.resolved.cs](file:///E:/美客多逆向/analysis/decrypted/MeliApiBuilder.resolved.cs)：从账号记录构造直连客户端
 - [MeliAppInfo.resolved.cs](file:///E:/美客多逆向/analysis/decrypted/MeliAppInfo.resolved.cs)：多应用配置（值已脱敏）
