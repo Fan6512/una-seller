@@ -1,0 +1,51 @@
+{
+ "content.js": [
+  {
+   "term": "批量关闭",
+   "pos": 716771,
+   "ctx": "ddle\"}})]}):null},iM=async()=>{!i_&&document.body&&(i_=new MutationObserver(()=>{!ik||document.contains(ik)||iD()})).observe(document.body,{childList:!0,subtree:!0}),iD()},iE=\"批量关闭折扣\",iT=\"执行中...\",iP=\"批量关闭折扣配置\",iL=\"检测到当前页面已应用筛选条件，可能导致批量关闭范围变小。\",iz=\"折扣阈值:\",i$=\"折扣百分比 ≥ 此值的活动将被关闭\",iF=\"关闭负折扣\",iO=\"默认不关闭。勾选后，会把折扣为负数的活动一并关闭。\",iB=\"操作间隔:\",iU=\"每次关闭操作之间的等待时间。任务过程中还会按进度自动短暂休息，属于正常保护，请耐心等待。\",iq=\"确认并开始\",iW=\"清空筛选"
+  },
+  {
+   "term": "批量关闭",
+   "pos": 716795,
+   "ctx": "nc()=>{!i_&&document.body&&(i_=new MutationObserver(()=>{!ik||document.contains(ik)||iD()})).observe(document.body,{childList:!0,subtree:!0}),iD()},iE=\"批量关闭折扣\",iT=\"执行中...\",iP=\"批量关闭折扣配置\",iL=\"检测到当前页面已应用筛选条件，可能导致批量关闭范围变小。\",iz=\"折扣阈值:\",i$=\"折扣百分比 ≥ 此值的活动将被关闭\",iF=\"关闭负折扣\",iO=\"默认不关闭。勾选后，会把折扣为负数的活动一并关闭。\",iB=\"操作间隔:\",iU=\"每次关闭操作之间的等待时间。任务过程中还会按进度自动短暂休息，属于正常保护，请耐心等待。\",iq=\"确认并开始\",iW=\"清空筛选并开始\",iG=\"仅在当前筛选中开始\",iH=\""
+  },
+  {
+   "term": "批量关闭",
+   "pos": 716828,
+   "ctx": "w MutationObserver(()=>{!ik||document.contains(ik)||iD()})).observe(document.body,{childList:!0,subtree:!0}),iD()},iE=\"批量关闭折扣\",iT=\"执行中...\",iP=\"批量关闭折扣配置\",iL=\"检测到当前页面已应用筛选条件，可能导致批量关闭范围变小。\",iz=\"折扣阈值:\",i$=\"折扣百分比 ≥ 此值的活动将被关闭\",iF=\"关闭负折扣\",iO=\"默认不关闭。勾选后，会把折扣为负数的活动一并关闭。\",iB=\"操作间隔:\",iU=\"每次关闭操作之间的等待时间。任务过程中还会按进度自动短暂休息，属于正常保护，请耐心等待。\",iq=\"确认并开始\",iW=\"清空筛选并开始\",iG=\"仅在当前筛选中开始\",iH=\"取消\",iV=\"请勿同时打开多个窗口一起跑，容易触发账号安全验证。"
+  },
+  {
+   "term": "批量关闭",
+   "count": 23
+  },
+  {
+   "term": "停止活动",
+   "pos": 749438,
+   "ctx": "),rU(t),await rq(rZ,1e4)||(console.warn(`${r4} 新版直接停止的确认弹窗未关闭，尝试手动关闭`,r5()),await nu(),await rF(120)),!await n2(e,18e3))return console.warn(`${r4} 新版直接停止后校验失败: ${e.skuId} 依然存在可停止活动按钮`),n0(e,\"停止后校验\"),{...l,status:\"failed\",reason:ro};return{...l,status:\"success\"}}let s=null;for(let t=0;t<4;t++){if(!(a=await nH(e,2e3))){n0(e,\"重试时重新定位 Edit 按钮\");break}a.getBoundingClientRect(),r$(a),ns(a);let t=await n"
+  },
+  {
+   "term": "停止活动",
+   "count": 1
+  },
+  {
+   "term": "campaign",
+   "pos": 567594,
+   "ctx": "[0].children[0].append(w)}}})}catch(e){console.error(e)}})(),document.getElementById(\"detail-container\")&&(()=>{var e,t,l;let i=null==(e=document.querySelector(\"[data-test-id='campaigns']\"))?void 0:e.parentElement;if(i){let e,r,a,s,o,d,c,u=(e=null==(r=location.href)||null==(t=r.match(/HB.*/))?void 0:t[0],(null==r?void 0:r.includes(\"adservice.hepsiburada.com\"))?e=null==r?void 0:r.match(/(?<=-)HB.*?"
+  },
+  {
+   "term": "campaign",
+   "pos": 608429,
+   "ctx": "unction(){let e=arguments.length>0&&void 0!==arguments[0]?arguments[0]:\"\";return eD.map(t=>`${t} input[aria-label=\"percentageInput\"]${e}`).join(\", \")},eM={buttonContainer:\".sp-campaign-info\",tableRow:\"tr.andes-table__row.sp-promotion-table__row\",discountInput:eR(),editableDiscountInput:eR(\":not([disabled])\"),readonlyDiscountInput:eR(\"[disabled]\"),editableDiscountContainer:eR(\":not([disabled])\"),no"
+  },
+  {
+   "term": "campaign",
+   "pos": 1568228,
+   "ctx": "0:e[1]))return null;let t=new URLSearchParams(location.search);return{businessId:e[1],origin:location.origin,pathname:location.pathname,search:location.search,tld:t.get(\"tld\"),campaignId:t.get(\"campaignId\")}},g=e=>!!e&&e.pathname.includes(\"/content-settings\"),f=e=>{let t=new URLSearchParams;e.tld&&t.set(\"tld\",e.tld),e.campaignId&&t.set(\"campaignId\",e.campaignId);let l=t.toString();return`${e.origi"
+  },
+  {
+   "term": "campaign",
+   "count": 24
+  }
+ ]
+}

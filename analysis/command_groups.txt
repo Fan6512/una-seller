@@ -1,0 +1,76 @@
+common:
+  common.login, common.logout
+logins:
+  logins.auth, logins.check, logins.delete
+meli:
+  meli.batch, meli.invoice, meli.label, meli.localsubmit, meli.localupdate, meli.order, meli.order_split, meli.order_split_skus, meli.submit, meli.sync, meli.syncAccProduct, meli.update
+meli_acc:
+  meli_acc., meli_acc.appinfo, meli_acc.auth_token, meli_acc.del_appinfo, meli_acc.delete, meli_acc.detail, meli_acc.first, meli_acc.flag, meli_acc.get_appinfo, meli_acc.stat
+meli_catalog_monitor:
+  meli_catalog_monitor., meli_catalog_monitor.add_monitors, meli_catalog_monitor.adjust_price, meli_catalog_monitor.async, meli_catalog_monitor.delete_item, meli_catalog_monitor.detail, meli_catalog_monitor.pause_active, meli_catalog_monitor.remove
+meli_category:
+  meli_category.attr_values, meli_category.detail, meli_category.refer_cbt, meli_category.refer_cbts, meli_category.refer_total, meli_category.select, meli_category.update, meli_category.update_attrs, meli_category.updateattr
+meli_catemap:
+  meli_catemap.insert
+meli_claim:
+  meli_claim., meli_claim.delete, meli_claim.detail, meli_claim.fetch, meli_claim.fetch_claim, meli_claim.get_partial_refund_offers, meli_claim.open_dispute, meli_claim.partial_refund, meli_claim.refund, meli_claim.save_trans_message, meli_claim.send_message, meli_claim.set_remark
+meli_clips:
+  meli_clips.delete, meli_clips.fetch, meli_clips.load, meli_clips.save, meli_clips.select
+meli_code:
+  meli_code., meli_code.clear, meli_code.delete, meli_code.insert
+meli_extra:
+  meli_extra., meli_extra.delete, meli_extra.detail, meli_extra.insert, meli_extra.update
+meli_freight:
+  meli_freight.insert, meli_freight.select, meli_freight.ship
+meli_item_best:
+  meli_item_best.delete
+meli_kind:
+  meli_kind.pop, meli_kind.select
+meli_locallog:
+  meli_locallog., meli_locallog.delete, meli_locallog.detail
+meli_localstat:
+  meli_localstat., meli_localstat.active, meli_localstat.attr, meli_localstat.batchDelete, meli_localstat.batchstatus, meli_localstat.clean, meli_localstat.delete, meli_localstat.detail, meli_localstat.predict, meli_localstat.setstat, meli_localstat.title
+meli_log:
+  meli_log., meli_log.delete, meli_log.delete_v2, meli_log.detail, meli_log.detail_v2, meli_log.exe
+meli_log_up:
+  meli_log_up., meli_log_up.delete, meli_log_up.detail
+meli_message:
+  meli_message., meli_message.detail, meli_message.fetch, meli_message.save_trans_message, meli_message.send_message
+meli_metrics:
+  meli_metrics., meli_metrics.detail, meli_metrics.fetch
+meli_netproceeds:
+  meli_netproceeds.select, meli_netproceeds.set_netproceeds, meli_netproceeds.set_zero, meli_netproceeds.update
+meli_picture:
+  meli_picture.save_pics, meli_picture.select
+meli_qa:
+  meli_qa., meli_qa.delete, meli_qa.detail, meli_qa.memo, meli_qa.pull, meli_qa.reply, meli_qa.save
+meli_qatemp:
+  meli_qatemp.delete, meli_qatemp.detail, meli_qatemp.insert, meli_qatemp.select, meli_qatemp.stat
+meli_question:
+  meli_question., meli_question.delete, meli_question.detail, meli_question.memo, meli_question.noreply_count, meli_question.pull, meli_question.reply
+meli_rate:
+  meli_rate.select
+meli_refer:
+  meli_refer.batch, meli_refer.delete, meli_refer.detail, meli_refer.offer, meli_refer.select, meli_refer.update
+meli_size:
+  meli_size.update
+meli_sizechart:
+  meli_sizechart.delete, meli_sizechart.fetch, meli_sizechart.select
+meli_stat:
+  meli_stat., meli_stat.active, meli_stat.adjust_price, meli_stat.attr, meli_stat.batchDelete, meli_stat.change_cate, meli_stat.changesale, meli_stat.clean, meli_stat.delete, meli_stat.detail, meli_stat.export, meli_stat.get_infraction, meli_stat.intro, meli_stat.predict, meli_stat.publish, meli_stat.setstat, meli_stat.title, meli_stat.updatesale
+meli_stat_up:
+  meli_stat_up., meli_stat_up.active, meli_stat_up.adjust_price, meli_stat_up.change_cate, meli_stat_up.delete, meli_stat_up.detail, meli_stat_up.get_infraction, meli_stat_up.intro, meli_stat_up.publish, meli_stat_up.setstat, meli_stat_up.title, meli_stat_up.update_attrs
+meli_sync:
+  meli_sync.sync_items
+meli_up:
+  meli_up.submit, meli_up.update
+meli_update:
+  meli_update.batch_ids
+meliup_sync:
+  meliup_sync.sync_items
+sale:
+  sale.batch
+spider:
+  spider.save_cost
+users:
+  users.export, users.loadUPC, users.meli
