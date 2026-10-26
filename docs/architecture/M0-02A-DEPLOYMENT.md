@@ -53,17 +53,24 @@ sudo cp -a /etc/nginx "/root/nginx-backup-$(date +%Y%m%d%H%M%S)"
 在构建机根据目标机 `uname -m` 选择 `GOARCH`（`x86_64` 对应 `amd64`，`aarch64` 对应 `arm64`），然后从 `backend` 目录构建：
 
 ```sh
+mkdir -p dist
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/una-seller-api ./cmd/api
 ```
 
-将二进制复制到服务器临时目录后安装。示例：
+将二进制和三个部署配置复制到服务器临时目录；`SSH_HOST` 必须是确认过的 SSH 主机名/IP，不可填 Cloudflare 代理 IP：
+
+```sh
+scp dist/una-seller-api deploy/systemd/una-seller-api.service deploy/nginx/mkd.186512.xyz-http.conf deploy/nginx/mkd.186512.xyz.conf deploy/certbot/reload-nginx "$SSH_HOST:/tmp/"
+```
+
+然后在服务器安装：
 
 ```sh
 sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin una-seller
 sudo install -d -o root -g una-seller -m 0750 /opt/una-seller
 sudo install -o root -g una-seller -m 0750 /tmp/una-seller-api /opt/una-seller/una-seller-api
 sudo install -d -o root -g root -m 0750 /etc/una-seller
-sudo install -o root -g root -m 0644 deploy/systemd/una-seller-api.service /etc/systemd/system/una-seller-api.service
+sudo install -o root -g root -m 0644 /tmp/una-seller-api.service /etc/systemd/system/una-seller-api.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now una-seller-api
 systemctl status --no-pager una-seller-api
@@ -78,19 +85,19 @@ curl --fail --silent --show-error http://127.0.0.1:8787/healthz
 
 ```sh
 sudo install -d -o root -g root -m 0755 /var/www/letsencrypt
-sudo apt install certbot
-sudo install -o root -g root -m 0644 deploy/nginx/mkd.186512.xyz-http.conf /etc/nginx/sites-available/mkd.186512.xyz
+if ! command -v certbot >/dev/null 2>&1; then sudo apt install certbot; fi
+sudo install -o root -g root -m 0644 /tmp/mkd.186512.xyz-http.conf /etc/nginx/sites-available/mkd.186512.xyz
 sudo ln -s /etc/nginx/sites-available/mkd.186512.xyz /etc/nginx/sites-enabled/mkd.186512.xyz
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot certonly --webroot -w /var/www/letsencrypt -d mkd.186512.xyz
 ```
 
-只有 Certbot 成功签发后，才将完整 `deploy/nginx/mkd.186512.xyz.conf` 安装到同一 `sites-available` 路径。它保留 ACME 路径、仅把本主机 HTTP 请求重定向到 HTTPS，并将请求转发给 Go。
+只有 Certbot 成功签发后，才将完整配置安装到同一 `sites-available` 路径。它保留 ACME 路径、仅把本主机 HTTP 请求重定向到 HTTPS，并将请求转发给 Go。
 
 ```sh
-sudo install -o root -g root -m 0644 deploy/nginx/mkd.186512.xyz.conf /etc/nginx/sites-available/mkd.186512.xyz
+sudo install -o root -g root -m 0644 /tmp/mkd.186512.xyz.conf /etc/nginx/sites-available/mkd.186512.xyz
 sudo nginx -t && sudo systemctl reload nginx
-sudo install -o root -g root -m 0755 deploy/certbot/reload-nginx /etc/letsencrypt/renewal-hooks/deploy/10-reload-nginx
+sudo install -o root -g root -m 0755 /tmp/reload-nginx /etc/letsencrypt/renewal-hooks/deploy/10-reload-nginx
 sudo systemctl enable --now certbot.timer
 sudo certbot renew --dry-run
 ```
