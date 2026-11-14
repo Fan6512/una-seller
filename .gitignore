@@ -63,3 +63,8 @@ src-tauri/target/
 *.p12
 *.pfx
 .DS_Store
+
+# M0 Tauri-generated icons/schema and local developer output
+apps/desktop/src-tauri/icons/
+apps/desktop/src-tauri/gen/
+apps/desktop/.vite/
