@@ -4,8 +4,15 @@
 
 ## 先读这两份
 
-- [开发原则与技术地基（Foundation v2）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
-- [精简开发路线（Delivery v2）](docs/architecture/DELIVERY.md)：M0 能跑 → M1 商品可用 → M2 AI 有用 → M3 按需运营；M4 商业化冻结。
+- [开发原则与技术地基（Foundation v2.1）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
+- [精简开发路线（Delivery v2.1）](docs/architecture/DELIVERY.md)：M0 采集箱 → M1 草稿/AI/刊登 → M2 商品维护 → M3 按需运营；M4 商业化冻结。
+
+## 产品目标及开发路线
+
+**采集箱 → AI 整理 → 产品库 → Mercado Libre 多站点刊登 → 已发布产品列表 → 日常运营**。桌面端保持一个统一主题/主程序，内置业务插件按需开发，仍只用一个后端与数据库。
+
+- [商品工作流、智赢编辑器参考和插件规划](docs/product/PRODUCT-WORKFLOW-AND-EDITOR.md)
+- [Delivery v2.1 分阶段开发路线](docs/architecture/DELIVERY.md)
 
 ## 当前 MVP 开发任务书
 
@@ -26,7 +33,7 @@
 
 **状态说明**：当前仓库的正式内容主要是架构规范、M0 最小工程和研究文件。浏览器采集插件与 ERP MVP 任务书现已归档为待实施需求基线，不代表功能已经实现。原则是先实现能启动、能连接、能把真实商品采集到本地库的最小闭环，再逐项增加业务功能，不提前铺设复杂系统。
 
-## M0-01 工程（已开始，尚未在 Win/mac 实机验收）
+## M0-01 工程（基础工程；尚未在 Win/mac 实机验收）
 
 [运行步骤](docs/architecture/M0-01-IMPLEMENTATION.md) · [验证状态](docs/architecture/M0-01-STATUS.md)
 
