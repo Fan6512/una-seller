@@ -1,11 +1,16 @@
 # Una Seller — Mercado Libre AI ERP
 
-> **当前阶段：最简自用 ERP 的开发准备。** 只做 Mercado Libre；Windows/macOS 双平台；暂不建设支付、订阅、计费及商业化 SaaS 后台。
+> **当前阶段：最简自用 ERP 的开发准备。** 只做 Mercado Libre 运营；Windows/macOS 双平台桌面客户端；Amazon 仅作为商品研究和采集来源；暂不建设支付、订阅、计费及商业化 SaaS 后台。
 
 ## 先读这两份
 
 - [开发原则与技术地基（Foundation v2）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
 - [精简开发路线（Delivery v2）](docs/architecture/DELIVERY.md)：M0 能跑 → M1 商品可用 → M2 AI 有用 → M3 按需运营；M4 商业化冻结。
+
+## 当前 MVP 开发任务书
+
+- [ERP 后端与 Windows/macOS 桌面客户端 MVP](docs/architecture/ERP-MVP.md)
+- [浏览器商品采集插件 MVP](docs/product/BROWSER-COLLECTION-PLUGIN-MVP.md)
 
 ## 其他正式文档
 
@@ -19,7 +24,7 @@
 - [智赢静态研究](research/zying/README.md)
 - [原合规/路线图 v3（历史）](docs/product/AI-ERP-合规接入清单与模块路线图.md)
 
-**状态说明**：当前仓库的正式内容主要是架构规范和研究文件，M0 还没有完成。原则是先实现一个能启动、能连接、能读取真实店铺数据的程序，再逐项增加业务功能，不提前铺设复杂系统。
+**状态说明**：当前仓库的正式内容主要是架构规范、M0 最小工程和研究文件。浏览器采集插件与 ERP MVP 任务书现已归档为待实施需求基线，不代表功能已经实现。原则是先实现能启动、能连接、能把真实商品采集到本地库的最小闭环，再逐项增加业务功能，不提前铺设复杂系统。
 
 ## M0-01 工程（已开始，尚未在 Win/mac 实机验收）
 
