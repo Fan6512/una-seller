@@ -1,7 +1,7 @@
 # ERP 后端与 Windows / macOS 桌面客户端 MVP 开发任务书
 
 > 项目：Una Seller — Mercado Libre AI ERP  
-> 版本：v0.2  
+> 版本：v0.3（2026-11-15，采集 API 契约与 Amazon 美国站范围修订）  
 > 状态：需求基线，待实施  
 > 客户端：Windows + macOS 双平台桌面应用  
 > 关联规范：[Foundation](FOUNDATION.md)、[Delivery](DELIVERY.md)、[Domain and Execution](DOMAIN_AND_EXECUTION.md)、[Cross Platform](CROSS_PLATFORM.md)、[Browser Collection Plugin](../product/BROWSER-COLLECTION-PLUGIN-MVP.md)
@@ -15,7 +15,7 @@ Una Seller 是面向自有 Mercado Libre 跨境店铺的运营 ERP。首期先�
 2. Chrome / Edge 浏览器插件：在 Amazon 和 Mercado Libre 页面上人工选择并采集商品。
 3. 一个 ERP Backend API：统一身份、业务规则、数据保存和后续平台连接。
 
-Amazon 只作为商品研究和采集来源。未来店铺授权、刊登、订单和客服运营只面向 Mercado Libre。
+Amazon 只作为商品研究和采集来源，**首期采集仅适配 Amazon.com 美国站**，未来也是主要来源；其他 Amazon 站点不进入本 MVP 的开发和验收范围。未来店铺授权、刊登、订单和客服运营只面向 Mercado Libre。
 
 首期自用，单用户使用；数据库保留未来增加团队成员的基本扩展空间，但不建设商业 SaaS、多租户或完整团队权限系统。
 
@@ -31,7 +31,7 @@ Amazon 只作为商品研究和采集来源。未来店铺授权、刊登、订�
 | 后端 | 一个 HTTP 业务服务；Go 与 TypeScript/Fastify 在 M0 做极小验证后选择 |
 | 数据库 | 有实际持久化需求的业务数据使用 PostgreSQL |
 | 本地缓存 | 只有真实离线需求出现时再引入 SQLite |
-| 浏览器插件 | Chrome / Edge Manifest V3，独立目录和独立适配器 |
+| 浏览器插件 | Chrome / Edge Manifest V3；Amazon.com 美国站优先，Mercado Libre MLM/MLB/MLA；独立适配器 |
 | 开发部署 | 先本地开发测试，后续部署云服务器 |
 | 用户体系 | 首期单用户；未来按真实团队需求扩展 |
 | 商业化 | 当前不做支付、订阅、计费或第三方 SaaS |
@@ -160,7 +160,8 @@ M0 先完成一个极小的后端实现验证：
 - category：来源分类。
 - description：详细描述。
 - bullet_points：原始五点描述，按数组保存。
-- collection_status：完整、部分、失败等采集状态。
+- collection_status：完整、部分等已保存数据的状态；提交失败不伪装为成功入库。
+- collection_warnings：本次采集的缺失字段和简短诊断信息（仅有必要时保存）。
 - first_collected_at：首次采集时间。
 - last_collected_at：最近采集时间。
 
@@ -210,15 +211,30 @@ M0 先完成一个极小的后端实现验证：
 - DELETE /api/v1/collections/{id}：删除采集记录。
 
 采集接口：
-- 校验平台、站点、URL、货币、变体和图片结构。
-- 使用去重键实现幂等。
-- 明确返回新增、已存在并更新、部分采集或失败。
-- 不把浏览器插件提交的字段当成可信输入。
-- 失败信息可供插件和桌面端显示。
+- 仅接收插件本地解析出的**结构化商品数据**，不以整页 HTML 上传/服务端解析为默认架构。
+- 校验平台、站点、URL、货币、普通描述、独立五点描述、实际变体及图片关联。
+- 使用去重唯一键和 PostgreSQL 事务实现一次提交的幂等新增/更新，不另建设第三方同款多阶段商业采集接口。
+- 结构化请求可附带 `page_state`、`missing_fields`、`warnings`，帮助识别 Amazon.com 的正常、验证码/阻断、邮编地区限制、不可配送、缺 BuyBox、未知页面和解析失败等情况。
+- **状态明确区分**：新建成功、已有更新、部分采集已保存、请求失败未保存。失败响应不能被插件当成“采集成功”。
+- 本次来源页面未返回的字段不允许无条件覆盖已有完整字段；商品描述与五点描述保持独立，变体属性/价格/图片关系正确保存。
+- 不把浏览器插件提交的字段当成可信输入；字段不完整应返回缺失字段与简短错误信息。
+- 插件只在收到后端持久化成功的响应后更新卡片按钮状态。
 
 插件配对码短时有效且只能使用一次。插件凭据不暴露给网页页面脚本。公网部署后必须使用 HTTPS 和有效的用户鉴权。
 
 接口 DTO 是插件与桌面端的共同契约；接口变更需同步更新两端，不允许各自维护不兼容的数据格式。
+
+### 与插件的五项实施变更保持同步
+
+第一版自研插件以 Amazon.com 美国站为主要开发样本，Mercado Libre 继续覆盖 MLM、MLB、MLA。ERP Backend API 不负责访问 Amazon 或 Mercado Libre 的竞品商品网页。
+
+1. **卡片识别与详情采集分阶段**：在浏览器内完成，服务器只接收用户点击后解析的结果，不做无人值守采集。
+2. **多规格补全**：插件按需、有限地补充已确认的变体详情；服务器保存真实的属性组合、对应价格、图片及缺失标记。
+3. **独立描述字段**：\`description\` 与 \`bullet_points\` 分开；A+ 图文首版不要求单独采集。
+4. **页面状态与采集结果状态分开**：上游页面可标识 normal/captcha/blocked/zipRequired/deliveryUnavailable/buyboxMissing/unknown；ERP 只把实际保存成功的 complete/partial 记录列为已采集，未保存失败以错误响应处理。
+5. **一次幂等入库**：只用 \`POST /api/v1/collections\` 传结构化字段；事务内去重与有条件更新，不拆成远端商业平台式的重复检查和二次入库。
+
+临时用于商品详情定位的 ASIN 不必单独持久化为字段；其在规范化 URL 中出现属于 URL 的正常组成部分。平台、站点和 URL 去重规则不变。
 
 ## 8. Windows / macOS 桌面客户端页面
 
@@ -266,7 +282,9 @@ M0 先完成一个极小的后端实现验证：
 - 图片：主图、其他图片和顺序。
 - 描述：详细描述、五点描述。
 - 规格：全部可获取变体、属性、价格和对应图片。
-- 采集记录：首次采集时间、最近采集时间和状态。
+- 采集记录：首次采集时间、最近采集时间、完整/部分采集状态及缺失字段提示。
+- 普通商品描述与五点卖点分别展示；没有来源卖点时留空，不自动拆分。
+- 变体价格或图片缺失时显示为空及原因，不补造。
 
 首期不加入 AI 改写、翻译、自动刊登或竞品分析。
 
@@ -353,7 +371,7 @@ M0 先完成一个极小的后端实现验证：
 ### PR-D：插件与 ERP 集成验收
 
 - 浏览器插件接入统一 API。
-- Amazon 和 Mercado Libre 实际页面采集。
+- Amazon.com 美国站与 Mercado Libre MLM/MLB/MLA 实际页面采集。
 - 采集数据入库。
 - 桌面端显示新商品。
 - 重复采集、部分数据和失败重试验证。
@@ -386,10 +404,12 @@ M0 先完成一个极小的后端实现验证：
 - 不以 Windows 构建通过代替 macOS 验收。
 
 ### 集成
-- Amazon 商品通过插件进入采集库。
+- Amazon.com 美国站商品通过插件进入采集库。
 - Mercado Libre MLM / MLB / MLA 商品通过插件进入采集库。
 - 重复采集不生成重复商品。
-- 插件显示正确状态。
+- 插件显示正确状态（包括完整、部分采集和上游拦截/失败）。
+- Amazon.com 多规格变体的属性、价格、对应图片能正确入库；详细描述与 Bullet Points 独立保留。
+- 无法访问详情或变体数据时，不上传整页 HTML，不补造数据，也不把 API 失败误报为成功。
 - 后端重启后数据仍然存在。
 - Windows 与 macOS 客户端登录同一后端后能读取同一份云端数据（云端阶段验收）。
 
