@@ -6,7 +6,7 @@
 
 ### 平台接入侧概念（用于理解官方对象，不直接作为自研数据表清单）
 
-- `StoreConnection`：店铺授权连接；在自研侧对应下方的 **StoreConnection**。
+- `StoreConnection`：店铺授权连接；自研侧沿用同名对象，账号刊登模板另由 `StoreTemplate` 管理。
 - `MarketplaceSeller`：官方账户或各站点卖家身份，属于 StoreConnection 读取的官方信息。
 - `UP Product / Product Family / Variation`：官方 UP、商品家族与变体概念；应通过 **PublishedListing** 的平台对象映射表示，不直接等同 **OwnProduct** 或来源变体。
 - `Site Listing`：站点侧真实商品和销售条件，在自研侧对应 **PublishedListing** 的站点对象。
