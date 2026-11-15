@@ -9,7 +9,7 @@
 2. [Delivery v2.1：M0～M3 精简开发路线](architecture/DELIVERY.md)
 3. [Domain v2.1：最小平台数据与写入契约](architecture/DOMAIN_AND_EXECUTION.md)
 4. [Windows/macOS 双平台规范](architecture/CROSS_PLATFORM.md)
-5. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) 与 [全部 ADR](decisions/README.md)
+5. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0001：M0-03 Go 实施选择](decisions/0001-language-and-modular-monolith.md) · [全部 ADR](decisions/README.md)
 
 ## 产品工作流与商品编辑器
 
