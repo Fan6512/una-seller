@@ -1,7 +1,7 @@
 # 浏览器商品采集插件 MVP 开发任务书
 
 > 项目：Una Seller — Mercado Libre AI ERP  
-> 版本：v0.3（2026-11-15，五项采集实现补充）  
+> 版本：v0.4（2026-11-15，明确采集箱/产品库/产品列表边界）  
 > 状态：需求基线，待实施  
 > 适用客户端：Windows / macOS 上的 Chrome 与 Edge  
 > 关联规范：[Foundation](../architecture/FOUNDATION.md)、[Cross Platform](../architecture/CROSS_PLATFORM.md)、[ERP MVP](../architecture/ERP-MVP.md)
@@ -167,6 +167,12 @@ Mercado Libre 页面不一定存在独立的五点描述结构：
 - 不绕过验证码、登录墙、访问控制或平台限流。
 - 不使用智赢、妙手的私有接口、密钥、Cookie、反编译代码或复制其商业实现。
 - 两个附件只用于理解交互和技术思路；自研代码独立实现。
+
+### 与产品三区及 AI 整理的边界
+
+- 浏览器插件**只采集**用户点击的来源网页真实资料并提交至**采集箱**；不在浏览器采集时调用 AI、修改商品、生成可刊登草稿或发布平台商品。
+- AI 文案/图片整理、人工补充字段、产品库草稿及多站点刊登均在桌面 ERP 的内置业务模块中分阶段实施；详见 [产品工作流与编辑器](PRODUCT-WORKFLOW-AND-EDITOR.md)。
+- “采集成功”仅代表来源资料在 ERP 后端保存成功，**不意味着已经完成 AI 整理或 Mercado Libre 刊登**。
 
 ## 9. 第一版明确不做
 
