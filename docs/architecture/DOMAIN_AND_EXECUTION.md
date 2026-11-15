@@ -4,12 +4,15 @@
 
 ## 1. 从最小对象开始
 
-现阶段只需概念上区分：
-- `StoreConnection`：自己的美客多店铺连接和授权状态。
-- `MarketplaceSeller`：官方账户/各站点卖家身份。
-- `UP Product / Product Family / Variation`：全球商品及变体关系。
-- `Site Listing`：MX/BR/AR 各站点本地商品与销售条件。
-- `Draft / Operation`：尚未提交的改动和一次外部操作及结果。
+### 平台接入侧概念（用于理解官方对象，不直接作为自研数据表清单）
+
+- `StoreConnection`：店铺授权连接；在自研侧对应下方的 **StoreConnection**。
+- `MarketplaceSeller`：官方账户或各站点卖家身份，属于 StoreConnection 读取的官方信息。
+- `UP Product / Product Family / Variation`：官方 UP、商品家族与变体概念；应通过 **PublishedListing** 的平台对象映射表示，不直接等同 **OwnProduct** 或来源变体。
+- `Site Listing`：站点侧真实商品和销售条件，在自研侧对应 **PublishedListing** 的站点对象。
+- `Draft / Operation`：通用解释“草稿/外部操作”，并非统一实体名；自研侧将**采集整理工作稿 CollectionWorkingDraft**、**自有商品草稿 OwnProduct**、**刊登操作 PublicationOperation** 严格区分。
+
+以下六个业务侧对象才是 Una Seller 的分阶段数据边界。平台侧概念与业务对象通过官方 ID/授权关系映射，不要求一一对应，尤其不能把 `Draft` 混用为采集工作稿和产品库草稿。
 
 M0 只建立真实接口需要的数据表，不提前为订单、退款、广告、团队、多租户和向量数据库创建空表。M1 再完善 UP 与本地 Item 的关联。
 
