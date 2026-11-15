@@ -4,8 +4,15 @@
 
 ## 先读这两份
 
-- [开发原则与技术地基（Foundation v2）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
-- [精简开发路线（Delivery v2）](docs/architecture/DELIVERY.md)：M0 能跑 → M1 商品可用 → M2 AI 有用 → M3 按需运营；M4 商业化冻结。
+- [开发原则与技术地基（Foundation v2.1）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
+- [精简开发路线（Delivery v2.1）](docs/architecture/DELIVERY.md)：M0 能跑 → M1 商品可用 → M2 AI 有用 → M3 按需运营；M4 商业化冻结。
+
+## 产品目标及开发路线
+
+**采集箱 → AI 整理 → 产品库 → Mercado Libre 多站点刊登 → 已发布产品列表 → 日常运营**。桌面端保持一个统一主题/主程序，内置业务插件按需开发，仍只用一个后端与数据库。
+
+- [商品工作流、智赢编辑器参考和插件规划](docs/product/PRODUCT-WORKFLOW-AND-EDITOR.md)
+- [Delivery v2.1 分阶段开发路线](docs/architecture/DELIVERY.md)
 
 ## 当前 MVP 开发任务书
 
