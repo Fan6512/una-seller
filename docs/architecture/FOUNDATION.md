@@ -64,7 +64,7 @@
 ### 开发/运行环境与 CI 边界（2026-11-16 增补）
 
 - **CI 与生产运行分离**：公开仓库优先使用免费标准 GitHub-hosted Runners；按功能出现逐步增加检查，不让云服务器承担 CI。**CI-0～CI-3 的唯一技术细节见 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md)**，不在 Foundation 维护第二套执行清单。
-- **基础设施不重复选型**：在审 [PR #3 / ADR-0005](https://github.com/Fan6512/una-seller/pull/3) 已记录用户选择**现有 Ubuntu 服务器（2 vCPU、约 3.6GiB RAM）+ 既有 Nginx + Go API + Supabase 托管 PostgreSQL**；不默认自建 PG、购买新服务器或安装 Caddy。PR #3 尚未合并，ADR-0005 未进入 main，部署亦未验收；合并 PR #3 前需解决它对旧版 Foundation/Delivery 的覆盖冲突。图片暂存来源 URL、AI 调外部 API，资源用量以现有服务和部署前实测为准。
+- **基础设施不重复选型**：以 [ADR-0005](../decisions/0005-m0-infrastructure.md) 为依据，沿用**现有 Ubuntu 服务器（历史观察为 2 vCPU、约 3.6GiB RAM）+ 既有 Nginx + Go API + Supabase 托管 PostgreSQL**；不默认自建 PG、购买新服务器或安装 Caddy。运行数据来自既有 SSH 记录，**不代表本轮复测或实际部署验收**；图片暂存来源 URL、AI 调外部 API，资源用量以部署前实测及现有服务状况为准。
 - **本地工具链按需安装**：后端和数据层可先通过 GitHub Actions 进行编译/临时 PG 集成；普通 React UI 可用 Vite 预览。原生 Windows/macOS GUI 的完成定义必须有对应真实环境启动记录，不能把 Vite/Actions build 当实机通过。
 - **公共仓库安全最低线**：CI 无生产 Token、数据库账号或 SSH 部署凭据，默认 `contents: read`；PR 测试只用合成数据，部署采用独立批准的工作流；PostgreSQL 端口不暴露公网、API 公开前必须鉴权和 HTTPS，异地备份与测试环境隔离。
 
