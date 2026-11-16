@@ -7,6 +7,10 @@
 
 ## M0：桌面基础与真实采集箱（当前）
 
+### M0-00：先建立基础 CI
+
+在 Issue #6 PR-A 之前，先以独立 Draft PR 提交最小 Go 与 Vite 检查，并取得实际 GitHub Actions 运行结果。**CI-0～CI-3 唯一技术配置/验收细节见 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md)**；后续按业务代码出现逐步添加数据库、Tauri 与 MV3 检查，本计划不重复维护第二套 CI 阶梯。
+
 1. 复用已有 Tauri 2 + React + TypeScript 桌面工程和现有 Go HTTP 服务，明确 Go 为 M0-03 唯一业务后端，不再平行验证第二套 Fastify 服务（如出现具体阻塞再另议）。Windows x64 真机启动，macOS arm64/x64 构建与可用设备启动验证；不能只把 Vite 构建当成原生验收。
 2. 以轻量模块注册组织 Core 和采集箱页面：统一主题、导航、状态与 API client；不建插件市场/多进程/多数据库。
 3. 完成 PostgreSQL 持久化、商品采集结构化提交与去重、图片 URL/描述/五点/真实变体存储和查询。
@@ -14,16 +18,9 @@
 5. 浏览器 MV3 插件先以 Amazon.com 美国站单商品人工点击入库并在客户端可见；随后适配 Mercado Libre MLM/MLB/MLA。
 6. OAuth/云部署如条件尚不具备，单独标 BLOCKED，不阻断本地采集箱闭环；公网 API 必须鉴权和 HTTPS。
 
-### 开发前置：一个基础 CI Draft PR
-
-- **CI-0（独立小 PR，先于 Issue #6 PR-A）**：新增 `.github/workflows/ci.yml`，自动检查 `backend/` 的 gofmt/vet/test/build 和 `apps/desktop/` 的 `npm ci && npm run build`；按 Go 1.23（来自 go.mod）、兼容 Node 22 配置，公开仓库只使用标准 GitHub-hosted Runner。
-- 在实际 PR 上取得首次成功运行记录后审核合并 CI-0。**CI-0 不做 PostgreSQL 业务集成、原生 Tauri 安装包、浏览器插件和云部署**；仓库目前还没有这些实际业务代码或相应构建条件。
-- 按模块出现逐步补充：PR-A 在既有 CI 增加临时 PostgreSQL Service 和合成数据集成测试；PR-B 增加 Win/mac Tauri 原生构建（实际启动另测）；PR-C 增加 MV3 构建/清单检查。不为文档改动反复跑昂贵跨平台打包。
-- GitHub Actions 不需要在 2C4G 服务器运行；初期 PR 不使用生产密钥或生产数据库，不自动执行云端部署。CI 细节及完成定义以 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md) 为准。
-
 ### 当前 Issue #6 的交付 PR 顺序
 
-- PR-A：复用 Go API + 最小 PostgreSQL + 采集 POST/GET、幂等和真实读回；**把临时 PostgreSQL Service 集成测试加入 CI**，验证部分采集不会抹除旧图、卖点和变体。
+- PR-A：复用 Go API + PostgreSQL SQL 迁移 + 采集 POST/GET、幂等和真实读回；临时 PostgreSQL CI 验证断连重连、去重及部分采集不会抹除旧图、卖点和变体。**真实数据库进程重启持久性**由独立受控环境验证，不能以 CI 断连重连替代。
 - PR-B：Tauri 2 采集箱真实列表、详情、图片/描述/变体/状态显示；配置 CSP 的图片来源/API 连接白名单及真实 CORS，CI 检查原生构建，真机启动状态另外验收。
 - PR-C：Amazon.com 浏览器插件 → API → 桌面采集箱的单商品纵向闭环；增加 MV3 插件构建/清单检查，CI 不要求访问实时 Amazon 页面。
 
@@ -67,9 +64,9 @@
 
 支付、套餐、充值、订阅、计费、SaaS 管理后台、复杂多租户和团队 RBAC 均未授权实施。
 
-### 2C4G 云端与本机工具链安排
+### 现有服务器与本机工具链安排
 
-2C4G 云主机作为**候选的初期应用环境**，预计部署 Go API、PostgreSQL 与一种 HTTPS 反向代理；无需承担 CI/Tauri 构建和大型 AI 模型推理。前期可用 GitHub Actions 临时 PG 证明数据库集成正确，本地不必因为 PR-A 强制安装 PostgreSQL/Docker；但任何生产云部署须另行批准并配置 HTTPS、鉴权、备份及数据库不公网开放。Win/mac 实机启动验收仍不能由 GitHub Actions 构建替代。
+运行环境选型参考在审的 [PR #3 / ADR-0005](https://github.com/Fan6512/una-seller/pull/3)：**已有 Ubuntu 2C4G + 复用 Nginx + Go API + Supabase 托管 PostgreSQL**，而不是默认自建 PG/Caddy。PR #3 未合并，旧版 Foundation/Delivery 变更需要先与现行基线收敛，**本段不代表基础设施已上线或当前主分支已接受 ADR-0005**。现有服务器尚有 `we-mp-rss`，应复核内存及既有服务后再部署。CI 在 GitHub Runner 完成，本机不必为了 PR-A 强制安装 PG/Docker；PR-B 实机显示真实商品前必须提供获批准的可达测试数据库 + Go API。任何公网部署须另行授权并具备 HTTPS、鉴权、备份；Mac/Win 实机启动不可由 CI 编译代替。
 
 ## 开发与审查纪律
 
