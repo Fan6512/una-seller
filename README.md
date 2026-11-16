@@ -31,15 +31,14 @@
 ## 研究资料（与产品代码隔离）
 
 - [智赢静态研究](research/zying/README.md)
-- [原合规/路线图 v3（历史）](docs/product/AI-ERP-合规接入清单与模块路线图.md)
 
-**状态说明**：当前仓库的正式内容主要是架构规范、M0 最小工程和研究文件。浏览器采集插件与 ERP MVP 任务书现已归档为待实施需求基线，不代表功能已经实现。原则是先实现能启动、能连接、能把真实商品采集到本地库的最小闭环，再逐项增加业务功能，不提前铺设复杂系统。
+**当前交付状态（2026-11-16）**：M0-00 基础 CI 与 Go 1.26 已合并；Issue #6 / PR-A 的采集 POST/GET、去重、图片、变体和 PostgreSQL 17 集成测试已合并。Supabase `una-seller` 已执行四张业务表迁移，并完成可回滚的 SQL 合成数据验证；Go API 连接云库、Windows/macOS Tauri 实机与浏览器插件尚未验收。合并历史请查看 GitHub PR #9、#10、#11；后续任务以 Issue #6 为准。
 
 ## M0-01 工程（基础工程；尚未在 Win/mac 实机验收）
 
 [运行步骤](docs/architecture/M0-01-IMPLEMENTATION.md) · [验证状态](docs/architecture/M0-01-STATUS.md)
 
-目前 `apps/desktop/` 是 Tauri + React 最小界面，`backend/` 是**仅本机运行**的 Go 健康检查 HTTP 服务。未提供公网 ERP API、OAuth、数据库或收费功能。暂未配置 `mkd.186512.xyz`；KYC 未完成前不做真实授权。
+目前 `backend/` 具有本地 Go 健康接口和 PostgreSQL 采集 POST/GET；仅供本地开发，不具备公网认证，不得将采集 API 对外发布。桌面端尚无已验收的真实采集箱 GUI；新的 [PR-B 桌面采集箱](https://github.com/Fan6512/una-seller/pull/13) 正在独立开发。暂未验收 `mkd.186512.xyz` 的 DNS/HTTPS，OAuth 和收费未开发。
 
 Windows PowerShell 示例（在仓库根目录打开两个终端）：
 
@@ -47,6 +46,8 @@ Windows PowerShell 示例（在仓库根目录打开两个终端）：
 # 终端 A
 cd backend
 go test ./...
+# 先在本地单独设置 DATABASE_URL 与 UNA_SELLER_LOCAL_USER_ID
+# 全新数据库才运行 go run ./cmd/api migrate；现有 Supabase 已做迁移
 go run ./cmd/api
 ```
 
@@ -57,4 +58,4 @@ npm install
 npm run tauri:dev
 ```
 
-首次运行会生成依赖锁文件；应在实际构建验证后提交。**M0-00 基础 CI 已建立**（`.github/workflows/ci.yml`），Go 与桌面前端检查已在真实 PR 上通过；后续在 Issue #6 的 PR-A/B/C 中追加 PostgreSQL 集成、Tauri 与 MV3 检查。
+**M0-00 基础 CI 与 PR-A PostgreSQL 集成测试已建立并在真实 PR 上通过。** 桌面原生构建、Windows/macOS 真机验收和 MV3 插件仍属后续任务；不得把 Vite 编译当作桌面端验收。
