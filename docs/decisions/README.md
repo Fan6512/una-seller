@@ -3,6 +3,7 @@
 原则：**少写、只记录影响大且难回退的决定**。普通开发和组件替换不必专门立 ADR。
 
 - [ADR-0004 第一性原理、简单优先、暂不商业化](0004-simplicity-first.md)：当前最高优先级；明确 M0～M3、M4 冻结及不过度设计。
+- [ADR-0005 M0 运行基础设施选型](0005-m0-infrastructure.md)：既有 Ubuntu + Nginx + Go API + Supabase PostgreSQL；历史现场记录与上线验收严格区分，M0-03 采集和 M1-D OAuth 按现行 Delivery 执行。
 - [ADR-0001 跨平台与 M0-03 Go 选择](0001-language-and-modular-monolith.md)：Tauri/React 确定；现阶段复用 Go，不重复开发 Fastify，遇到证据充分的阻塞再评估。
 - [ADR-0002 数据、任务与渐进同步](0002-data-jobs-and-sync.md)：只建必要表与任务，Redis/同步平台延后。
 - [ADR-0003 Mercado Libre 与 AI 解耦](0003-integration-and-ai-boundaries.md)：原则有效，具体实现遵循最小需求。
