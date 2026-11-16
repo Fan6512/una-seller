@@ -27,6 +27,11 @@ analysis/managed-ZYing.UI.dll.json
 analysis/managed-ZPdf.dll.json
 analysis/*.err
 
+# ---- 不入库：竞品原始安装包二进制 ----
+# 说明：反编译源码、内存转储扫描、程序集元数据与插件解包源码已于 2026-11-15
+# 按用户决策入库，用于交叉核对分析报告准确性。仅 ZInstall.exe 二进制不入库。
+/分析材料/智赢ERP/
+
 # ---- 通用 ----
 __pycache__/
 *.log
@@ -63,3 +68,8 @@ src-tauri/target/
 *.p12
 *.pfx
 .DS_Store
+
+# M0 Tauri-generated icons/schema and local developer output
+apps/desktop/src-tauri/icons/
+apps/desktop/src-tauri/gen/
+apps/desktop/.vite/

@@ -1,7 +1,7 @@
 # Una Seller M0 基础设施、数据库与 HTTPS 部署基线
 
-> 决策日期：2026-10-26 · 状态：**选型确定，部署未验收** · 对应 [ADR-0005](../decisions/0005-m0-infrastructure.md)。
-> 自用初期只需要 **一台现有 Ubuntu 服务器 + 一个 Go API + 一个 Supabase PostgreSQL 数据库**，Cloudflare/Nginx 使用现有资源。**这不是执行完成报告，不能以本文替代真实上线验证。**
+> 决策日期：2026-10-26 · 与现行计划对齐：2026-11-16 · 状态：**选型确定，部署未验收** · 对应 [ADR-0005](../decisions/0005-m0-infrastructure.md)。
+> 自用初期沿用 **一台现有 Ubuntu 服务器 + 一个 Go API + 一个 Supabase 托管 PostgreSQL 数据库**，Cloudflare/Nginx 使用现有资源。**这不是执行完成报告，也不等于本轮重新 SSH 验证**；业务阶段以 [Delivery v2.1](DELIVERY.md) 为准。
 
 ## 1. 最终选型与职责
 
@@ -12,7 +12,7 @@
 | 反向代理/源站 TLS | 复用现有 Nginx | 为 `mkd.186512.xyz` 新建独立 server block，不覆盖其他站点，443 → Go loopback；不安装 Caddy |
 | 源站证书 | **Let's Encrypt + Certbot 优先** | 用户可自行申请；有效证书及自动续期。Cloudflare Origin CA 为备选 |
 | 业务后端 | Go 单体 API，Ubuntu 24.04.4 LTS，2 vCPU / 4GB | OAuth state/回调、令牌交换与刷新、官方 API 请求、数据写入 |
-| 数据库 | **Supabase 托管 PostgreSQL** | 授权信息及后续商品/订单；从真实需要持久化的 M0-02 开始，只建必要表 |
+| 数据库 | **Supabase 托管 PostgreSQL** | M0-03 / Issue #6 的采集商品需要持久化时先建最小采集表；M1-D 才加 OAuth/店铺连接表，后续按需扩展 |
 | 现有业务 | Docker `we-mp-rss` | 保留原服务；不修改端口和容器，避免 Nginx 配置互相覆盖 |
 
 拓扑：`Windows/macOS → HTTPS mkd.186512.xyz (Cloudflare) → Nginx 443 → Go API 127.0.0.1:8787 → TLS → Supabase PostgreSQL`。Go API 再通过官方 HTTPS 调用 Mercado Libre。
@@ -59,7 +59,7 @@
 
 ## 5. Supabase 托管 PostgreSQL 的最简使用法
 
-- **M0-01 暂不需要建库**；M0-02 涉及真实店铺连接/Token 持久化时再创建 Supabase 项目，只设计最低限度表和 SQL 迁移。
+- **M0-01 健康检查暂不需要建库**；M0-03 / Issue #6 的 PR-A 开始采集商品写入时，按需准备 Supabase PostgreSQL 或 CI 临时 PostgreSQL，使用最小采集表及 SQL 迁移；真正店铺 Token 的存储与授权迁移留在 M1-D，不能在 PR-A 预建授权表。
 - Go 服务端使用标准 PostgreSQL 连接；**不用同时引入 Supabase Auth、Edge Functions、Realtime、Storage**。桌面端不得持有数据库 URL、密码、Service Role Key。
 - 在 Ubuntu 服务器上检查 IPv6 出站能力。**IPv6 可用**优先使用 Supabase Dashboard 提供的 Direct connection；**仅 IPv4** 时使用官方 Shared Session Pooler（端口 **5432**，非 serverless 常用 Transaction Pooler **6543**），连接字符串必须从 Supabase Dashboard 的 Connect 复制，开启 TLS 校验，不猜测主机名或密码。
 - 持久化客户端连接池先保持低并发，例如按实际调用量配置 2–5 个连接，而非部署 Redis 或多个实例；出现连接耗尽时先观测。
@@ -80,12 +80,13 @@
 | --- | --- | --- |
 | M0-01 | Windows 实机 Tauri 启动、Go 本机健康检查；macOS 双架构至少构建/启动记录 | PR #2 代码已提交；实机尚未验证 |
 | M0-02a | Cloudflare DNS 公网解析 + Let's Encrypt 自动续期 + 独立 Nginx 443；旧 RSS 正常 | DNS 由用户配置；其余未验收 |
-| M0-02b | Go API 经 `https://mkd.186512.xyz/healthz` 正确响应；必要时连接 Supabase 最小表 | 尚未部署/连库 |
-| M0-03 | OAuth 回调、state、Token 安全保存、`/users/me` 与刷新/解绑 | 开发者应用已创建；真实授权未测，KYC 可能影响权限 |
+| M0-02b | Go API 经 `https://mkd.186512.xyz/healthz` 正确响应；与真实 Supabase 连接需要另行验证 | 尚未部署/连库 |
+| **M0-03 / Issue #6** | 采集 API、持久化/去重/读回、桌面采集箱、Amazon.com 单商品 MV3 采集闭环 | 尚未完成真实采集数据链路；与公网 HTTPS 部署独立验收 |
+| **M1-D** | Mercado Libre OAuth 回调、state、Token 安全保存、`/users/me`、刷新/解绑与既有商品只读同步 | 开发者应用已创建；真实授权未测，KYC 可能影响权限 |
 
 ## 8. 必须避免的操作
 
 - 不在现有 Nginx 80/443 上盲目覆盖或关闭默认站点，不停止 `we-mp-rss`，不因为签证书而停止 Nginx。
 - 不未经检查就开启 UFW、不把 Go 8787 公网监听、不在 Git 中记录 Supabase DB 密码、Cloudflare API Token、证书私钥、Mercado Libre Client Secret。
 - 不在未知其他站点兼容性时全局切换 Cloudflare SSL/TLS 模式；不在源站证书未验证时宣布 HTTPS 完成。
-- 不创建 PostgreSQL 本地实例、Redis/队列/K8s 或其他尚无业务需要的服务。
+- 不在现有服务器上**默认自建 PostgreSQL**；CI 可用临时 PostgreSQL，本机 PostgreSQL 仅在有真实测试需要时选用。Redis、队列、K8s 等不因未来需求提前部署。

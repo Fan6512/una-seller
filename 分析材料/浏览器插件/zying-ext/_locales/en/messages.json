@@ -1,0 +1,584 @@
+{
+    "extName": {
+        "message": "ZYing - Amazon/OZON/MercadoLibre More Info"
+    },
+    "extSimpleName": {
+        "message": "ZYing"
+    },
+    "extNameDev": {
+        "message": "ZYing - Dev"
+    },
+    "extDescription": {
+        "message": "Amazon Brand Infringement Detection, supports Amazon, OZON, 1688, Mercado Libre,  free for ZYING ERP user; "
+    },
+    "monthlySalesVolume": {
+        "message": "Monthly Sales"
+    },
+    "collecting": {
+        "message": "Collecting..."
+    },
+    "salesLoading": {
+        "message": "Sales Loading"
+    },
+    "profitMarginResults": {
+        "message": "Jump to 1688, use image search, calculate profits for search results, and specify the profit margin for each result."
+    },
+    "goodsList": {
+        "message": "Find goods"
+    },
+    "comment": {
+        "message": "comment"
+    },
+    "commissionOutput": {
+        "message": "Commission"
+    },
+    "Price": {
+        "message": "Price"
+    },
+    "rating": {
+        "message": "Rating"
+    },
+    "shadowSelling": {
+        "message": "Shadow selling"
+    },
+    "resellersProductNotAllowed": {
+        "message": "No product listing allowed for resellers at present."
+    },
+    "noResellingAllowed": {
+        "message": "No allowed"
+    },
+    "NoValue": {
+        "message": "No"
+    },
+    "clickToGoBrandProductList": {
+        "message": "Click to go to the brand's product list"
+    },
+    "brand": {
+        "message": "Brand"
+    },
+    "rankingResult": {
+        "message": "Ranking"
+    },
+    "currentSalesRanking": {
+        "message": "Current sales ranking of the product on the entire platform"
+    },
+    "monthlySalesVolumeOfCurrent": {
+        "message": "The monthly sales volume of the current product."
+    },
+    "salesTrend": {
+        "message": "Sales trend"
+    },
+    "monthlySalesComparison": {
+        "message": "The current monthly sales of the product compared to the sales of the previous month."
+    },
+    "websiteTraffic": {
+        "message": "Website traffic"
+    },
+    "monthlyVisitRateOfCurrent": {
+        "message": "monthly visit rate of the current product."
+    },
+    "totalSales": {
+        "message": "Total sales"
+    },
+    "totalHistoricalSalesVolume": {
+        "message": "the total historical sales amount of the current commodity."
+    },
+    "loginPrompt": {
+        "message": "Please log in first."
+    },
+    "signInNow": {
+        "message": "Sign in now"
+    },
+    "profitCalculation": {
+        "message": "Profit calculation"
+    },
+    "sellerName": {
+        "message": "Seller"
+    },
+    "topSeller": {
+        "message": "Top seller"
+    },
+    "inventory": {
+        "message": "Inventory"
+    },
+    "variantValue": {
+        "message": "Variant"
+    },
+    "sellerProductListJump": {
+        "message": "Click to jump to the seller's product list"
+    },
+    "averageRating": {
+        "message": "The average rating of this seller's products."
+    },
+    "logout": {
+        "message": "Log out"
+    },
+    "productInquiry": {
+        "message": "Product inquiry"
+    },
+    "contactUs": {
+        "message": "Contact us"
+    },
+    "noListingsForCurrently": {
+        "message": "No hijacking of listings for this product allowed currently."
+    },
+    "dollar": {
+        "message": "Dollar"
+    },
+    "product_name": {
+        "message": "Product name"
+    },
+    "No": {
+        "message": "No"
+    },
+    "image": {
+        "message": "image"
+    },
+    "monthlyPageViews": {
+        "message": "Monthly page views"
+    },
+    "salesRanking": {
+        "message": "sales ranking"
+    },
+    "score_count": {
+        "message": "score count"
+    },
+    "storageType": {
+        "message": "Storage Type"
+    },
+    "seller": {
+        "message": "seller"
+    },
+    "unavailableDataInOzonListPage": {
+        "message": "Currently not on the OZON list page, or no data, unable to automatically query the product."
+    },
+    "batchProductAnalysis": {
+        "message": "Batch product analysis"
+    },
+    "batchProductCollection": {
+        "message": "Batch product collection"
+    },
+    "salesDataUnavailable": {
+        "message": "No sales data available or being collected at the moment."
+    },
+    "profitValue": {
+        "message": "profit"
+    },
+    "freight": {
+        "message": "freight"
+    },
+    "goods1688": {
+        "message": "Go to 1688 to find goods."
+    },
+    "overweightCannotBeDelivered": {
+        "message": "Overweight, cannot be delivered."
+    },
+    "weightValue": {
+        "message": "weight"
+    },
+    "procurement": {
+        "message": "Procurement"
+    },
+    "price": {
+        "message": "Price"
+    },
+    "logistics": {
+        "message": "Logistics"
+    },
+    "cheapestLogisticsChannel": {
+        "message": "Use the cheapest logistics channel."
+    },
+    "localWarehouse": {
+        "message": "Local warehouse"
+    },
+    "semiManagedWarehouse": {
+        "message": "Semi-managed"
+    },
+    "OZON_self_operation": {
+        "message": "OZON"
+    },
+    "loading": {
+        "message": "Loading"
+    },
+    "copySuccess": {
+        "message": "Copy successful"
+    },
+    "dataSource": {
+        "message": "data source"
+    },
+    "notFoundContent": {
+        "message": "Not Found (For reference only)"
+    },
+    "registerTrademark": {
+        "message": "Register Trademark"
+    },
+    "registeredCountries": {
+        "message": "Registered in the following countries."
+    },
+    "currentSite": {
+        "message": "Current site."
+    },
+    "size": {
+        "message": "Size"
+    },
+    "captureToZhiyingErp": {
+        "message": "Capture to Zhiying ERP"
+    },
+    "oncollect": {
+        "message": "collecting"
+    },
+    "successfulCollectionTips": {
+        "message": "Successful collection, please check in the Intelligent Win ERP Product/Product Collection/Collection List."
+    },
+    "trialAccountMessage": {
+        "message": "Your account is a trial account, and data collection is currently not supported."
+    },
+    "trialAccountMessage2": {
+        "message": " Please upgrade at zying.net to enable data collection."
+    },
+    "waitingText": {
+        "message": "Please wait while the information is being read."
+    },
+    "searchByImage1688": {
+        "message": "Jump to 1688, search by image."
+    },
+    "errorRetrievingImage": {
+        "message": "An error occurred while retrieving the image, please contact us"
+    },
+    "sellingPointsVarName": {
+        "message": "Selling points"
+    },
+    "copy": {
+        "message": "copy"
+    },
+    "keywords": {
+        "message": "keywords"
+    },
+    "salesInThePast30Days": {
+        "message": "Sales in 30 day"
+    },
+    "notYetIncluded": {
+        "message": "Not yet included."
+    },
+    "registerTrademarks": {
+        "message": "Register trademarks"
+    },
+    "bsrMissing": {
+        "message": "BSR missing"
+    },
+    "per": {
+        "message": "per"
+    },
+    "day": {
+        "message": "day"
+    },
+    "putOnShelves": {
+        "message": "Put shelves"
+    },
+    "newProduct": {
+        "message": "New product."
+    },
+    "summaryContent": {
+        "message": "Summary"
+    },
+    "collection": {
+        "message": "collect"
+    },
+    "analyzing": {
+        "message": "Analyzing"
+    },
+    "getImageUrl": {
+        "message": "Main Image Download"
+    },
+    "productOverview": {
+        "message": "Product Overview"
+    },
+    "searchKeywords": {
+        "message": "keyword search"
+    },
+    "switchIpOrTryAgainLater": {
+        "message": "Please switch IP or try again later."
+    },
+    "login": {
+        "message": "Login"
+    },
+    "visibleAfterLoggingIn": {
+        "message": "Visible after logging in"
+    },
+    "productInformation": {
+        "message": "Product Information"
+    },
+    "notFound": {
+        "message": "Not found"
+    },
+    "shelfTime": {
+        "message": "Shelf Time."
+    },
+    "delivery": {
+        "message": "Delivery."
+    },
+    "operation": {
+        "message": "operation"
+    },
+    "wisdomWin": {
+        "message": "Collecting to Zying"
+    },
+    "unknown": {
+        "message": "unknown"
+    },
+    "asinQuantity": {
+        "message": "ASIN quantity"
+    },
+    "averageBSR": {
+        "message": "Average BSR"
+    },
+    "averagePrice": {
+        "message": "average price."
+    },
+    "averageRatingNumber": {
+        "message": "Average rating number."
+    },
+    "averageDaysOnShelf": {
+        "message": "Average days on shelf"
+    },
+    "currentlyNotInAmazonNoData": {
+        "message": "Currently not in Amazon listing page or no data available."
+    },
+    "currentlyNotInAmazonNoData2": {
+        "message": " Unable to automatically search for products."
+    },
+    "keywordRanking": {
+        "message": "Keyword ranking"
+    },
+    "asinVariable": {
+        "message": "Please enter Asin."
+    },
+    "titleFrequencyAnalysis": {
+        "message": "Title Frequency Analysis"
+    },
+    "asinInput": {
+        "message": "Please enter ASIN."
+    },
+    "keyword": {
+        "message": "Please enter a keyword."
+    },
+    "oneKeywordForANewLine": {
+        "message": "One keyword per line, press Enter for a new line."
+    },
+    "search": {
+        "message": "Start searching."
+    },
+    "clearConditions": {
+        "message": "Clear conditions"
+    },
+    "noDataAvailableForExport": {
+        "message": "No data available for export."
+    },
+    "copyText": {
+        "message": "Click to copy"
+    },
+    "relatedProductsData": {
+        "message": "related products"
+    },
+    "category": {
+        "message": "category"
+    },
+    "numberOfCompetitors": {
+        "message": "Number of competitors"
+    },
+    "notfound": {
+        "message": "Not found"
+    },
+    "correspondingKeywords": {
+        "message": "corresponding keywords"
+    },
+    "searchVolume": {
+        "message": "Search volume"
+    },
+    "searchVolumeLastMonth": {
+        "message": "The search volume of this keyword last month."
+    },
+    "searchRanking": {
+        "message": "Search ranking"
+    },
+    "totalProductsFound": {
+        "message": "The total number of products found using this keyword is:"
+    },
+    "conversionEffect": {
+        "message": "conversion effect"
+    },
+    "trafficContribution": {
+        "message": "contribution of traffic"
+    },
+    "historicalRankingTrend": {
+        "message": "Historical Ranking Trend"
+    },
+    "amzAbaKeywordFrequencyRank": {
+        "message": "The keyword search frequency ranking provided by Amazon ABA in the backend."
+    },
+    "organicSearch": {
+        "message": "organic search"
+    },
+    "advertising": {
+        "message": "SP advertising"
+    },
+    "brandAdvertisement": {
+        "message": "Brand advertisement"
+    },
+    "oneClickCopy": {
+        "message": "One-Click Copy"
+    },
+    "exportToXlsxData": {
+        "message": "Export to xlsx"
+    },
+    "jumpText": {
+        "message": "Click to jump"
+    },
+    "shopProductListPage": {
+        "message": "Shop product list page."
+    },
+    "officialStore": {
+        "message": "Official store"
+    },
+    "storeSalesTren": {
+        "message": "Click to enter the Zhiying Xuanpin backstage to view the store's sales trend and "
+    },
+    "storeSalesTren2": {
+        "message": "effortlessly collect hot-selling popular items."
+    },
+    "sales": {
+        "message": "Sales"
+    },
+    "viewAssociatedKeywords": {
+        "message": "View associated keywords for this product"
+    },
+    "failedToObtainSKUID": {
+        "message": "Failed to obtain SKUID."
+    },
+    "dataNotRetrievedOrException": {
+        "message": "Data not retrieved or data exception, please try again later."
+    },
+    "collectionToZhiyingErp": {
+        "message": "One-key collection to Zhiying ERP, the collection can be viewed and edited in the Collection List in Zhiying ERP"
+    },
+    "collectionToZhiyingErp2": {
+        "message": " - Product - Product Collection, and can be published on platforms such as Meikeduo."
+    },
+    "analyze": {
+        "message": "Analyze"
+    },
+    "meliCollectTips": {
+        "message": "Please view and edit in the SmartWin ERP - Product - Product Collection - "
+    },
+    "meliCollectTips2": {
+        "message": " Collection List, and can be published on platforms such as Meikeduo."
+    },
+    "collected": {
+        "message": "Collected"
+    },
+    "inputSkuIdTips": {
+        "message": "Please enter SKUID."
+    },
+    "validSKUId": {
+        "message": "Please enter a valid SKUId"
+    },
+    "productSelectionBigData": {
+        "message": "Product selection big data"
+    },
+    "scoreNumber": {
+        "message": "Score number"
+    },
+    "platformCommissionRatio": {
+        "message": "platform commission ratio"
+    },
+    "unfoundContent": {
+        "message": "Unable to find"
+    },
+    "organicRanking": {
+        "message": "organic ranking."
+    },
+    "commissionRate": {
+        "message": "The current commission rate charged to sellers on the platform for the product."
+    },
+    "officialOverseasWarehouse": {
+        "message": "Official overseas warehouse"
+    },
+    "shippingFromOneself": {
+        "message": "Shipping from oneself"
+    },
+    "gold": {
+        "message": "Leading Gold"
+    },
+    "platinumLeadership": {
+        "message": "Leadership Platinum."
+    },
+    "marketLeadership": {
+        "message": "market leadership"
+    },
+    "Zying": {
+        "message": "Zying"
+    },
+    "storeMessage": {
+        "message": "Go to the store."
+    },
+    "retryMessage": {
+        "message": "No data available, click to retry."
+    },
+    "scrollOnPageTurnPause": {
+        "message": "If there is a pause when pages are being turned, please scroll the mouse wheel."
+    },
+    "loadingMessage": {
+        "message": "Loading data, please wait and try again."
+    },
+    "nextPage": {
+        "message": "Next Page"
+    },
+    "startCollecting": {
+        "message": "start collecting"
+    },
+    "stopCollecting": {
+        "message": "Stop collecting"
+    },
+    "supportsBatchCollection": {
+        "message": "Current page supports batch collection."
+    },
+    "collectingThe": {
+        "message": "Collecting the"
+    },
+    "shoppingCartConversionRate": {
+        "message": "Shopping cart conversion rate"
+    },
+    "goods": {
+        "message": "goods"
+    },
+    "averageOrderValue": {
+        "message": "Average order value"
+    },
+    "wbSameStyle": {
+        "message": "WB same style"
+    },
+    "failedToGetImageMessage": {
+        "message": "Failed to get the image, please contact us."
+    },
+    "profitCalculator": {
+        "message": "Profit Calculator"
+    },
+    "ruble": {
+        "message": "ruble"
+    },
+    "ranking": {
+        "message": "ranking"
+    },
+    "times": {
+        "message": "time"
+    },
+    "copyAllSubAsins": {
+        "message": "Copy All Sub ASINs"
+    },
+    "copySubAsinsSuccess": {
+        "message": "Successfully copied {count} sub ASIN(s) to clipboard"
+    },
+    "noSubAsinsFound": {
+        "message": "No sub ASINs found"
+    }
+}
