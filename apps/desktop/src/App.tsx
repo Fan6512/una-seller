@@ -176,6 +176,7 @@ export default function App() {
   const [service, setService] = useState<ServiceStatus>("checking");
   const [serviceError, setServiceError] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
+  const [isComposing, setIsComposing] = useState(false);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [refresh, setRefresh] = useState(0);
@@ -212,12 +213,15 @@ export default function App() {
   }, [checkHealth, refresh]);
 
   useEffect(() => {
+    if (isComposing) return;
+    const next = searchDraft.trim();
+    if (next === search) return;
     const timer = window.setTimeout(() => {
       setOffset(0);
-      setSearch(searchDraft.trim());
+      setSearch(next);
     }, 280);
     return () => window.clearTimeout(timer);
-  }, [searchDraft]);
+  }, [searchDraft, isComposing, search]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -266,7 +270,7 @@ export default function App() {
   }, [selectedId, refresh]);
 
   const showDetail = items.length > 0 && !listError;
-  const connectionStatus: ServiceStatus = listError ? "offline" : service;
+  const connectionStatus: ServiceStatus = listError || serviceError ? "offline" : service;
   const pageNumber = Math.floor(offset / PAGE_SIZE) + 1;
 
   return (
@@ -276,7 +280,7 @@ export default function App() {
         <span className="topbar-divider" aria-hidden="true" />
         <span className="topbar-label">商品工作台</span>
         <div className="topbar-spacer" />
-        <span className={"connection-indicator " + connectionStatus} title={listError || serviceError || undefined} role="status">
+        <span className={"connection-indicator " + connectionStatus} role="status">
           <span className="connection-dot" aria-hidden="true" />
           {connectionStatus === "checking" ? "连接中" : connectionStatus === "online" ? "服务正常" : "连接异常"}
         </span>
@@ -293,7 +297,7 @@ export default function App() {
             <div className="list-toolbar">
               <label className="search-box">
                 <Icon name="search" size={18} />
-                <input type="search" placeholder="搜索商品名称" aria-label="搜索商品名称" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} maxLength={200} />
+                <input type="search" placeholder="搜索商品名称" aria-label="搜索商品名称" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onCompositionStart={() => setIsComposing(true)} onCompositionEnd={(event) => { setIsComposing(false); setSearchDraft(event.currentTarget.value); }} maxLength={200} />
               </label>
               <div className="list-meta">
                 <span>{listLoading ? "正在更新…" : listError ? "加载失败" : search ? "搜索结果" : "全部商品"}</span>
@@ -311,7 +315,7 @@ export default function App() {
               ) : (
                 <div className="product-list">
                   {items.map((item) => (
-                    <button type="button" key={item.id} className={"product-row " + (selectedId === item.id ? "selected" : "")} aria-current={selectedId === item.id ? "true" : undefined} onClick={() => setSelectedId(item.id)} disabled={listLoading}>
+                    <button type="button" key={item.id} className={"product-row " + (selectedId === item.id ? "selected" : "")} aria-current={selectedId === item.id ? "true" : undefined} onClick={() => setSelectedId(item.id)}>
                       <ProductImage src={item.main_image_url} alt={item.title} className="row-image" />
                       <span className="row-body">
                         <strong className="row-title" title={item.title}>{item.title}</strong>
