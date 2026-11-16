@@ -299,25 +299,22 @@ Tauri 2 + React + TypeScript + Vite，**一个统一主程序/主题、按业务
 
 ## 9. 本地开发与云端部署
 
-### 本地开发
+### 本地开发与 CI 的替代路径
 
-- PostgreSQL 通过 Docker Compose 启动。
-- 后端在本机运行，开发阶段只监听本地地址。
-- Tauri 桌面客户端连接本地后端。
-- Chrome / Edge 插件连接本地后端。
-- 数据库和图片目录使用持久化卷/目录。
-- 本地开发数据不写入仓库，不提交凭据。
+- 开发机**不强制先安装 PostgreSQL/Docker**：PR-A 的数据库迁移、写入、去重、读回可先由 GitHub Actions 中的临时 PostgreSQL Service 验证；本机具备条件时，可用 Docker Compose/本地 PG 复现。**CI 通过不能替代日后的真实环境连通与数据保留验收**。
+- 后端仍复用本机 Go `backend/cmd/api`；必要时可在受控的云端测试环境运行后端做连通测试。开发阶段只监听本地地址或通过安全隧道访问，公网接口不能裸露测试数据库。
+- React UI 可用 `npm run dev` 做布局调试；Tauri CSP、API origin、CORS 与真实图片域名应在 PR-B 一同校验。**Vite 预览不等于 Windows/macOS 原生 Tauri 通过**。
+- Chrome/Edge 插件连接同一个已鉴权的测试 API；开发凭据及数据不得提交仓库。来源图片首批只保留 URL，不要求新建图片文件库。
 
 本地开发不等于把数据库和后端嵌入 Windows/macOS 安装包。
 
-### 后续云端部署
+### 后续云端部署（2C4G 候选，尚未实施）
 
-- 一个后端业务服务部署到 Linux 云服务器。
-- PostgreSQL 使用持久化存储。
-- API 配置 HTTPS。
-- 桌面客户端通过设置或环境配置切换 API 地址。
-- 浏览器插件绑定同一个云端 API。
-- Windows 和 macOS 登录后读取同一份云端已保存数据。
+- 可考虑 Ubuntu 24.04 / 2 vCPU / 4GB RAM / SSD 60–80GB 运行单一 Go API + PostgreSQL + HTTPS 反向代理；实际性能、资源和网络需压测/监控，不保证特定并发规模。
+- 部署可采用轻量 Docker Compose、持久化数据库卷和异地可恢复备份；**不能把数据库 5432 暴露到公网**。本地/CI/云端数据隔离，公开 API 有登录鉴权、HTTPS。
+- 桌面客户端与浏览器插件可在可信配置中切换 API 地址；Tauri CSP `connect-src`、`img-src` 及 Go CORS 按实际受信来源配置，不全面关闭 CSP。
+- GitHub Actions 负责测试和需要时的 Win/macOS 构建，不承担生产数据库或默认生产部署。首次云端部署与 M0-02A HTTPS 候选单独审批，不混入采集 PR-A。
+- Windows/macOS 登录后可读取同一份**已保存**云端数据；不承诺复杂离线同步。
 
 首期不承诺复杂离线同步。未同步的本地草稿不承诺自动跨设备恢复。
 
@@ -342,8 +339,10 @@ Tauri 2 + React + TypeScript + Vite，**一个统一主程序/主题、按业务
 
 ## 11. Issue #6 的开发 PR 划分（唯一当前执行顺序）
 
-- **PR-A：后端采集入库**。复用 `backend/cmd/api`，完成 PostgreSQL 迁移、`source_products`/图片/实际变体保存、`POST /api/v1/collections` 幂等写入、列表/详情 GET；合成数据真实入库、读回、重启后可见。
-- **PR-B：Tauri 跨平台采集箱**。Core + 采集箱列表/内部详情，真实 API 显示图片/普通描述/独立卖点/变体和缺失原因；Windows 原生启动验收，macOS 构建与实机状态按事实记录。
+**前置 CI-0（独立小 PR）**：先建立 `.github/workflows/ci.yml`，在正确目录检查 `backend/` Go 代码及 `apps/desktop/` Vite 构建；首次实际运行通过后再开始 PR-A。在 PR-A 中追加 GitHub 临时 PostgreSQL 集成测试，PR-B 才增加 Win/mac Tauri 构建，PR-C 才增加 MV3 检查。详细规则见 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md)。
+
+- **PR-A：后端采集入库**。复用 `backend/cmd/api`，完成 PostgreSQL 迁移、`source_products`/图片/实际变体保存、`POST /api/v1/collections` 幂等写入、列表/详情 GET；使用临时 PostgreSQL Service 和合成数据验证真实写入/读回、重启后持久、去重、部分采集不覆盖完整旧字段。按 `user + platform + site + normalized_url` 去重，缺失价格保持 null；不引入独立 ASIN/source_product_id、采购成本重量等工作稿字段、无条件 `ON CONFLICT` 覆盖或 `collected_products` 单表设计。
+- **PR-B：Tauri 跨平台采集箱**。Core + 采集箱列表/内部详情，真实 API 显示图片/普通描述/独立卖点/变体和缺失原因；配置 Tauri 图片/API CSP 与后端 CORS，CI 检查原生跨平台构建；Windows 原生启动、macOS 实机状态另行按事实验收。
 - **PR-C：Amazon.com MV3 浏览器采集**。用户点击 → 结构化采集 → Go API → 桌面采集箱可见；重复、部分和错误状态准确。以后另开范围扩展 Mercado Libre 的 PR。
 
 M1 产品库/AI/店铺/刊登均由 [Delivery v2.1](DELIVERY.md) 逐阶段授权，**不得混入 M0-03**。每个 PR 保持小范围、Draft 审核后再决定合并。
@@ -351,7 +350,8 @@ M1 产品库/AI/店铺/刊登均由 [Delivery v2.1](DELIVERY.md) 逐阶段授权
 ## 12. MVP 验收标准
 
 ### 后端
-- 选定的后端服务可本地启动。
+- 在 GitHub Actions 的标准托管 Runner 上跑过真实 Go 编译、vet、test（不是仅声明 “CI 配置”）。
+- 复用的 Go 后端服务可在受控开发环境启动。
 - PostgreSQL 迁移可执行。
 - 登录和基础鉴权正常。
 - 插件配对正常。
