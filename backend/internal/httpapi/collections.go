@@ -88,6 +88,11 @@ func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p, created, err := a.store.Save(r.Context(), a.ownerID, in)
+		if errors.Is(err, collections.ErrReadback) {
+			// The transaction committed: do not lie to the caller that nothing was saved.
+			writeJSON(w, http.StatusAccepted, map[string]any{"result": "saved_unverified", "id": p.ID, "collection_status": p.Status})
+			return
+		}
 		if err != nil {
 			if strings.Contains(err.Error(), "title is required") {
 				writeError(w, http.StatusBadRequest, err.Error())

@@ -15,6 +15,7 @@ import (
 type Store struct{ DB *pgxpool.Pool }
 
 var ErrNotFound = errors.New("collection not found")
+var ErrReadback = errors.New("collection committed, but readback failed")
 
 // Save is a single transaction. The unique key and row lock serialize recaptures.
 // A partial recapture merges known values only, never deleting previously saved subitems.
@@ -175,7 +176,10 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 		return Product{}, false, err
 	}
 	result, err := s.Get(ctx, owner, id)
-	return result, created, err
+	if err != nil {
+		return Product{ID: id, Status: status}, created, fmt.Errorf("%w: %v", ErrReadback, err)
+	}
+	return result, created, nil
 }
 
 func (s *Store) Get(ctx context.Context, owner, id string) (Product, error) {
