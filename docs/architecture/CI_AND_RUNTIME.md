@@ -2,7 +2,7 @@
 
 > 2026-11-16 · **CI 与验收指导，尚未完成 CI 运行、数据库接入或云端部署验收**。本文只定义 CI 的技术梯度与运行环境分工；唯一业务里程碑以 [DELIVERY.md](DELIVERY.md) 为准。
 >
-> **基础设施来源与合并顺序**：[PR #3：M0 基础设施基线](https://github.com/Fan6512/una-seller/pull/3) 中的 [ADR-0005（PR #3 分支，尚未进入 main）](https://github.com/Fan6512/una-seller/blob/docs/m0-infrastructure-baseline-20261026/docs/decisions/0005-m0-infrastructure.md) 已记录用户选择：**现有 Ubuntu 服务器 + 复用 Nginx + Supabase 托管 PostgreSQL**。PR #3 仍 OPEN，技术选型已记录但**未在 main 生效、也未部署验收**。本 PR #8 不另选自建 PG/Caddy；PR #3 合并前须处理它对旧版 Foundation/Delivery 的覆盖风险，再由 ADR-0005 成为正式基础设施依据。
+> **基础设施选型依据**：[ADR-0005](../decisions/0005-m0-infrastructure.md) 与 [M0 部署基线](DEPLOYMENT_M0.md)：沿用**已有 Ubuntu 服务器 + 现有 Nginx + 单 Go API + Supabase 托管 PostgreSQL**，不再设计自建 PG 或 Caddy 作为默认替代。服务器信息来自历史 SSH 记录；该选型**不代表 HTTPS、数据库连接或业务服务已经部署验收**。本文件仅补充公开仓库 CI、工具链与测试边界，不覆盖基础设施决策。
 >
 > 当前仓库事实：公开仓库；`backend/go.mod` 为 Go 1.23；桌面端在 `apps/desktop/`，Node/npm + Vite 构建；尚无 `.github/workflows/`、PostgreSQL 业务迁移或浏览器插件代码。不得将计划写成已实现。
 
@@ -17,7 +17,7 @@
 PR #3 / ADR-0005 记录的**历史 SSH 观察**：Ubuntu 24.04.4 LTS、2 vCPU、约 3.6GiB RAM（当时 available 约 2.3GiB）、59GB 根盘（当时剩余约 37GB）、约 980MiB swap 已用、Nginx 80 端口在用、已有 Docker `we-mp-rss`。这些不是本轮重新 SSH 核验的当前运行指标，也**不代表 Una Seller 已部署**。部署前重新检查 `free -h`、`vmstat`、磁盘、Nginx 监听及既有服务；swap 已用并不能单凭数值判定内存不足。此配置能否支撑新 Go 服务须依实测，优先不在同机额外部署 PostgreSQL。
 
 - 云端 API 暴露公网前必须启用 HTTPS、有效 ERP 身份认证；**数据库采用 Supabase 托管 PostgreSQL**，仅 Go 服务持有其 TLS 连接凭据，不让桌面端直连，不公开本机数据库端口。GitHub CI 的临时 PostgreSQL 与 Supabase 正式/测试项目隔离；凭据不进公开仓库或构建产物。
-- 部署方案沿用 PR #3 的 **Cloudflare `mkd.186512.xyz` + 现有 Nginx + Go 进程（候选 systemd）+ Supabase**；[PR #4](https://github.com/Fan6512/una-seller/pull/4) 是独立的 Nginx/HTTPS 部署代码候选。**不再把 Caddy 或自建 PostgreSQL/Compose 作为同等默认选型**；不得覆盖现有 Nginx、`we-mp-rss` 或未合并的部署候选。PR #3、#4 的依赖、旧文档冲突与部署验收需另行收口。
+- 部署依据 [ADR-0005](../decisions/0005-m0-infrastructure.md)，采用 **Cloudflare `mkd.186512.xyz` + 现有 Nginx + Go 进程（候选 systemd）+ Supabase**；[PR #4](https://github.com/Fan6512/una-seller/pull/4) 的 Nginx/HTTPS 配置仍是独立代码候选。不得覆盖现有 Nginx、`we-mp-rss`，也不得将 Caddy、自建 PostgreSQL 或 Compose 视为默认方案；部署与证书均需单独验证。
 - Supabase 的持久化与备份能力、免费计划限制、恢复责任需要在项目实际创建后核实；**托管数据库不等于已经具备可恢复的备份**。PR-B 需要独立可达的真实测试数据库及 Go API，具体前置条件见下文 CI-2。
 - GitHub 标准托管 Runner 可编译 Win/macOS 目标，但 **Vite 通过 ≠ Tauri 原生编译通过 ≠ 真实设备 GUI 启动通过**；无实机时标 `UNVERIFIED`。
 - 前端实际 API origin、Tauri `connect-src` 与图片 `img-src` 需在 PR-B 一起对齐；允许所需 HTTPS 来源，勿因 CSP 默认值使商品图片不可见，也不要为解决图片问题全面关闭 CSP。
