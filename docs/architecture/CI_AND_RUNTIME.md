@@ -1,6 +1,8 @@
 # Una Seller：GitHub Actions CI 与初期运行环境（v1）
 
-> 2026-11-16 · **实施指导，尚未完成部署与 CI 运行验收**。本文件说明 CI 与环境选择，不维护第二份业务里程碑；唯一开发顺序以 [DELIVERY.md](DELIVERY.md) 为准。
+> 2026-11-16 · **CI 与验收指导，尚未完成 CI 运行、数据库接入或云端部署验收**。本文只定义 CI 的技术梯度与运行环境分工；唯一业务里程碑以 [DELIVERY.md](DELIVERY.md) 为准。
+>
+> **基础设施来源与合并顺序**：[PR #3：M0 基础设施基线](https://github.com/Fan6512/una-seller/pull/3) 中的 [ADR-0005（PR #3 分支，尚未进入 main）](https://github.com/Fan6512/una-seller/blob/docs/m0-infrastructure-baseline-20261026/docs/decisions/0005-m0-infrastructure.md) 已记录用户选择：**现有 Ubuntu 服务器 + 复用 Nginx + Supabase 托管 PostgreSQL**。PR #3 仍 OPEN，技术选型已记录但**未在 main 生效、也未部署验收**。本 PR #8 不另选自建 PG/Caddy；PR #3 合并前须处理它对旧版 Foundation/Delivery 的覆盖风险，再由 ADR-0005 成为正式基础设施依据。
 >
 > 当前仓库事实：公开仓库；`backend/go.mod` 为 Go 1.23；桌面端在 `apps/desktop/`，Node/npm + Vite 构建；尚无 `.github/workflows/`、PostgreSQL 业务迁移或浏览器插件代码。不得将计划写成已实现。
 
@@ -10,13 +12,13 @@
 | --- | --- | --- |
 | GitHub Actions 标准托管 Runner | PR 自动 Go 编译/单测、TS/Vite 构建；PR-A 起使用临时 PostgreSQL；PR-B 起增加 Win/macOS Tauri 原生构建；PR-C 起检查 MV3 插件 | 生产数据库、真实店铺 Token、常驻应用服务器 |
 | 本地 Windows 开发电脑 | Codex 编写和审查代码；可用 Vite 预览普通 UI；需要 Windows 原生启动验收时再安装 Rust/Cargo 及 Windows 所需工具链 | 必须本机同时安装 Go、PG、Docker、Rust 的假设 |
-| 2C4G Linux 云主机（**建议配置，未购置/未部署/未压测**） | 后续运行一个 Go API、一个 PostgreSQL、HTTPS 反向代理（Caddy 或现有代理二选一）；持久化业务数据与备份 | GitHub CI 构建、AI 大模型推理、复杂任务系统 |
+| **已有** Ubuntu Linux 服务器（PR #3 曾由用户 SSH 检查，部署状态待复核） | 现有 Nginx + 后续单 Go API；通过 TLS 访问 **Supabase 托管 PostgreSQL**，维护原有 `we-mp-rss` 服务 | 自建 PostgreSQL、Caddy、CI 编译、大型 AI 推理 |
 
-初期可选 2 vCPU / 4GB RAM / SSD 60–80GB / Ubuntu 24.04 LTS，前提是实际负载较低、商品图片起初只存来源 URL、AI 文案/白底调用外部 API。资源是否够用依实际 CPU、RAM、I/O、存储和延迟监控判断；不宣称“保证支持多少商品或账号”。
+PR #3 / ADR-0005 记录的**历史 SSH 观察**：Ubuntu 24.04.4 LTS、2 vCPU、约 3.6GiB RAM（当时 available 约 2.3GiB）、59GB 根盘（当时剩余约 37GB）、约 980MiB swap 已用、Nginx 80 端口在用、已有 Docker `we-mp-rss`。这些不是本轮重新 SSH 核验的当前运行指标，也**不代表 Una Seller 已部署**。部署前重新检查 `free -h`、`vmstat`、磁盘、Nginx 监听及既有服务；swap 已用并不能单凭数值判定内存不足。此配置能否支撑新 Go 服务须依实测，优先不在同机额外部署 PostgreSQL。
 
-- 云端 API 暴露公网前必须启用 HTTPS、有效 ERP 身份认证；PostgreSQL `5432` 不直接开放公网。开发数据库/CI 临时数据库与正式数据隔离；凭据通过环境变量或部署环境机密配置，不进公开仓库或构建产物。
-- 后期部署可用简单 Docker Compose 管理 Go + PostgreSQL + HTTPS 反代，但**当前不提前提交生产 Compose/Dockerfile 作为既成事实**，也不覆盖仍在独立评审的 M0-02A HTTPS 方案；等云服务器及域名条件确定再选最终反代。
-- PostgreSQL 数据卷持久化，备份应包含可恢复的异地副本；不能因为 Docker volume 存在就声称有备份。公网端点的账号和数据库权限按最低需要配置。
+- 云端 API 暴露公网前必须启用 HTTPS、有效 ERP 身份认证；**数据库采用 Supabase 托管 PostgreSQL**，仅 Go 服务持有其 TLS 连接凭据，不让桌面端直连，不公开本机数据库端口。GitHub CI 的临时 PostgreSQL 与 Supabase 正式/测试项目隔离；凭据不进公开仓库或构建产物。
+- 部署方案沿用 PR #3 的 **Cloudflare `mkd.186512.xyz` + 现有 Nginx + Go 进程（候选 systemd）+ Supabase**；[PR #4](https://github.com/Fan6512/una-seller/pull/4) 是独立的 Nginx/HTTPS 部署代码候选。**不再把 Caddy 或自建 PostgreSQL/Compose 作为同等默认选型**；不得覆盖现有 Nginx、`we-mp-rss` 或未合并的部署候选。PR #3、#4 的依赖、旧文档冲突与部署验收需另行收口。
+- Supabase 的持久化与备份能力、免费计划限制、恢复责任需要在项目实际创建后核实；**托管数据库不等于已经具备可恢复的备份**。PR-B 需要独立可达的真实测试数据库及 Go API，具体前置条件见下文 CI-2。
 - GitHub 标准托管 Runner 可编译 Win/macOS 目标，但 **Vite 通过 ≠ Tauri 原生编译通过 ≠ 真实设备 GUI 启动通过**；无实机时标 `UNVERIFIED`。
 - 前端实际 API origin、Tauri `connect-src` 与图片 `img-src` 需在 PR-B 一起对齐；允许所需 HTTPS 来源，勿因 CSP 默认值使商品图片不可见，也不要为解决图片问题全面关闭 CSP。
 
@@ -32,24 +34,28 @@ GitHub 官方规则：公开仓库使用标准 GitHub-hosted Runner 免费；大
 建立 `.github/workflows/ci.yml`；`pull_request` 到 `main` 与 `push` 到 `main` 触发；默认 `permissions: contents: read`，同一 PR 的旧运行可被新提交取消；不用 `pull_request_target` 执行不可信 PR 代码，不注入生产密钥。
 
 - **Go job / Ubuntu**：在 `backend/` 执行 `gofmt` 检查、`go vet ./...`、`go test ./...` 和 `go build ./...`；采用 `backend/go.mod` 声明的 Go 版本。当前无 `go.sum`，不要把不存在的文件设为必需缓存条件。
-- **桌面前端 job / Ubuntu**：在 `apps/desktop/` 执行 `npm ci` 和 `npm run build`；使用现有 `package-lock.json`，Node 版本与项目工具链相容（建议 Node 22）。
+- **桌面前端 job / Ubuntu**：在 `apps/desktop/` 执行 `npm ci` 和 `npm run build`；使用现有 `package-lock.json`，配置 Node **`22.x`（实际版本不得低于 `22.12`）**，满足 Vite 7 的最低版本要求。参考 [Vite 7 官方迁移说明](https://v7.vite.dev/guide/migration)。
 - 只使用当前确实存在的脚本；不在仓库根目录误运行 Go 和 npm，也不提前构建不存在的浏览器插件。
 - CI-0 先在自己的 Draft PR 中至少跑过一次，再讨论将稳定 job 设为 `main` 的 required checks；公开仓库无需为此预设购买 GitHub Pro。
 - 安装包仅在需要验证时上传、设置短保留期；不让每个 PR 长期留存大文件。无 `.github/workflows` 时不能声称 CI 已通过。
 
 ### CI-1：Issue #6 / PR-A
 
-Go backend job 追加临时 PostgreSQL Service（例如 PostgreSQL 16，与项目后续部署选用主版本保持兼容），使用**仅 CI 使用的合成账号与合成商品**、迁移与集成测试验证：
-1. 商品写入后列表/详情读回，重启后仍存在。
+Go backend job 追加 GitHub-hosted Ubuntu 的临时 PostgreSQL Service（主版本以实际 Supabase 项目兼容性确认后设定，例如 PostgreSQL 16），使用**仅 CI 使用的合成账号与合成商品**、迁移与集成测试验证：
+1. 商品写入后列表/详情读回，**断开数据库连接、重新建立连接后仍能读回**；这并不等于数据库进程或机器重启持久性已验收。
 2. 同一“用户 + 平台 + 来源站点 + 规范化 URL”提交不重复建商品。
 3. 部分采集、空字段不清除旧的图片/卖点/完整变体。
 4. 货币/金额精确处理，缺失值保留空值；错误响应不误报成功。
 
-仅允许在 CI 临时数据库上执行建表或清空；**禁止连接云端正式数据库**。数据契约仍以 [ERP-MVP.md](ERP-MVP.md) 与 [DOMAIN_AND_EXECUTION.md](DOMAIN_AND_EXECUTION.md) 为准，不把临时测试表设计变成生产合同。
+仅允许在 CI 临时数据库上执行建表或清空；**禁止连接 Supabase 正式数据库**。GitHub Service Container 由 job 管理并在结束时销毁，CI-1 **只负责断连重连读回**；真实进程/数据库重启持久性另在本地 Docker 或获批准的受控环境完成，未执行则标 `NOT_RUN`，不得因 CI 绿而声称“重启通过”。数据契约仍以 [ERP-MVP.md](ERP-MVP.md) 与 [DOMAIN_AND_EXECUTION.md](DOMAIN_AND_EXECUTION.md) 为准。
 
 ### CI-2：Issue #6 / PR-B
 
-前端 job 保持快速反馈；新增 Windows x64 和 macOS arm64/Intel 的 Tauri 原生构建检查（用实际支持的 Runner、Rust/Tauri 系统依赖），记录失败原因。优先在桌面相关 PR 触发，避免文档改动每次跑跨平台安装包；真实 Windows/macOS GUI 启动需独立验收，不能被 CI build 取代。
+前端 job 保持快速反馈；新增 Windows x64 与 macOS arm64 / Intel 的 Tauri 原生构建，按实际支持的 Runner 与 Rust/Tauri 依赖配置。建议起始标签：`windows-latest`、`macos-15`（arm64）和 **`macos-15-intel`（x86_64）**；`macos-13` 已在 2025-12-04 退役。Intel 标准 Runner 预计在 2027 年 macOS 15 镜像退役时结束支持，真正实施时再核对官方可用标签。Intel 初期只做 unsigned build，不要求签名/公证。参考 [GitHub Runner 退役公告](https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/)。
+
+**PR-B 的强制前置**：至少一套经明确批准、真实可达的开发/测试 PostgreSQL（优先**独立 Supabase 测试项目/数据库**，也可本机 PG）及连接它的 Go API，能够预先写入合成商品。CI-1 的临时 PostgreSQL 不会跨 job 保留，**不能充当 PR-B Windows 实机验收的数据源**。若尚无可用测试库、API 地址与最小身份/凭据配置，就将“原生客户端显示真实持久化记录”标 `BLOCKED`，不以 Mock/Vite 或 Actions 构建冒充通过；测试库启用和公网测试 API 部署均需单独审批、不得默认接生产。
+
+优先在桌面相关 PR 触发原生构建，避免纯文档变更重复耗时；真实 Windows/macOS GUI 启动需独立验收，不能被 CI build 取代。
 
 ### CI-3：Issue #6 / PR-C
 
@@ -71,8 +77,8 @@ Go backend job 追加临时 PostgreSQL Service（例如 PostgreSQL 16，与项�
 | 说法 | 必须有的证据 |
 | --- | --- |
 | 基础 CI 已建立 | `ci.yml` 在真实 PR 上运行并输出明确通过/失败记录 |
-| PR-A 后端可用 | GitHub 临时 PG 集成通过 + 可重复的真实 PG 入库/读回证据 |
-| PR-B Windows/macOS 可用 | 对应原生构建成功；**实际桌面启动**额外由真实 OS 设备验证 |
+| PR-A 后端可用 | GitHub 临时 PG 集成通过 + 合成商品新增/去重/断连重连读回证据；**重启持久性另验**，未运行不得声称通过 |
+| PR-B Windows/macOS 可用 | 对应原生构建成功 + **有可达测试 PG 的 Go API** + 真实设备启动、显示已持久化商品；未实测的设备/架构单独标 `UNVERIFIED` |
 | API 云部署可用 | 已有用户鉴权、HTTPS、域名、隔离数据库及持久化/备份验证 |
 | Mercado Libre 刊登可用 | 官方账号权限确认、实际提交、逐站点结果和平台回读证据 |
 
