@@ -22,7 +22,7 @@
 - [ERP 后端与 Windows/macOS 桌面客户端 MVP](architecture/ERP-MVP.md)：Tauri 2 桌面客户端、单一后端 API、PostgreSQL、本地开发与后续云端部署。
 - [浏览器商品采集插件 MVP](product/BROWSER-COLLECTION-PLUGIN-MVP.md)：Chrome/Edge 插件、Amazon 与 Mercado Libre 卡片一键人工采集、商品详情/五点描述/多规格变体。
 
-当前执行顺序是 **先建最小 CI Draft PR，再实施 M0-03 的 PR-A 后端 → PR-B 桌面 → PR-C 浏览器扩展**。PR-A 添加临时 PostgreSQL 集成测试；Win/mac 原生构建和插件测试跟随对应阶段。产品库、AI 文案/图片、店铺模板、发布记录和已刊登产品列表列入后续 M1，文档规划不等于已完成或已授权全部同时开发。
+当前进度：**M0-00 基础 CI、Go 1.26 与 Issue #6 / PR-A 商品采集 Go + PostgreSQL 17 后端已合并**；Supabase `una-seller` 项目已完成 PR-A 迁移（2026-11-16，尚未验证 Go 云端连通与公网部署）。后续实施 **PR-B 桌面采集箱 → PR-C 浏览器扩展**；Win/mac 原生构建与实机验收独立登记。产品库、AI 文案/图片、店铺模板和刊登记录为后续 M1 阶段，规划不等于已交付。
 
 ## 历史规划与竞品资料
 
