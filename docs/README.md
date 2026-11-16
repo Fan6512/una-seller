@@ -8,8 +8,9 @@
 1. [Foundation v2.1：第一性原理与最简技术地基](architecture/FOUNDATION.md)
 2. [Delivery v2.1：M0～M3 精简开发路线](architecture/DELIVERY.md)
 3. [Domain v2.1：最小平台数据与写入契约](architecture/DOMAIN_AND_EXECUTION.md)
-4. [Windows/macOS 双平台规范](architecture/CROSS_PLATFORM.md)
-5. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0001：M0-03 Go 实施选择](decisions/0001-language-and-modular-monolith.md) · [全部 ADR](decisions/README.md)
+4. [CI 与运行环境 v1：公开 GitHub Actions、2C4G、构建/验收边界](architecture/CI_AND_RUNTIME.md)
+5. [Windows/macOS 双平台规范](architecture/CROSS_PLATFORM.md)
+6. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0001：M0-03 Go 实施选择](decisions/0001-language-and-modular-monolith.md) · [全部 ADR](decisions/README.md)
 
 ## 产品工作流与商品编辑器
 
@@ -20,7 +21,7 @@
 - [ERP 后端与 Windows/macOS 桌面客户端 MVP](architecture/ERP-MVP.md)：Tauri 2 桌面客户端、单一后端 API、PostgreSQL、本地开发与后续云端部署。
 - [浏览器商品采集插件 MVP](product/BROWSER-COLLECTION-PLUGIN-MVP.md)：Chrome/Edge 插件、Amazon 与 Mercado Libre 卡片一键人工采集、商品详情/五点描述/多规格变体。
 
-当前 M0-03 仅实现采集箱端到端闭环。产品库、AI 文案/图片、店铺模板、发布记录和已刊登产品列表列入后续 M1 分阶段交付，不代表代码已完成或已授权全部同时开发。
+当前执行顺序是 **先建最小 CI Draft PR，再实施 M0-03 的 PR-A 后端 → PR-B 桌面 → PR-C 浏览器扩展**。PR-A 添加临时 PostgreSQL 集成测试；Win/mac 原生构建和插件测试跟随对应阶段。产品库、AI 文案/图片、店铺模板、发布记录和已刊登产品列表列入后续 M1，文档规划不等于已完成或已授权全部同时开发。
 
 ## 历史规划与竞品资料
 
