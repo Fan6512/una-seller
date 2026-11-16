@@ -1,10 +1,10 @@
 # Una Seller：GitHub Actions CI 与初期运行环境（v1）
 
-> 2026-11-16 · **CI 与验收指导：M0-00 基础 CI 已建立并在真实 PR 上通过；数据库接入与云端部署仍未验收**。本文只定义 CI 的技术梯度与运行环境分工；唯一业务里程碑以 [DELIVERY.md](DELIVERY.md) 为准。
+> 2026-11-16 · **CI 与验收指导：M0-00 基础 CI 已建立并在真实 PR 上通过；Supabase 正式数据库连接与云端部署仍未验收**。本文只定义 CI 的技术梯度与运行环境分工；唯一业务里程碑以 [DELIVERY.md](DELIVERY.md) 为准。
 >
 > **基础设施选型依据**：[ADR-0005](../decisions/0005-m0-infrastructure.md) 与 [M0 部署基线](DEPLOYMENT_M0.md)：沿用**已有 Ubuntu 服务器 + 现有 Nginx + 单 Go API + Supabase 托管 PostgreSQL**，不再设计自建 PG 或 Caddy 作为默认替代。服务器信息来自历史 SSH 记录；该选型**不代表 HTTPS、数据库连接或业务服务已经部署验收**。本文件仅补充公开仓库 CI、工具链与测试边界，不覆盖基础设施决策。
 >
-> 当前仓库事实：公开仓库；`backend/go.mod` 为 Go 1.26；桌面端在 `apps/desktop/`，Node/npm + Vite 构建；尚无 PostgreSQL 业务迁移或浏览器插件代码。不得将计划写成已实现。
+> 当前仓库事实：公开仓库；`backend/go.mod` 为 Go 1.26；桌面端在 `apps/desktop/`，Node/npm + Vite 构建；PR-A 已提交 PostgreSQL 17 采集迁移与测试代码、尚未应用到正式 Supabase；浏览器插件代码尚未实现。不得将计划写成已部署。
 
 ## 1. 运行与构建的分工
 
@@ -33,7 +33,7 @@ GitHub 官方规则：公开仓库使用标准 GitHub-hosted Runner 免费；大
 
 建立 `.github/workflows/ci.yml`；`pull_request` 到 `main` 与 `push` 到 `main` 触发；默认 `permissions: contents: read`，同一 PR 的旧运行可被新提交取消；不用 `pull_request_target` 执行不可信 PR 代码，不注入生产密钥。
 
-- **Go job / Ubuntu**：在 `backend/` 执行 `gofmt` 检查、`go vet ./...`、`go test ./...` 和 `go build ./...`；采用 `backend/go.mod` 声明的 Go 版本。当前无 `go.sum`，不要把不存在的文件设为必需缓存条件。
+- **Go job / Ubuntu**：在 `backend/` 执行 `gofmt` 检查、`go vet ./...`、`go test ./...` 和 `go build ./...`；采用 `backend/go.mod` 声明的 Go 版本。PR-A 已引入 `go.sum`，当前 CI 仍使用 `cache: false`，如增加缓存须按实际文件配置。
 - **桌面前端 job / Ubuntu**：在 `apps/desktop/` 执行 `npm ci` 和 `npm run build`；使用现有 `package-lock.json`，配置 Node **`22.x`（实际版本不得低于 `22.12`）**，满足 Vite 7 的最低版本要求。参考 [Vite 7 官方迁移说明](https://v7.vite.dev/guide/migration)。
 - 只使用当前确实存在的脚本；不在仓库根目录误运行 Go 和 npm，也不提前构建不存在的浏览器插件。
 - CI-0 先在自己的 Draft PR 中至少跑过一次，再讨论将稳定 job 设为 `main` 的 required checks；公开仓库无需为此预设购买 GitHub Pro。
@@ -41,13 +41,13 @@ GitHub 官方规则：公开仓库使用标准 GitHub-hosted Runner 免费；大
 
 ### CI-1：Issue #6 / PR-A
 
-Go backend job 追加 GitHub-hosted Ubuntu 的临时 PostgreSQL Service（**先按 PostgreSQL 16 配置**；Supabase 项目建成后若主版本不同再对齐），使用**仅 CI 使用的合成账号与合成商品**、迁移与集成测试验证：
-1. 商品写入后列表/详情读回，**断开数据库连接、重新建立连接后仍能读回**；这并不等于数据库进程或机器重启持久性已验收。
+Go backend job 已使用 GitHub-hosted Ubuntu 的临时 **PostgreSQL 17 Service**（与已创建的 Supabase 项目主版本一致，但不连接该云库），通过**仅 CI 使用的合成账号与合成商品**、迁移与集成测试验证：
+1. 商品写入后列表/详情读回，**断开数据库连接、重新建立连接后仍能读回**；另以独立 CI 步骤执行合成数据写入 → `docker restart` PostgreSQL 17 容器 → 新 Go 测试进程读回验证，证明本次**数据库容器进程重启持久性**，不等于宿主机断电或 Supabase 正式实例重启。
 2. 同一“用户 + 平台 + 来源站点 + 规范化 URL”提交不重复建商品。
 3. 部分采集、空字段不清除旧的图片/卖点/完整变体。
 4. 货币/金额精确处理，缺失值保留空值；错误响应不误报成功。
 
-仅允许在 CI 临时数据库上执行建表或清空；**禁止连接 Supabase 正式数据库**。GitHub Service Container 由 job 管理并在结束时销毁，CI-1 **只负责断连重连读回**；真实进程/数据库重启持久性另在本地 Docker 或获批准的受控环境完成，未执行则标 `NOT_RUN`，不得因 CI 绿而声称“重启通过”。数据契约仍以 [ERP-MVP.md](ERP-MVP.md) 与 [DOMAIN_AND_EXECUTION.md](DOMAIN_AND_EXECUTION.md) 为准。
+仅允许在 CI 临时数据库上执行建表或清空；**禁止连接 Supabase 正式数据库**。GitHub Service Container 虽在 job 结束后销毁，但 PR-A 已在同一 job 内完成**写入 → PostgreSQL 17 容器实际重启 → 新测试进程读回**，三个独立步骤都有成功证据；因此可宣称**该 CI 容器的数据库进程重启持久性 PASS**。**仍未验证宿主机断电、PGDATA 卷丢失后的恢复或 Supabase 正式数据库实例重启**，不得扩大验收口径；未执行相应测试仍标 `NOT_RUN`，不能仅凭普通 CI 绿色宣称通过。数据契约仍以 [ERP-MVP.md](ERP-MVP.md) 与 [DOMAIN_AND_EXECUTION.md](DOMAIN_AND_EXECUTION.md) 为准。
 
 ### CI-2：Issue #6 / PR-B
 
@@ -77,7 +77,7 @@ Go backend job 追加 GitHub-hosted Ubuntu 的临时 PostgreSQL Service（**先�
 | 说法 | 必须有的证据 |
 | --- | --- |
 | 基础 CI 已建立 | `ci.yml` 在真实 PR 上运行并输出明确通过/失败记录 |
-| PR-A 后端可用 | GitHub 临时 PG 集成通过 + 合成商品新增/去重/断连重连读回证据；**重启持久性另验**，未运行不得声称通过 |
+| PR-A 本地后端可用 | GitHub 临时 PostgreSQL 17 集成通过 + 合成商品新增/去重/断连重连读回证据；另有独立的 **seed → `docker restart` → 新进程读回** 三步骤通过记录，证明 CI 容器进程重启后的持久性。**不代表宿主机断电、PGDATA 丢失恢复或 Supabase 正式实例重启已验收** |
 | PR-B Windows/macOS 可用 | 对应原生构建成功 + **有可达测试 PG 的 Go API** + 真实设备启动、显示已持久化商品；未实测的设备/架构单独标 `UNVERIFIED` |
 | API 云部署可用 | 已有用户鉴权、HTTPS、域名、隔离数据库及持久化/备份验证 |
 | Mercado Libre 刊登可用 | 官方账号权限确认、实际提交、逐站点结果和平台回读证据 |
