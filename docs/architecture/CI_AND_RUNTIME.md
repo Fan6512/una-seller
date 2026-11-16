@@ -4,7 +4,7 @@
 >
 > **基础设施选型依据**：[ADR-0005](../decisions/0005-m0-infrastructure.md) 与 [M0 部署基线](DEPLOYMENT_M0.md)：沿用**已有 Ubuntu 服务器 + 现有 Nginx + 单 Go API + Supabase 托管 PostgreSQL**，不再设计自建 PG 或 Caddy 作为默认替代。服务器信息来自历史 SSH 记录；该选型**不代表 HTTPS、数据库连接或业务服务已经部署验收**。本文件仅补充公开仓库 CI、工具链与测试边界，不覆盖基础设施决策。
 >
-> 当前仓库事实：公开仓库；`backend/go.mod` 为 Go 1.23；桌面端在 `apps/desktop/`，Node/npm + Vite 构建；尚无 `.github/workflows/`、PostgreSQL 业务迁移或浏览器插件代码。不得将计划写成已实现。
+> 当前仓库事实：公开仓库；`backend/go.mod` 为 Go 1.26；桌面端在 `apps/desktop/`，Node/npm + Vite 构建；尚无 PostgreSQL 业务迁移或浏览器插件代码。不得将计划写成已实现。
 
 ## 1. 运行与构建的分工
 
