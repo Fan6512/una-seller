@@ -12,7 +12,7 @@
 2. **后端**：一个 Go API 服务，运行于现有 **Ubuntu 24.04.4 LTS / 2 vCPU / 4GB**。运行时仅监听回环接口，由 Nginx 转发；不增设第二个 Web 网关。
 3. **公网边界**：Cloudflare 管理 `mkd.186512.xyz` DNS/代理，**复用现有 Nginx**（当前占用 80），为该主机新增独立 TLS 虚拟主机监听 443。正式 TLS 优先使用用户自行通过 Let's Encrypt / Certbot 申请、自动续期的证书；Cloudflare 使用 **Full (strict)**。Cloudflare Origin CA 是备选。
 4. **数据库**：前期 **Supabase 托管 PostgreSQL**，在 **M0-03 / Issue #6 的 PR-A 首次需要真实采集数据持久化时**按需接入，M1-D 才增加 OAuth/店铺授权数据；只建立当期确需的数据表与迁移。Go 服务使用 PostgreSQL 协议，不预装额外 Supabase 服务。IPv4-only 服务器可使用官方 Session Pooler（5432），连接信息取自实际 Supabase 项目并启用 TLS 验证；凭据仅在 Go 服务端。
-5. **应用回调**：`https://mkd.186512.xyz/oauth/mercadolibre/callback` 是已登记的目标 URI，尚未部署实现。Mercado Libre 开发者应用已创建，Client ID 已取得；不把 Client Secret、Token、证书私钥写入仓库或终端日志。
+5. **应用回调**：计划使用 `https://mkd.186512.xyz/oauth/mercadolibre/callback`，**尚未核实是否已在 Mercado Libre 开发者后台登记**，也未部署回调接口；实施 OAuth 前需确认并匹配真实登记 URI。Mercado Libre 开发者应用已创建，Client ID 已取得；不把 Client Secret、Token、证书私钥写入仓库或终端日志。
 6. **保护现有服务**：同机 Nginx 和 Docker 容器 `we-mp-rss` 保持正常；任何配置变更先备份、执行 `nginx -t` 后才 reload。仅在本子域名处理 TLS/重定向，不擅自改全站加密模式。
 7. **不做**：Redis、Kafka、集群、Kubernetes、收费系统、业务多租户、Supabase Auth/Realtime/Edge Functions 的预设集成。
 
