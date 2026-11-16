@@ -1,59 +1,17 @@
-# ---- 不入库：目标程序与大体量第三方产物（仅本地保留）----
-target/
+# ---- 第三方研究原件、逆向分析输出与本地工作文件：不纳入 Git ----
+# 这些目录已从当前工作树清理；历史 Git 提交仍可追溯，不代表公开历史已删除。
+/分析材料/
+/research/zying/analysis/
+/research/zying/target/
+/analysis/
+/target/
 .workbuddy/
-
-# ---- 不入库：逐字反编译 / 原始解密产物 ----
-analysis/decrypted/
-analysis/decompiled/
-analysis/strings/
-analysis/dat/
-analysis/zying_ext/
-analysis/ext_slices/
-analysis/mcp/
-analysis/tools/
-analysis/*.gbk
-analysis/tmp_*
-analysis/__pycache__/
-analysis/scripts/__pycache__/
-
-# ---- 不入库：第三方整页转载与含会话 Cookie 样本的检索输出 ----
-analysis/plugin_search.txt
-analysis/meli_terms*
-analysis/meli_partner*
-
-# ---- 不入库：大体量元数据清单 ----
-analysis/managed-core.json
-analysis/managed-ZYing.UI.dll.json
-analysis/managed-ZPdf.dll.json
-analysis/*.err
-
-# ---- 不入库：竞品原始安装包二进制 ----
-# 说明：反编译源码、内存转储扫描、程序集元数据与插件解包源码已于 2026-11-15
-# 按用户决策入库，用于交叉核对分析报告准确性。仅 ZInstall.exe 二进制不入库。
-/分析材料/智赢ERP/
 
 # ---- 通用 ----
 __pycache__/
 *.log
 Thumbs.db
 Desktop.ini
-
-# ---- 迁移后的竞品研究与派生数据，不纳入原始第三方内容 ----
-research/zying/target/
-research/zying/analysis/decrypted/
-research/zying/analysis/decompiled/
-research/zying/analysis/strings/
-research/zying/analysis/dat/
-research/zying/analysis/zying_ext/
-research/zying/analysis/ext_slices/
-research/zying/analysis/mcp/
-research/zying/analysis/tools/
-research/zying/analysis/*.gbk
-research/zying/analysis/tmp_*
-research/zying/analysis/plugin_search.txt
-research/zying/analysis/meli_terms*
-research/zying/analysis/meli_partner*
-research/zying/analysis/*.err
 
 # ---- 应用开发通用敏感与构建产物 ----
 .env
