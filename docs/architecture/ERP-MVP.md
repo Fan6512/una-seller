@@ -299,25 +299,22 @@ Tauri 2 + React + TypeScript + Vite，**一个统一主程序/主题、按业务
 
 ## 9. 本地开发与云端部署
 
-### 本地开发
+### 本地开发与 CI 的替代路径
 
-- PostgreSQL 通过 Docker Compose 启动。
-- 后端在本机运行，开发阶段只监听本地地址。
-- Tauri 桌面客户端连接本地后端。
-- Chrome / Edge 插件连接本地后端。
-- 数据库和图片目录使用持久化卷/目录。
-- 本地开发数据不写入仓库，不提交凭据。
+- 开发机**不强制先安装 PostgreSQL/Docker**：PR-A 的数据库迁移、写入、去重、读回可先由 GitHub Actions 中的临时 PostgreSQL Service 验证；本机具备条件时，可用 Docker Compose/本地 PG 复现。**CI 通过不能替代日后的真实环境连通与数据保留验收**。
+- 后端仍复用本机 Go `backend/cmd/api`；必要时可在受控的云端测试环境运行后端做连通测试。开发阶段只监听本地地址或通过安全隧道访问，公网接口不能裸露测试数据库。
+- React UI 可用 `npm run dev` 做布局调试；Tauri CSP、API origin、CORS 与真实图片域名应在 PR-B 一同校验。**Vite 预览不等于 Windows/macOS 原生 Tauri 通过**。
+- Chrome/Edge 插件连接同一个已鉴权的测试 API；开发凭据及数据不得提交仓库。来源图片首批只保留 URL，不要求新建图片文件库。
 
 本地开发不等于把数据库和后端嵌入 Windows/macOS 安装包。
 
-### 后续云端部署
+### 云端部署与测试数据库（基础设施选型见 ADR-0005）
 
-- 一个后端业务服务部署到 Linux 云服务器。
-- PostgreSQL 使用持久化存储。
-- API 配置 HTTPS。
-- 桌面客户端通过设置或环境配置切换 API 地址。
-- 浏览器插件绑定同一个云端 API。
-- Windows 和 macOS 登录后读取同一份云端已保存数据。
+- 根据 [ADR-0005](../decisions/0005-m0-infrastructure.md) 与 [M0 部署基线](DEPLOYMENT_M0.md)，采用**现有 Ubuntu 24.04.4 服务器、复用 Nginx、单 Go API 与 Supabase 托管 PostgreSQL**。不再默认自建 PG、购买新 2C4G 或安装 Caddy；**HTTPS、Supabase 连接及 API 部署仍未验收**，历史 SSH 检查不可充当当前线上状态。
+- 云端测试或将来生产接入 Supabase 时，Go 后端使用受控的 TLS 连接；桌面/插件不直连数据库，也不保存数据库密码。测试数据/CI 临时 PG 与正式 Supabase 数据隔离，托管服务的备份/恢复能力须实际核实。
+- **PR-B 的真实数据前置条件**：必须先有经明确批准的**可达测试 PostgreSQL**（优先单独 Supabase 测试项目，也可本机 PG）及连接它的 Go API，可查询一份合成商品；没有此环境，Windows Tauri 的“真实数据库记录显示”验收必须标 `BLOCKED`。PR-A CI 的 PostgreSQL Service 在 job 后销毁，不能当 PR-B 数据源。
+- 桌面客户端和浏览器插件可在可信配置中切换 API 地址；Tauri CSP `connect-src`、`img-src` 与 Go CORS 只允许必要来源。
+- GitHub Actions 只负责 CI 与按需 Win/macOS 构建；公网部署仍需单独授权、HTTPS/鉴权、既有 Nginx/RSS 不受影响、正式数据库不向客户端开放；Windows/macOS 登录后读取同一份已保存数据，但不承诺复杂离线同步。
 
 首期不承诺复杂离线同步。未同步的本地草稿不承诺自动跨设备恢复。
 
@@ -342,8 +339,10 @@ Tauri 2 + React + TypeScript + Vite，**一个统一主程序/主题、按业务
 
 ## 11. Issue #6 的开发 PR 划分（唯一当前执行顺序）
 
-- **PR-A：后端采集入库**。复用 `backend/cmd/api`，完成 PostgreSQL 迁移、`source_products`/图片/实际变体保存、`POST /api/v1/collections` 幂等写入、列表/详情 GET；合成数据真实入库、读回、重启后可见。
-- **PR-B：Tauri 跨平台采集箱**。Core + 采集箱列表/内部详情，真实 API 显示图片/普通描述/独立卖点/变体和缺失原因；Windows 原生启动验收，macOS 构建与实机状态按事实记录。
+**前置 CI-0**：先提交并实际运行基础 GitHub Actions，随后才启动 Issue #6 PR-A。CI 阶段的技术配置和验收统一以 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md) 为准，本任务书不维护另一份 CI 阶梯。
+
+- **PR-A：后端采集入库**。复用 `backend/cmd/api`，完成 PostgreSQL 迁移、`source_products`/图片/实际变体保存、`POST /api/v1/collections` 幂等写入、列表/详情 GET；CI 用临时 PostgreSQL 和合成数据验证写入、**断连重连读回**、去重、部分采集不覆盖完整旧字段。**真实进程/数据库重启持久性在受控本地/云端环境另测，未跑标 `NOT_RUN`**。按 `user + platform + site + normalized_url` 去重，缺失价格保持 null；不引入独立 ASIN/source_product_id、工作稿字段、无条件 `ON CONFLICT` 覆盖或 `collected_products` 单表设计。
+- **PR-B：Tauri 跨平台采集箱**。Core + 采集箱列表/内部详情，真实 API 显示图片/普通描述/独立卖点/变体和缺失原因；在已批准的可达**测试数据库 + Go API** 上验收真实记录。配置 Tauri CSP/CORS，CI 检查原生跨平台构建；Windows 原生启动、macOS 实机状态另行按事实验收，测试数据源未就绪则 `BLOCKED`。
 - **PR-C：Amazon.com MV3 浏览器采集**。用户点击 → 结构化采集 → Go API → 桌面采集箱可见；重复、部分和错误状态准确。以后另开范围扩展 Mercado Libre 的 PR。
 
 M1 产品库/AI/店铺/刊登均由 [Delivery v2.1](DELIVERY.md) 逐阶段授权，**不得混入 M0-03**。每个 PR 保持小范围、Draft 审核后再决定合并。
@@ -351,7 +350,8 @@ M1 产品库/AI/店铺/刊登均由 [Delivery v2.1](DELIVERY.md) 逐阶段授权
 ## 12. MVP 验收标准
 
 ### 后端
-- 选定的后端服务可本地启动。
+- GitHub Actions 上有真实 Go 编译、vet、test 结果（不能只提交 `ci.yml`）。
+- **另有至少一次 Go 后端在受控开发环境中的真实启动记录**；CI 编译通过不能替代运行验证。
 - PostgreSQL 迁移可执行。
 - 登录和基础鉴权正常。
 - 插件配对正常。
@@ -414,7 +414,7 @@ Core 的统一主题、导航、会话和 API 层共享；功能插件构建时�
 本任务书第一阶段只定义 ERP 后端与桌面采集箱 MVP，不代表全部业务功能已授权开发。
 
 当前优先完成：
-1. 复用现有 Go 服务，接入本地 PostgreSQL 与商品采集 API。
+1. 复用现有 Go 服务，接入 PostgreSQL 与商品采集 API；CI 使用临时数据库，客户端真实联调使用获批准的测试数据库。
 2. 基于 Tauri 2 Windows/macOS 桌面骨架，实现从真实 API 读取的采集箱列表与详情。
 3. 接入独立浏览器插件，完成 Amazon.com 单商品采集 → 入库 → 桌面可见的闭环。
 

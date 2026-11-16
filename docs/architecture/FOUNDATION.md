@@ -30,7 +30,7 @@
 - 数据：有实际持久化需要时使用 **PostgreSQL**；桌面本地先不建全量业务数据库，需要缓存时再用 SQLite。SQLCipher 仅在确有本地敏感数据时专项验证。
 - 美客多平台调用：只通过官方 REST API，OAuth 凭据保留在服务端；不得让 AI 或桌面前端持有平台 Token。
 - AI：先通过可替换的简单模型客户端生成标题、翻译和客服草稿；必要时可使用 UnaAPI 作为模型网关，但不共享 ERP 数据库/身份/账务。
-- 后台任务：开始可以由简单、可追踪的应用任务处理；涉及真实平台写操作或断点恢复时，使用 PostgreSQL 持久任务；Redis、River、消息总线均是**按需选择**，不是开工前的安装清单。
+- 后台任务：开始可以由简单、可追踪的应用任务处理；涉及真实平台写操作或断点恢复时，使用 PostgreSQL 持久任务；Redis、River、消息总线均是**按需选择**，不是开工前的安装清单。M1-D 的 OAuth 刷新可用 PostgreSQL 事务协调，M3 才评估 Webhook 的数据库持久队列，不为将来功能提前增加 Redis。
 - 云端保存已同步业务数据；跨设备先做到登录后读取同一份数据，复杂离线同步不是初期目标。
 
 ### 已确认的产品工作流（2026-11-15）
@@ -61,6 +61,13 @@
 - 后端：只选一个 HTTP 框架（或标准库）、一个数据库访问方法和迁移工具；不叠加 ORM、Repository、CQRS、DDD、Event Sourcing 多层模式。
 - API：前后端有明确 HTTP 契约；接口稳定且重复 DTO 增多时使用 OpenAPI 生成 TS Client，而非 M0 必须搭复杂生成流水线。
 
+### 开发/运行环境与 CI 边界（2026-11-16 增补）
+
+- **CI 与生产运行分离**：公开仓库优先使用免费标准 GitHub-hosted Runners；按功能出现逐步增加检查，不让云服务器承担 CI。**CI-0～CI-3 的唯一技术细节见 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md)**，不在 Foundation 维护第二套执行清单。
+- **基础设施不重复选型**：以 [ADR-0005](../decisions/0005-m0-infrastructure.md) 为依据，沿用**现有 Ubuntu 服务器（历史观察为 2 vCPU、约 3.6GiB RAM）+ 既有 Nginx + Go API + Supabase 托管 PostgreSQL**；不默认自建 PG、购买新服务器或安装 Caddy。运行数据来自既有 SSH 记录，**不代表本轮复测或实际部署验收**；图片暂存来源 URL、AI 调外部 API，资源用量以部署前实测及现有服务状况为准。
+- **本地工具链按需安装**：后端和数据层可先通过 GitHub Actions 进行编译/临时 PG 集成；普通 React UI 可用 Vite 预览。原生 Windows/macOS GUI 的完成定义必须有对应真实环境启动记录，不能把 Vite/Actions build 当实机通过。
+- **公共仓库安全最低线**：CI 无生产 Token、数据库账号或 SSH 部署凭据，默认 `contents: read`；PR 测试只用合成数据，部署采用独立批准的工作流；PostgreSQL 端口不暴露公网、API 公开前必须鉴权和 HTTPS，异地备份与测试环境隔离。
+
 ## 4. 必要安全及可靠性（不能因“简化”删除）
 
 - HTTPS；OAuth state 验证、令牌刷新/覆盖、解绑；Token 不进日志、浏览器打包物或 AI 提示词。
@@ -88,4 +95,4 @@
 
 优先删减、复用而非新增。对技术栈更换、拆服务、引入队列/缓存和商业化等**高成本决策**写 ADR；普通组件与日常实现不强制写 ADR。开发中发现已选技术不合适，可根据实测结果调整，不为了“遵守最初设计”坚持错误方向。
 
-相关：[产品工作流与编辑器](../product/PRODUCT-WORKFLOW-AND-EDITOR.md) · [开发路线](DELIVERY.md) · [领域与执行最小契约](DOMAIN_AND_EXECUTION.md) · [跨平台规范](CROSS_PLATFORM.md) · [简化原则决策](../decisions/0004-simplicity-first.md)。
+相关：[CI 与运行环境](CI_AND_RUNTIME.md) · [产品工作流与编辑器](../product/PRODUCT-WORKFLOW-AND-EDITOR.md) · [开发路线](DELIVERY.md) · [领域与执行最小契约](DOMAIN_AND_EXECUTION.md) · [跨平台规范](CROSS_PLATFORM.md) · [简化原则决策](../decisions/0004-simplicity-first.md)。

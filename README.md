@@ -5,7 +5,7 @@
 ## 先读这两份
 
 - [开发原则与技术地基（Foundation v2.1）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
-- [精简开发路线（Delivery v2.1）](docs/architecture/DELIVERY.md)：M0 采集箱 → M1 草稿/AI/刊登 → M2 商品维护 → M3 按需运营；M4 商业化冻结。
+- [精简开发路线（Delivery v2.1）](docs/architecture/DELIVERY.md)：先基础 CI → M0 采集箱 → M1 草稿/AI/刊登 → M2 商品维护 → M3 按需运营；M4 商业化冻结。
 
 ## 产品目标及开发路线
 
@@ -21,6 +21,8 @@
 
 ## 其他正式文档
 
+- [CI 与初期运行环境](docs/architecture/CI_AND_RUNTIME.md)：公开仓库的 Actions 分阶段启用、现有 Ubuntu 服务器 + Supabase 托管库、本机工具链分工。
+- [M0 基础设施与部署验收](docs/architecture/DEPLOYMENT_M0.md)：已有 Ubuntu/Nginx + Supabase 选型、HTTPS 步骤与尚未验收清单。
 - [Windows/macOS 双平台规范](docs/architecture/CROSS_PLATFORM.md)
 - [最小领域与写操作契约](docs/architecture/DOMAIN_AND_EXECUTION.md)
 - [架构决策 ADR](docs/decisions/README.md)
@@ -55,4 +57,4 @@ npm install
 npm run tauri:dev
 ```
 
-首次运行会生成依赖锁文件；应在实际构建验证后提交。当前 PR 未新增自动 GitHub Actions，避免无谓消耗额度。
+首次运行会生成依赖锁文件；应在实际构建验证后提交。**当前 main 尚未配置 GitHub Actions**；下一步先提交最小 CI Draft PR 并取得真实运行结果，再为 Issue #6 添加 PostgreSQL 集成与 Tauri/MV3 构建检查。

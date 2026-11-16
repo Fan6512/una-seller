@@ -3,9 +3,13 @@
 > 2026-11-15 · 自用优先、M0→M1→M2→M3；M4 商业化冻结，不规定固定工期。  
 > 北极星流程：**采集 → AI 整理 → Mercado Libre 刊登 → 日常运营**。  
 > 先做可运行闭环；功能分成可独立开发的内置插件，**不是一次搭建插件平台**。  
-> 参考 [Foundation](FOUNDATION.md) · [产品工作流及截图分析](../product/PRODUCT-WORKFLOW-AND-EDITOR.md)。
+> 参考 [Foundation](FOUNDATION.md) · [产品工作流及截图分析](../product/PRODUCT-WORKFLOW-AND-EDITOR.md) · [CI 与初期运行环境](CI_AND_RUNTIME.md)。
 
 ## M0：桌面基础与真实采集箱（当前）
+
+### M0-00：先建立基础 CI
+
+在 Issue #6 PR-A 之前，先以独立 Draft PR 提交最小 Go 与 Vite 检查，并取得实际 GitHub Actions 运行结果。**CI-0～CI-3 唯一技术配置/验收细节见 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md)**；后续按业务代码出现逐步添加数据库、Tauri 与 MV3 检查，本计划不重复维护第二套 CI 阶梯。
 
 1. 复用已有 Tauri 2 + React + TypeScript 桌面工程和现有 Go HTTP 服务，明确 Go 为 M0-03 唯一业务后端，不再平行验证第二套 Fastify 服务（如出现具体阻塞再另议）。Windows x64 真机启动，macOS arm64/x64 构建与可用设备启动验证；不能只把 Vite 构建当成原生验收。
 2. 以轻量模块注册组织 Core 和采集箱页面：统一主题、导航、状态与 API client；不建插件市场/多进程/多数据库。
@@ -16,9 +20,9 @@
 
 ### 当前 Issue #6 的交付 PR 顺序
 
-- PR-A：复用 Go API + 最小 PostgreSQL + 采集 POST/GET、幂等和真实读回。
-- PR-B：Tauri 2 采集箱真实列表、详情、图片/描述/变体/状态显示。
-- PR-C：Amazon.com 浏览器插件 → API → 桌面采集箱的单商品纵向闭环。
+- PR-A：复用 Go API + PostgreSQL SQL 迁移 + 采集 POST/GET、幂等和真实读回；临时 PostgreSQL CI 验证断连重连、去重及部分采集不会抹除旧图、卖点和变体。**真实数据库进程重启持久性**由独立受控环境验证，不能以 CI 断连重连替代。
+- PR-B：Tauri 2 采集箱真实列表、详情、图片/描述/变体/状态显示；配置 CSP 的图片来源/API 连接白名单及真实 CORS，CI 检查原生构建，真机启动状态另外验收。
+- PR-C：Amazon.com 浏览器插件 → API → 桌面采集箱的单商品纵向闭环；增加 MV3 插件构建/清单检查，CI 不要求访问实时 Amazon 页面。
 
 **M0 完成不意味着产品库、AI、图片白底或 Mercado Libre 刊登已实现。** 保持当前 Issue #6 的实施边界，不在 PR-A 提前建全套商品/店铺/发布数据表。
 
@@ -40,6 +44,12 @@
 - 站点示例：店铺 A=巴西+墨西哥，店铺 B=仅巴西；“西班牙语”是语言而非西班牙国家站点。
 - 初期少量发布用单后端 + PostgreSQL 记录，必要时简单持久任务，不提前安装 Redis、Kafka、通用调度系统。
 
+### OAuth、刊登和通知的阶段边界
+
+- **M1-D 才做 OAuth**：使用官方接口读取真实店铺信息和已刊登商品，Token 及其刷新由 Go 服务管理；并发刷新可通过 PostgreSQL 事务/行锁协调，刷新周期和 Token 行为要按当期官方资料验证，不为此提前安装 Redis。
+- **M1-E 才做真实刊登**：先检查账号 `user_product_seller` 等能力，再适配当前 User Products 或尚支持的旧模型；不能直接套用旧 `/global/items` 创建链路；每目标站点分别追踪结果与错误。
+- **M3 有真实运营需求时才做 Webhook/订单/客服**：通知入库后异步处理可以用 PostgreSQL + Go worker，实现前重新核实官方 topics、超时、鉴权和接口范围；M0 不建订单/消息表或通用队列。
+
 ## M2：真实商品管理与 AI 增强
 
 根据已发布商品的高频操作，逐步增加改价、库存、图片/描述更新、状态同步、失败日志、必要的批量处理；AI 属性建议、翻译版本管理及其他助理能力按真实收益扩展。
@@ -53,6 +63,10 @@
 ## M4：商业化（仍冻结）
 
 支付、套餐、充值、订阅、计费、SaaS 管理后台、复杂多租户和团队 RBAC 均未授权实施。
+
+### 现有服务器与本机工具链安排
+
+运行环境选型遵循 [ADR-0005](../decisions/0005-m0-infrastructure.md) 和 [M0 部署基线](DEPLOYMENT_M0.md)：**已有 Ubuntu 服务器 + 现有 Nginx + Go API + Supabase 托管 PostgreSQL**，而不是默认自建 PG/Caddy。已有 `we-mp-rss` 服务，正式部署前须复核服务器资源及其运行状态；**基础设施选型不等于已上线或通过验收**。CI 在 GitHub Runner 完成，本机不必为了 PR-A 强制安装 PG/Docker；PR-B 实机显示真实商品前必须提供获批准的可达测试数据库 + Go API。任何公网部署须另行授权并具备 HTTPS、鉴权、备份；Windows/macOS 实机启动不可由 CI 编译代替。
 
 ## 开发与审查纪律
 
