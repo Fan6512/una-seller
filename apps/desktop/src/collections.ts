@@ -99,7 +99,18 @@ export function formatMoney(value: string | null, currency: string | null) {
   return (currency ? currency + " " : "") + value;
 }
 
+function parseCollectedDate(value: string) {
+  // Go may emit RFC3339Nano timestamps; older WebKit needs millisecond precision.
+  const compatible = value.replace(/\.(\d{3})\d+(?=Z|[+-]\d{2}:\d{2}$)/, ".$1");
+  return new Date(compatible);
+}
+
 export function formatDate(value: string) {
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? value : new Date(timestamp).toLocaleString("zh-CN");
+  const date = parseCollectedDate(value);
+  return Number.isNaN(date.getTime()) ? "时间未知" : date.toLocaleString("zh-CN");
+}
+
+export function formatShortDate(value: string) {
+  const date = parseCollectedDate(value);
+  return Number.isNaN(date.getTime()) ? "时间未知" : date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 }
