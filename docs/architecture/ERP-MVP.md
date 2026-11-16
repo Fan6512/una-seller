@@ -308,7 +308,7 @@ Tauri 2 + React + TypeScript + Vite，**一个统一主程序/主题、按业务
 
 本地开发不等于把数据库和后端嵌入 Windows/macOS 安装包。
 
-### 云端部署与测试数据库（基础设施选型见在审 PR #3）
+### 云端部署与测试数据库（基础设施选型见 ADR-0005）
 
 - [PR #3 / ADR-0005](https://github.com/Fan6512/una-seller/pull/3) 已记录的用户选型是**现有 Ubuntu 24.04.4 服务器、复用 Nginx、Go API 与 Supabase 托管 PostgreSQL**。ADR 尚未合并进入 `main`，HTTPS、Supabase 连接与 API 部署均未验收；**不再默认自建 PG、购买新 2C4G 或安装 Caddy**。PR #3 旧版 Foundation/Delivery 在合并前须先消除覆盖冲突。
 - 云端测试或将来生产接入 Supabase 时，Go 后端使用受控的 TLS 连接；桌面/插件不直连数据库，也不保存数据库密码。测试数据/CI 临时 PG 与正式 Supabase 数据隔离，托管服务的备份/恢复能力须实际核实。
