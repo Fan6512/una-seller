@@ -64,30 +64,7 @@ jobs:
       - name: Seed PostgreSQL restart persistence fixture
         env:
           TEST_RESTART_PHASE: before
-        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence
-    name: Desktop Frontend
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: apps/desktop
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22.x'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: TypeScript check and Vite build
-        run: npm run build
- ./internal/collections
+        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence$' ./internal/collections
 
       - name: Restart PostgreSQL 17 service container
         run: |
@@ -110,30 +87,7 @@ jobs:
       - name: Verify PostgreSQL data after process restart
         env:
           TEST_RESTART_PHASE: after
-        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence
-    name: Desktop Frontend
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: apps/desktop
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22.x'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: TypeScript check and Vite build
-        run: npm run build
- ./internal/collections
+        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence$' ./internal/collections
 
   desktop:
     name: Desktop Frontend
