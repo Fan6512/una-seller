@@ -31,6 +31,15 @@ M0 只建立真实接口需要的数据表，不提前为订单、退款、广�
 
 采集状态（complete / partial）、草稿准备度（draft / ready）、发布操作状态（pending / processing / success / failed / needs_check）以及平台商品状态**不得共用一列**。金额使用精确 decimal；来源缺失的价格/图片/重量应为 null 或明确的缺失状态，不能填 0。
 
+### M0-03 采集入库契约：防止旧式单表覆盖设计回流
+
+- M0-03 仅落实最小用户身份、`source_products`、`source_product_images`、`source_product_variants`；这属于采集来源数据，**不是**可刊登产品草稿。采购成本、真实重量尺寸、供应商和未来 AI 候选应由 M1-A 的独立整理工作稿承载，不作为浏览器采集必填项。
+- 唯一去重依据为**所属用户 + 来源平台 + 来源站点 + 规范化来源 URL**，不引入必填 `source_product_id` / 独立 ASIN。一个平台商品在不同站点或不同账户下不能仅因平台商品 ID 相同而误合并。
+- `description` 与按原始顺序保存的 `bullet_points` 分开，图片保留主/附图顺序，规格保留实际存在的属性组合及图片/价格关联；可在子表中对动态属性使用 JSONB，但不以此代替清晰的子项关联。
+- **重复采集更新必须区分“本次未读取到”和“明确读到了空值”**：部分/失败采集不可用 `ON CONFLICT DO UPDATE` 无条件覆盖已有完整图片、变体或文案；按来源完整性与字段可信度选择保留/更新，事务中保证主商品和相关子项一致。金额使用 `numeric` 或等效精确类型，经 API 使用十进制字符串，未知值为 null 而非 0。
+- HTTP 层区分“首次保存、重复更新、部分已保存”和“请求失败未保存”；失败未保存不是采集箱中一条已保存的商品记录。首个 PR-A 使用**纯合成测试数据**验证新增、更新、字段保留和实际 PostgreSQL 读回。
+- 不直接采用从第三方方案得到的 `collected_products` 单表结构、以来源 ID 去重或清空历史图/变体的样例 SQL；以 [ERP-MVP](ERP-MVP.md) 与 [Issue #6](https://github.com/Fan6512/una-seller/issues/6) 为准。
+
 **源图 / 自有素材版本**：来源图片与自有编辑图片引用分离；AI 白底候选不能覆盖原图，刊登选中图要能追溯；不因图片白底功能提前创建对象存储和多媒体服务。
 
 ## 2. 官方 API 接入
@@ -40,6 +49,12 @@ M0 只建立真实接口需要的数据表，不提前为订单、退款、广�
 先用一个简单的 `MeliClient` 包装认证、HTTP 请求、错误转换和基本限流。功能变多再按商品/订单模块拆分，不提前建复杂 Adapter + Gateway + Repository 三层。
 
 官方端点、站点权限、参数和 API 行为必须参考官方文档并用有权限的账号验证。研究材料的 68 个直连端点不能直接当作自研 API 规格。
+
+### 官方接入何时展开
+
+- M1-D 才实现 Mercado Libre OAuth、Token 更新/刷新、店铺只读同步。并发刷新可使用 PostgreSQL 行锁或其他轻量事务方案协调，具体 Token 有效期及轮换语义以官方当期文档和账号实际响应为准，**不为未来 Token 刷新在 M0 预装 Redis**。
+- M1-E 根据当前账号是否启用 `user_product_seller` 选择 User Products 或仍受支持的 Legacy 操作，不把任何一份旧 CBT API 清单当成所有账号通用合同。参考 [User Products 官方说明](https://global-selling.mercadolibre.com/devsite/manage-sales-global-selling/user-products-cbt)；各目标站点单独记录状态和平台 ID，API 请求数量由实际模型决定。
+- M3 出现真实订单/问答/售后需求后再验证 Webhook topics、返回要求和接口权限，可先使用 PostgreSQL 持久通知/任务与 Go worker，不因历史逆向资料提前增加 `meli_orders`、`meli_interactions` 等空表或 Redis。
 
 ## 3. 真实写操作的最低保障
 
