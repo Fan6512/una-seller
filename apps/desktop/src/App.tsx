@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
-  apiBase, formatDate, formatMoney, getCollection, getCollectionPage, getHealth,
+  apiBase, formatDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
   type CollectionDetail, type CollectionSummary,
 } from "./collections";
 
 type ServiceStatus = "checking" | "online" | "offline";
 
-function CapturePill({ status }: { status: "complete" | "partial" }) {
-  return <span className={"capture-pill " + status}>{status === "complete" ? "完整采集" : "部分采集"}</span>;
+function CapturePill({ status }: { status: string }) {
+  const label = status === "complete" ? "完整采集" : status === "partial" ? "部分采集" : "状态未知";
+  const style = status === "complete" || status === "partial" ? status : "";
+  return <span className={"capture-pill " + style}>{label}</span>;
 }
 
 function Thumbnail({ src, title, large = false }: { src: string | null; title: string; large?: boolean }) {
   return src
     ? <img className={large ? "product-image product-image-large" : "product-image"} src={src} alt={title} loading="lazy" referrerPolicy="no-referrer" />
-    : <span className={large ? "product-image product-image-large image-empty" : "product-image image-empty"} aria-label="没有商品图片">暂无图片</span>;
+    : <span className={large ? "product-image product-image-large image-empty" : "product-image image-empty"} role="img" aria-label="没有商品图片">暂无图片</span>;
 }
 
 function Detail({ product }: { product: CollectionDetail }) {
@@ -92,6 +94,7 @@ export default function App() {
   const [offset, setOffset] = useState(0);
   const [refresh, setRefresh] = useState(0);
   const [items, setItems] = useState<CollectionSummary[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -128,11 +131,18 @@ export default function App() {
     setListError(null);
     void getCollectionPage(search, offset, controller.signal).then((page) => {
       if (controller.signal.aborted) return;
+      if (offset > 0 && page.items.length === 0) {
+        // Records may have been removed since the last page was loaded.
+        setOffset(Math.max(0, offset - PAGE_SIZE));
+        return;
+      }
       setItems(page.items);
+      setHasMore(page.hasMore);
       setSelectedId((old) => page.items.some((item) => item.id === old) ? old : page.items[0]?.id ?? null);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       setItems([]);
+      setHasMore(false);
       setSelectedId(null);
       setListError(error instanceof Error ? error.message : "采集列表无法获取");
     }).finally(() => {
@@ -216,10 +226,10 @@ export default function App() {
               {listLoading ? <p className="empty-state" role="status">正在读取数据库记录…</p> : listError ? (
                 <div className="error-state" role="alert"><strong>无法获取采集箱</strong><p>{listError}</p><small>检查本机 Go API、DATABASE_URL 与 UNA_SELLER_LOCAL_USER_ID。</small></div>
               ) : items.length === 0 ? (
-                <div className="empty-state"><strong>还没有采集商品</strong><p>这里不会显示演示商品。待通过 Go API 保存真实采集记录后，点击刷新即可看到。</p></div>
+                <div className="empty-state"><strong>{search ? "没有匹配的商品" : "还没有采集商品"}</strong><p>{search ? "请尝试其他标题关键词或清空搜索条件。" : "这里不会显示演示商品。待通过 Go API 保存真实采集记录后，点击刷新即可看到。"}</p></div>
               ) : (
                 <div className="collection-items">
-                  {items.map((item) => <button className={"collection-item " + (selectedId === item.id ? "selected" : "")} key={item.id} type="button" onClick={() => setSelectedId(item.id)} aria-pressed={selectedId === item.id}>
+                  {items.map((item) => <button className={"collection-item " + (selectedId === item.id ? "selected" : "")} key={item.id} type="button" onClick={() => setSelectedId(item.id)} aria-current={selectedId === item.id ? "true" : undefined}>
                     <Thumbnail src={item.main_image_url} title={item.title} />
                     <span className="item-copy"><strong>{item.title}</strong><span>{item.source_platform.toUpperCase()} · {item.source_site} · {formatMoney(item.price, item.currency)}</span><small>{formatDate(item.last_collected_at)}</small></span>
                     <CapturePill status={item.collection_status} />
@@ -227,10 +237,10 @@ export default function App() {
                 </div>
               )}
               <div className="list-footer">
-                <span>本页 {items.length} 条 · 每页最多 24 条</span>
+                <span>本页 {items.length} 条 · 每页最多 {PAGE_SIZE} 条</span>
                 <div className="pager">
-                  <button type="button" disabled={offset === 0 || listLoading} onClick={() => setOffset((n) => Math.max(0, n - 24))}>上一页</button>
-                  <button type="button" disabled={items.length < 24 || listLoading} onClick={() => setOffset((n) => n + 24)}>下一页</button>
+                  <button type="button" disabled={offset === 0 || listLoading} onClick={() => setOffset((n) => Math.max(0, n - PAGE_SIZE))}>上一页</button>
+                  <button type="button" disabled={!hasMore || listLoading} onClick={() => setOffset((n) => n + PAGE_SIZE)}>下一页</button>
                 </div>
               </div>
             </section>
