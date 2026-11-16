@@ -53,7 +53,16 @@ export type CollectionPage = {
 export const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8787").replace(/\/$/, "");
 
 async function requestJSON<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(apiBase + path, { signal, cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(apiBase + path, { signal, cache: "no-store" });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    if (error instanceof TypeError) {
+      throw new Error("无法连接本地 Go API（" + apiBase + "）。请确认服务已启动，并检查 API 地址、端口及 CORS/CSP 设置。");
+    }
+    throw error;
+  }
   if (!response.ok) {
     const message = response.status === 503
       ? "采集服务尚未配置数据库及本地用户"
