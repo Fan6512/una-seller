@@ -58,8 +58,82 @@ jobs:
       - name: Vet, test and build
         run: |
           go vet ./...
-          go test -p 1 ./...
+          go test -v -p 1 ./...
           go build ./...
+
+      - name: Seed PostgreSQL restart persistence fixture
+        env:
+          TEST_RESTART_PHASE: before
+        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence
+    name: Desktop Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check and Vite build
+        run: npm run build
+ ./internal/collections
+
+      - name: Restart PostgreSQL 17 service container
+        run: |
+          container="${{ job.services.postgres.id }}"
+          docker restart "$container"
+          ready=0
+          for attempt in $(seq 1 30); do
+            if docker exec "$container" pg_isready -U postgres -d una_seller_test >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs "$container"
+            echo "PostgreSQL did not become ready after restart"
+            exit 1
+          fi
+
+      - name: Verify PostgreSQL data after process restart
+        env:
+          TEST_RESTART_PHASE: after
+        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence
+    name: Desktop Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check and Vite build
+        run: npm run build
+ ./internal/collections
 
   desktop:
     name: Desktop Frontend

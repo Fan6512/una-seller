@@ -17,6 +17,9 @@ import (
 func TestCollectionHTTPWithPostgres(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("TEST_DATABASE_URL missing in CI")
+		}
 		t.Skip("requires disposable PostgreSQL")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

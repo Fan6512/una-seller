@@ -15,6 +15,9 @@ import (
 func TestPostgresCollectionRoundTrip(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("TEST_DATABASE_URL missing in CI")
+		}
 		t.Skip("TEST_DATABASE_URL not set (requires disposable PostgreSQL)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

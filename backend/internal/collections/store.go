@@ -89,7 +89,7 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 	if err != nil {
 		return Product{}, false, err
 	}
-	if in.Images.Present && !in.Images.Null && (!partial || len(in.Images.Value) > 0) {
+	if in.Images.Present && (!partial || (!in.Images.Null && len(in.Images.Value) > 0)) {
 		if !partial {
 			if _, err = tx.Exec(ctx, `DELETE FROM app.source_product_images WHERE source_product_id=$1 AND variant_id IS NULL`, id); err != nil {
 				return Product{}, false, err
@@ -117,7 +117,7 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 			}
 		}
 	}
-	if in.Variants.Present && !in.Variants.Null && (!partial || len(in.Variants.Value) > 0) {
+	if in.Variants.Present && (!partial || (!in.Variants.Null && len(in.Variants.Value) > 0)) {
 		if !partial {
 			if _, err = tx.Exec(ctx, `DELETE FROM app.source_product_variants WHERE source_product_id=$1`, id); err != nil {
 				return Product{}, false, err
@@ -136,14 +136,20 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 			vPrice := nullable(v.Price, partial, oldVPrice)
 			vCurrency := nullable(v.Currency, partial, oldVCurrency)
 			if variantID == "" {
-				err = tx.QueryRow(ctx, `INSERT INTO app.source_product_variants(source_product_id,variant_key,attributes,price,currency,sort_order) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text`, id, string(key), key, vPrice, vCurrency, i).Scan(&variantID)
+				order := i
+				if partial {
+					if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(sort_order),-1)+1 FROM app.source_product_variants WHERE source_product_id=$1`, id).Scan(&order); err != nil {
+						return Product{}, false, err
+					}
+				}
+				err = tx.QueryRow(ctx, `INSERT INTO app.source_product_variants(source_product_id,variant_key,attributes,price,currency,sort_order) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text`, id, string(key), key, vPrice, vCurrency, order).Scan(&variantID)
 			} else {
 				_, err = tx.Exec(ctx, `UPDATE app.source_product_variants SET price=$2,currency=$3 WHERE id=$1`, variantID, vPrice, vCurrency)
 			}
 			if err != nil {
 				return Product{}, false, err
 			}
-			if v.ImageURLs.Present && !v.ImageURLs.Null && (!partial || len(v.ImageURLs.Value) > 0) {
+			if v.ImageURLs.Present && (!partial || (!v.ImageURLs.Null && len(v.ImageURLs.Value) > 0)) {
 				if !partial {
 					if _, err = tx.Exec(ctx, `DELETE FROM app.source_product_images WHERE variant_id=$1`, variantID); err != nil {
 						return Product{}, false, err
