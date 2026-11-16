@@ -271,6 +271,7 @@ export default function App() {
   }, [selectedId, refresh]);
 
   const showDetail = items.length > 0 && !listError;
+  const connectionStatus: ServiceStatus = listError ? "offline" : service;
   const pageNumber = Math.floor(offset / PAGE_SIZE) + 1;
 
   return (
@@ -280,9 +281,9 @@ export default function App() {
         <span className="topbar-divider" aria-hidden="true" />
         <span className="topbar-label">商品工作台</span>
         <div className="topbar-spacer" />
-        <span className={"connection-indicator " + service} title={serviceError || undefined} role="status">
+        <span className={"connection-indicator " + connectionStatus} title={listError || serviceError || undefined} role="status">
           <span className="connection-dot" aria-hidden="true" />
-          {service === "checking" ? "连接中" : service === "online" ? "服务正常" : "连接异常"}
+          {connectionStatus === "checking" ? "连接中" : connectionStatus === "online" ? "服务正常" : "连接异常"}
         </span>
       </header>
 
