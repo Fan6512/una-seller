@@ -68,7 +68,7 @@
 
 ## 6. Mercado Libre OAuth 与凭据边界
 
-- 注册计划地址：**`https://mkd.186512.xyz/oauth/mercadolibre/callback`**；重定向必须和应用登记值精确一致。
+- **计划使用的 OAuth 回调 URI**：`https://mkd.186512.xyz/oauth/mercadolibre/callback`。**是否已在 Mercado Libre 应用后台实际登记仍需核对**；OAuth 实施时重定向 URI 必须与后台登记值完全一致。
 - 用户已创建开发者应用并拿到 Client ID，**Client Secret 不放入项目源码、客户端或文档**；在后端安全配置中注入。不要在 URL 查询参数或日志里暴露敏感 Token。
 - 实现必要的授权状态 `state` 生成/一次性校验及到期失效、授权码交换/一次性使用、Token 安全保存、刷新与解绑、`/users/me` 真实只读验证。
 - HTTPS 的根路径返回 200 只是 TLS 连通性验收；只有真实回调 handler、正确权限和实际 OAuth 测试通过后，才能标记 **店铺连接 PASS**。
@@ -78,7 +78,7 @@
 
 | 阶段 | 验收目标 | 现在 |
 | --- | --- | --- |
-| M0-01 | Windows 实机 Tauri 启动、Go 本机健康检查；macOS 双架构至少构建/启动记录 | PR #2 代码已提交；实机尚未验证 |
+| M0-01 | Windows 实机 Tauri 启动、Go 本机健康检查；macOS 双架构至少构建/启动记录 | **PR #2 已于 2026-11-14 合并**；Windows/macOS 实机启动仍未验收 |
 | M0-02a | Cloudflare DNS 公网解析 + Let's Encrypt 自动续期 + 独立 Nginx 443；旧 RSS 正常 | DNS 由用户配置；其余未验收 |
 | M0-02b | Go API 经 `https://mkd.186512.xyz/healthz` 正确响应；与真实 Supabase 连接需要另行验证 | 尚未部署/连库 |
 | **M0-03 / Issue #6** | 采集 API、持久化/去重/读回、桌面采集箱、Amazon.com 单商品 MV3 采集闭环 | 尚未完成真实采集数据链路；与公网 HTTPS 部署独立验收 |
