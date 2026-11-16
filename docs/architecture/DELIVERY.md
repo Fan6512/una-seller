@@ -3,7 +3,7 @@
 > 2026-11-15 · 自用优先、M0→M1→M2→M3；M4 商业化冻结，不规定固定工期。  
 > 北极星流程：**采集 → AI 整理 → Mercado Libre 刊登 → 日常运营**。  
 > 先做可运行闭环；功能分成可独立开发的内置插件，**不是一次搭建插件平台**。  
-> 参考 [Foundation](FOUNDATION.md) · [产品工作流及截图分析](../product/PRODUCT-WORKFLOW-AND-EDITOR.md)。
+> 参考 [Foundation](FOUNDATION.md) · [产品工作流及截图分析](../product/PRODUCT-WORKFLOW-AND-EDITOR.md) · [CI 与初期运行环境](CI_AND_RUNTIME.md)。
 
 ## M0：桌面基础与真实采集箱（当前）
 
@@ -14,11 +14,18 @@
 5. 浏览器 MV3 插件先以 Amazon.com 美国站单商品人工点击入库并在客户端可见；随后适配 Mercado Libre MLM/MLB/MLA。
 6. OAuth/云部署如条件尚不具备，单独标 BLOCKED，不阻断本地采集箱闭环；公网 API 必须鉴权和 HTTPS。
 
+### 开发前置：一个基础 CI Draft PR
+
+- **CI-0（独立小 PR，先于 Issue #6 PR-A）**：新增 `.github/workflows/ci.yml`，自动检查 `backend/` 的 gofmt/vet/test/build 和 `apps/desktop/` 的 `npm ci && npm run build`；按 Go 1.23（来自 go.mod）、兼容 Node 22 配置，公开仓库只使用标准 GitHub-hosted Runner。
+- 在实际 PR 上取得首次成功运行记录后审核合并 CI-0。**CI-0 不做 PostgreSQL 业务集成、原生 Tauri 安装包、浏览器插件和云部署**；仓库目前还没有这些实际业务代码或相应构建条件。
+- 按模块出现逐步补充：PR-A 在既有 CI 增加临时 PostgreSQL Service 和合成数据集成测试；PR-B 增加 Win/mac Tauri 原生构建（实际启动另测）；PR-C 增加 MV3 构建/清单检查。不为文档改动反复跑昂贵跨平台打包。
+- GitHub Actions 不需要在 2C4G 服务器运行；初期 PR 不使用生产密钥或生产数据库，不自动执行云端部署。CI 细节及完成定义以 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md) 为准。
+
 ### 当前 Issue #6 的交付 PR 顺序
 
-- PR-A：复用 Go API + 最小 PostgreSQL + 采集 POST/GET、幂等和真实读回。
-- PR-B：Tauri 2 采集箱真实列表、详情、图片/描述/变体/状态显示。
-- PR-C：Amazon.com 浏览器插件 → API → 桌面采集箱的单商品纵向闭环。
+- PR-A：复用 Go API + 最小 PostgreSQL + 采集 POST/GET、幂等和真实读回；**把临时 PostgreSQL Service 集成测试加入 CI**，验证部分采集不会抹除旧图、卖点和变体。
+- PR-B：Tauri 2 采集箱真实列表、详情、图片/描述/变体/状态显示；配置 CSP 的图片来源/API 连接白名单及真实 CORS，CI 检查原生构建，真机启动状态另外验收。
+- PR-C：Amazon.com 浏览器插件 → API → 桌面采集箱的单商品纵向闭环；增加 MV3 插件构建/清单检查，CI 不要求访问实时 Amazon 页面。
 
 **M0 完成不意味着产品库、AI、图片白底或 Mercado Libre 刊登已实现。** 保持当前 Issue #6 的实施边界，不在 PR-A 提前建全套商品/店铺/发布数据表。
 
@@ -40,6 +47,12 @@
 - 站点示例：店铺 A=巴西+墨西哥，店铺 B=仅巴西；“西班牙语”是语言而非西班牙国家站点。
 - 初期少量发布用单后端 + PostgreSQL 记录，必要时简单持久任务，不提前安装 Redis、Kafka、通用调度系统。
 
+### OAuth、刊登和通知的阶段边界
+
+- **M1-D 才做 OAuth**：使用官方接口读取真实店铺信息和已刊登商品，Token 及其刷新由 Go 服务管理；并发刷新可通过 PostgreSQL 事务/行锁协调，刷新周期和 Token 行为要按当期官方资料验证，不为此提前安装 Redis。
+- **M1-E 才做真实刊登**：先检查账号 `user_product_seller` 等能力，再适配当前 User Products 或尚支持的旧模型；不能直接套用旧 `/global/items` 创建链路；每目标站点分别追踪结果与错误。
+- **M3 有真实运营需求时才做 Webhook/订单/客服**：通知入库后异步处理可以用 PostgreSQL + Go worker，实现前重新核实官方 topics、超时、鉴权和接口范围；M0 不建订单/消息表或通用队列。
+
 ## M2：真实商品管理与 AI 增强
 
 根据已发布商品的高频操作，逐步增加改价、库存、图片/描述更新、状态同步、失败日志、必要的批量处理；AI 属性建议、翻译版本管理及其他助理能力按真实收益扩展。
@@ -53,6 +66,10 @@
 ## M4：商业化（仍冻结）
 
 支付、套餐、充值、订阅、计费、SaaS 管理后台、复杂多租户和团队 RBAC 均未授权实施。
+
+### 2C4G 云端与本机工具链安排
+
+2C4G 云主机作为**候选的初期应用环境**，预计部署 Go API、PostgreSQL 与一种 HTTPS 反向代理；无需承担 CI/Tauri 构建和大型 AI 模型推理。前期可用 GitHub Actions 临时 PG 证明数据库集成正确，本地不必因为 PR-A 强制安装 PostgreSQL/Docker；但任何生产云部署须另行批准并配置 HTTPS、鉴权、备份及数据库不公网开放。Win/mac 实机启动验收仍不能由 GitHub Actions 构建替代。
 
 ## 开发与审查纪律
 
