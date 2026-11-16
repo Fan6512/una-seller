@@ -57,4 +57,4 @@ npm install
 npm run tauri:dev
 ```
 
-首次运行会生成依赖锁文件；应在实际构建验证后提交。**当前 main 尚未配置 GitHub Actions**；下一步先提交最小 CI Draft PR 并取得真实运行结果，再为 Issue #6 添加 PostgreSQL 集成与 Tauri/MV3 构建检查。
+首次运行会生成依赖锁文件；应在实际构建验证后提交。**M0-00 基础 CI 已建立**（`.github/workflows/ci.yml`），Go 与桌面前端检查已在真实 PR 上通过；后续在 Issue #6 的 PR-A/B/C 中追加 PostgreSQL 集成、Tauri 与 MV3 检查。

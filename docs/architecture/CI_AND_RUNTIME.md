@@ -1,6 +1,6 @@
 # Una Seller：GitHub Actions CI 与初期运行环境（v1）
 
-> 2026-11-16 · **CI 与验收指导，尚未完成 CI 运行、数据库接入或云端部署验收**。本文只定义 CI 的技术梯度与运行环境分工；唯一业务里程碑以 [DELIVERY.md](DELIVERY.md) 为准。
+> 2026-11-16 · **CI 与验收指导：M0-00 基础 CI 已建立并在真实 PR 上通过；数据库接入与云端部署仍未验收**。本文只定义 CI 的技术梯度与运行环境分工；唯一业务里程碑以 [DELIVERY.md](DELIVERY.md) 为准。
 >
 > **基础设施选型依据**：[ADR-0005](../decisions/0005-m0-infrastructure.md) 与 [M0 部署基线](DEPLOYMENT_M0.md)：沿用**已有 Ubuntu 服务器 + 现有 Nginx + 单 Go API + Supabase 托管 PostgreSQL**，不再设计自建 PG 或 Caddy 作为默认替代。服务器信息来自历史 SSH 记录；该选型**不代表 HTTPS、数据库连接或业务服务已经部署验收**。本文件仅补充公开仓库 CI、工具链与测试边界，不覆盖基础设施决策。
 >
