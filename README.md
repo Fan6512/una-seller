@@ -21,7 +21,8 @@
 
 ## 其他正式文档
 
-- [CI 与初期运行环境](docs/architecture/CI_AND_RUNTIME.md)：公开仓库的 Actions 分阶段启用、2C4G 服务器和本机工具链分工。
+- [CI 与初期运行环境](docs/architecture/CI_AND_RUNTIME.md)：公开仓库的 Actions 分阶段启用、现有 Ubuntu 服务器 + Supabase 托管库、本机工具链分工。
+- [M0 基础设施与部署验收](docs/architecture/DEPLOYMENT_M0.md)：已有 Ubuntu/Nginx + Supabase 选型、HTTPS 步骤与尚未验收清单。
 - [Windows/macOS 双平台规范](docs/architecture/CROSS_PLATFORM.md)
 - [最小领域与写操作契约](docs/architecture/DOMAIN_AND_EXECUTION.md)
 - [架构决策 ADR](docs/decisions/README.md)

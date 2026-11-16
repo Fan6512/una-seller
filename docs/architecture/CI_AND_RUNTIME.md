@@ -12,9 +12,9 @@
 | --- | --- | --- |
 | GitHub Actions 标准托管 Runner | PR 自动 Go 编译/单测、TS/Vite 构建；PR-A 起使用临时 PostgreSQL；PR-B 起增加 Win/macOS Tauri 原生构建；PR-C 起检查 MV3 插件 | 生产数据库、真实店铺 Token、常驻应用服务器 |
 | 本地 Windows 开发电脑 | Codex 编写和审查代码；可用 Vite 预览普通 UI；需要 Windows 原生启动验收时再安装 Rust/Cargo 及 Windows 所需工具链 | 必须本机同时安装 Go、PG、Docker、Rust 的假设 |
-| **已有** Ubuntu Linux 服务器（PR #3 曾由用户 SSH 检查，部署状态待复核） | 现有 Nginx + 后续单 Go API；通过 TLS 访问 **Supabase 托管 PostgreSQL**，维护原有 `we-mp-rss` 服务 | 自建 PostgreSQL、Caddy、CI 编译、大型 AI 推理 |
+| **已有** Ubuntu Linux 服务器（ADR-0005 记录的历史 SSH 检查，部署状态待复核） | 现有 Nginx + 后续单 Go API；通过 TLS 访问 **Supabase 托管 PostgreSQL**，维护原有 `we-mp-rss` 服务 | 自建 PostgreSQL、Caddy、CI 编译、大型 AI 推理 |
 
-PR #3 / ADR-0005 记录的**历史 SSH 观察**：Ubuntu 24.04.4 LTS、2 vCPU、约 3.6GiB RAM（当时 available 约 2.3GiB）、59GB 根盘（当时剩余约 37GB）、约 980MiB swap 已用、Nginx 80 端口在用、已有 Docker `we-mp-rss`。这些不是本轮重新 SSH 核验的当前运行指标，也**不代表 Una Seller 已部署**。部署前重新检查 `free -h`、`vmstat`、磁盘、Nginx 监听及既有服务；swap 已用并不能单凭数值判定内存不足。此配置能否支撑新 Go 服务须依实测，优先不在同机额外部署 PostgreSQL。
+ADR-0005 记录的**历史 SSH 观察**：Ubuntu 24.04.4 LTS、2 vCPU、约 3.6GiB RAM（当时 available 约 2.3GiB）、59GB 根盘（当时剩余约 37GB）、约 980MiB swap 已用、Nginx 80 端口在用、已有 Docker `we-mp-rss`。这些不是本轮重新 SSH 核验的当前运行指标，也**不代表 Una Seller 已部署**。部署前重新检查 `free -h`、`vmstat`、磁盘、Nginx 监听及既有服务；swap 已用并不能单凭数值判定内存不足。此配置能否支撑新 Go 服务须依实测，优先不在同机额外部署 PostgreSQL。
 
 - 云端 API 暴露公网前必须启用 HTTPS、有效 ERP 身份认证；**数据库采用 Supabase 托管 PostgreSQL**，仅 Go 服务持有其 TLS 连接凭据，不让桌面端直连，不公开本机数据库端口。GitHub CI 的临时 PostgreSQL 与 Supabase 正式/测试项目隔离；凭据不进公开仓库或构建产物。
 - 部署依据 [ADR-0005](../decisions/0005-m0-infrastructure.md)，采用 **Cloudflare `mkd.186512.xyz` + 现有 Nginx + Go 进程（候选 systemd）+ Supabase**；[PR #4](https://github.com/Fan6512/una-seller/pull/4) 的 Nginx/HTTPS 配置仍是独立代码候选。不得覆盖现有 Nginx、`we-mp-rss`，也不得将 Caddy、自建 PostgreSQL 或 Compose 视为默认方案；部署与证书均需单独验证。
@@ -41,7 +41,7 @@ GitHub 官方规则：公开仓库使用标准 GitHub-hosted Runner 免费；大
 
 ### CI-1：Issue #6 / PR-A
 
-Go backend job 追加 GitHub-hosted Ubuntu 的临时 PostgreSQL Service（主版本以实际 Supabase 项目兼容性确认后设定，例如 PostgreSQL 16），使用**仅 CI 使用的合成账号与合成商品**、迁移与集成测试验证：
+Go backend job 追加 GitHub-hosted Ubuntu 的临时 PostgreSQL Service（**先按 PostgreSQL 16 配置**；Supabase 项目建成后若主版本不同再对齐），使用**仅 CI 使用的合成账号与合成商品**、迁移与集成测试验证：
 1. 商品写入后列表/详情读回，**断开数据库连接、重新建立连接后仍能读回**；这并不等于数据库进程或机器重启持久性已验收。
 2. 同一“用户 + 平台 + 来源站点 + 规范化 URL”提交不重复建商品。
 3. 部分采集、空字段不清除旧的图片/卖点/完整变体。
