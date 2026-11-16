@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  apiBase, formatDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
+  apiBase, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
   type CollectionDetail, type CollectionSummary,
 } from "./collections";
 
@@ -26,11 +26,6 @@ function siteName(platform: string, site: string) {
   const region: Record<string, string> = { US: "美国站", MLM: "墨西哥站", MLB: "巴西站", MLA: "阿根廷站" };
   const brand = platform === "mercadolibre" ? "Mercado Libre" : platform === "amazon" ? "Amazon" : platform;
   return brand + " · " + (region[site] ?? site);
-}
-
-function shortDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 }
 
 function CapturePill({ status }: { status: string }) {
@@ -321,7 +316,7 @@ export default function App() {
                       <span className="row-body">
                         <strong className="row-title" title={item.title}>{item.title}</strong>
                         <span className="row-price">{formatMoney(item.price, item.currency)}</span>
-                        <span className="row-meta">{siteName(item.source_platform, item.source_site)} · {shortDate(item.last_collected_at)}</span>
+                        <span className="row-meta">{siteName(item.source_platform, item.source_site)} · {formatShortDate(item.last_collected_at)}</span>
                         {item.collection_status !== "complete" && <span className="row-badge"><CapturePill status={item.collection_status} /></span>}
                       </span>
                       <span className="row-chevron"><Icon name="right" size={17} /></span>
