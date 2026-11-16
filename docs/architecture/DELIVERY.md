@@ -66,7 +66,7 @@
 
 ### 现有服务器与本机工具链安排
 
-运行环境选型参考在审的 [PR #3 / ADR-0005](https://github.com/Fan6512/una-seller/pull/3)：**已有 Ubuntu 2C4G + 复用 Nginx + Go API + Supabase 托管 PostgreSQL**，而不是默认自建 PG/Caddy。PR #3 未合并，旧版 Foundation/Delivery 变更需要先与现行基线收敛，**本段不代表基础设施已上线或当前主分支已接受 ADR-0005**。现有服务器尚有 `we-mp-rss`，应复核内存及既有服务后再部署。CI 在 GitHub Runner 完成，本机不必为了 PR-A 强制安装 PG/Docker；PR-B 实机显示真实商品前必须提供获批准的可达测试数据库 + Go API。任何公网部署须另行授权并具备 HTTPS、鉴权、备份；Mac/Win 实机启动不可由 CI 编译代替。
+运行环境选型遵循 [ADR-0005](../decisions/0005-m0-infrastructure.md) 和 [M0 部署基线](DEPLOYMENT_M0.md)：**已有 Ubuntu 服务器 + 现有 Nginx + Go API + Supabase 托管 PostgreSQL**，而不是默认自建 PG/Caddy。已有 `we-mp-rss` 服务，正式部署前须复核服务器资源及其运行状态；**基础设施选型不等于已上线或通过验收**。CI 在 GitHub Runner 完成，本机不必为了 PR-A 强制安装 PG/Docker；PR-B 实机显示真实商品前必须提供获批准的可达测试数据库 + Go API。任何公网部署须另行授权并具备 HTTPS、鉴权、备份；Windows/macOS 实机启动不可由 CI 编译代替。
 
 ## 开发与审查纪律
 
