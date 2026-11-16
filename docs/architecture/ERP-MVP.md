@@ -310,7 +310,7 @@ Tauri 2 + React + TypeScript + Vite，**一个统一主程序/主题、按业务
 
 ### 云端部署与测试数据库（基础设施选型见 ADR-0005）
 
-- [PR #3 / ADR-0005](https://github.com/Fan6512/una-seller/pull/3) 已记录的用户选型是**现有 Ubuntu 24.04.4 服务器、复用 Nginx、Go API 与 Supabase 托管 PostgreSQL**。ADR 尚未合并进入 `main`，HTTPS、Supabase 连接与 API 部署均未验收；**不再默认自建 PG、购买新 2C4G 或安装 Caddy**。PR #3 旧版 Foundation/Delivery 在合并前须先消除覆盖冲突。
+- 根据 [ADR-0005](../decisions/0005-m0-infrastructure.md) 与 [M0 部署基线](DEPLOYMENT_M0.md)，采用**现有 Ubuntu 24.04.4 服务器、复用 Nginx、单 Go API 与 Supabase 托管 PostgreSQL**。不再默认自建 PG、购买新 2C4G 或安装 Caddy；**HTTPS、Supabase 连接及 API 部署仍未验收**，历史 SSH 检查不可充当当前线上状态。
 - 云端测试或将来生产接入 Supabase 时，Go 后端使用受控的 TLS 连接；桌面/插件不直连数据库，也不保存数据库密码。测试数据/CI 临时 PG 与正式 Supabase 数据隔离，托管服务的备份/恢复能力须实际核实。
 - **PR-B 的真实数据前置条件**：必须先有经明确批准的**可达测试 PostgreSQL**（优先单独 Supabase 测试项目，也可本机 PG）及连接它的 Go API，可查询一份合成商品；没有此环境，Windows Tauri 的“真实数据库记录显示”验收必须标 `BLOCKED`。PR-A CI 的 PostgreSQL Service 在 job 后销毁，不能当 PR-B 数据源。
 - 桌面客户端和浏览器插件可在可信配置中切换 API 地址；Tauri CSP `connect-src`、`img-src` 与 Go CORS 只允许必要来源。
