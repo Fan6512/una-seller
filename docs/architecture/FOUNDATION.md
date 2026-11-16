@@ -63,8 +63,8 @@
 
 ### 开发/运行环境与 CI 边界（2026-11-16 增补）
 
-- **CI 与生产运行分离**：公开仓库优先使用免费标准 GitHub-hosted Runners。先落最小 Go + Vite CI，PR-A 加临时 PostgreSQL 集成测试，PR-B 加 Win/macOS 原生 Tauri 构建，PR-C 加 MV3 构建；云服务器不承担编译和 CI。具体契约见 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md)。
-- **2C4G 是预计可满足早期自用负载的候选规格，不是压测通过结论**：后续同机部署一个 Go API、一个 PostgreSQL 与一个 HTTPS 反向代理；图片起初保存 URL、AI 文案/白底经外部 API。不要先搭 Redis/K8s/独立模型进程；以真实监控、数据库容量和出站网络状况决定升级。
+- **CI 与生产运行分离**：公开仓库优先使用免费标准 GitHub-hosted Runners；按功能出现逐步增加检查，不让云服务器承担 CI。**CI-0～CI-3 的唯一技术细节见 [CI_AND_RUNTIME.md](CI_AND_RUNTIME.md)**，不在 Foundation 维护第二套执行清单。
+- **基础设施不重复选型**：在审 [PR #3 / ADR-0005](https://github.com/Fan6512/una-seller/pull/3) 已记录用户选择**现有 Ubuntu 服务器（2 vCPU、约 3.6GiB RAM）+ 既有 Nginx + Go API + Supabase 托管 PostgreSQL**；不默认自建 PG、购买新服务器或安装 Caddy。PR #3 尚未合并，ADR-0005 未进入 main，部署亦未验收；合并 PR #3 前需解决它对旧版 Foundation/Delivery 的覆盖冲突。图片暂存来源 URL、AI 调外部 API，资源用量以现有服务和部署前实测为准。
 - **本地工具链按需安装**：后端和数据层可先通过 GitHub Actions 进行编译/临时 PG 集成；普通 React UI 可用 Vite 预览。原生 Windows/macOS GUI 的完成定义必须有对应真实环境启动记录，不能把 Vite/Actions build 当实机通过。
 - **公共仓库安全最低线**：CI 无生产 Token、数据库账号或 SSH 部署凭据，默认 `contents: read`；PR 测试只用合成数据，部署采用独立批准的工作流；PostgreSQL 端口不暴露公网、API 公开前必须鉴权和 HTTPS，异地备份与测试环境隔离。
 
