@@ -1,19 +1,15 @@
 name: Windows Desktop Build
 
+# Native packaging is a review/release gate, not an every-push check.
+# After a Ready PR receives more commits, rerun manually against its branch.
 on:
   pull_request:
+    types: [opened, ready_for_review]
     branches: [main]
-    paths:
-      - 'apps/desktop/src/**'
-      - 'apps/desktop/src-tauri/**'
-      - 'apps/desktop/package.json'
-      - 'apps/desktop/package-lock.json'
-      - 'apps/desktop/vite.config.ts'
-      - 'apps/desktop/index.html'
-      - 'apps/desktop/tsconfig.json'
-      - 'apps/desktop/app-icon.svg'
-      - '.github/workflows/windows-desktop.yml'
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
@@ -24,6 +20,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Windows Tauri x64 (NSIS)
     runs-on: windows-latest
     timeout-minutes: 60
