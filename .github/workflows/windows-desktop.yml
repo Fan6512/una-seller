@@ -10,6 +10,8 @@ on:
       - 'apps/desktop/package-lock.json'
       - 'apps/desktop/vite.config.ts'
       - 'apps/desktop/index.html'
+      - 'apps/desktop/tsconfig.json'
+      - 'apps/desktop/app-icon.svg'
       - '.github/workflows/windows-desktop.yml'
   workflow_dispatch:
 
