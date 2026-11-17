@@ -4,7 +4,7 @@ name: Windows Desktop Build
 # After a Ready PR receives more commits, rerun manually against its branch.
 on:
   pull_request:
-    types: [ready_for_review]
+    types: [opened, ready_for_review]
     branches: [main]
   workflow_dispatch:
   push:
@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Windows Tauri x64 (NSIS)
     runs-on: windows-latest
     timeout-minutes: 60
