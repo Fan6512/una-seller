@@ -25,8 +25,8 @@ function fakePage() {
   const imageThumb = fakeImage({ src:"https://m.media-amazon.com/images/I/71SECOND._AC_US40_.jpg" });
   const videoThumb = fakeImage({ src:"https://m.media-amazon.com/images/I/VIDEO._AC_US40_.jpg" });
   const photos = [
-    { className:"imageThumbnail", querySelector: () => imageThumb },
-    { className:"videoThumbnail", querySelector: () => videoThumb }
+    { className:"imageThumbnail", querySelector: selector => selector==="img" ? imageThumb : null },
+    { className:"videoThumbnail", querySelector: selector => selector==="img" ? videoThumb : null }
   ];
   return {
     querySelector: s => s==="#landingImage" ? hero : null,
