@@ -5,10 +5,10 @@
 > 仓库配置可以通过 CI 验证；**以下命令没有在现有 Ubuntu 主机上执行过**。只有 SSH 真机、HTTPS 与 Windows 真实登录后才允许标记 `CLOUD_DEPLOYED / PASS`。
 
 ## 目标与范围
-- 现有 Ubuntu 24.04 服务器（Docker 正在承载 `we-mp-rss`）+ 现有 Nginx + Cloudflare `mkd.186512.xyz` + 一个 Go API + 已有 Supabase Auth/PostgreSQL。
+- 现有 Ubuntu 服务器（不改变同机其他服务）+ 现有 Nginx + Cloudflare `mkd.186512.xyz` + 一个 Go API + 已有 Supabase Auth/PostgreSQL。
 - 本地 `tauri:dev` 仍默认 `http://127.0.0.1:8787`，正式 Windows 打包默认 `https://mkd.186512.xyz`；`VITE_API_BASE_URL` 是编译时覆盖选项。**部署完成前不要把新包作为可用的云端客户端**。
 - Go 服务在云端仍只监听 `127.0.0.1:8787`，Nginx 暴露 HTTPS；仅允许 `/healthz` 和 `/api/v1/collections...` 路由。使用已验证的 Supabase Auth Access Token；不得直接开放 8787。
-- 不建新数据库、不引入 Redis、Caddy、K8s 或自动 SSH 部署；**绝不修改或重启 `we-mp-rss` 容器**。
+- 不建新数据库、不引入 Redis、Caddy、K8s 或自动 SSH 部署；**绝不修改或重启其他业务容器**。
 
 ## 1. 先只读检查服务器，不要覆盖配置
 在 Ubuntu 的 SSH 终端执行，检查输出后再决定是否继续：
