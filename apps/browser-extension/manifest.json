@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Una Seller 商品采集",
+  "version": "0.1.0",
+  "description": "手动采集 Amazon.com 商品，保存到 Una Seller 采集箱。",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.amazon.com/*",
+    "https://amazon.com/*",
+    "https://mkd.186512.xyz/*",
+    "https://rwktwfxzfkzglxwaulcm.supabase.co/*"
+  ],
+  "action": {
+    "default_title": "Una Seller 采集",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.amazon.com/*",
+        "https://amazon.com/*"
+      ],
+      "js": [
+        "amazon-core.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

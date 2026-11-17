@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Una Seller 采集</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <main>
+    <h1>Una Seller 采集</h1>
+    <p class="hint">使用 Una Seller 现有账号登录。仅在 Amazon.com 点击商品的“采集”按钮后才会提交资料。</p>
+    <section id="signed-out">
+      <form id="login">
+        <label>邮箱<input id="email" type="email" autocomplete="username" required></label>
+        <label>密码<input id="password" type="password" autocomplete="current-password" required></label>
+        <button id="sign-in" type="submit">登录</button>
+      </form>
+    </section>
+    <section id="signed-in" hidden>
+      <p>已登录：<strong id="account"></strong></p>
+      <p class="hint">前往 Amazon.com 搜索页或商品详情页，点击“采集”即可。</p>
+      <button id="sign-out" type="button">退出登录</button>
+    </section>
+    <p id="message" role="status" aria-live="polite"></p>
+  </main>
+  <script src="popup.js"></script>
+</body></html>
