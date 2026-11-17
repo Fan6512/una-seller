@@ -12,7 +12,8 @@
 5. [Windows/macOS 双平台规范](architecture/CROSS_PLATFORM.md)
 6. [M0 基础设施与部署验收说明](architecture/DEPLOYMENT_M0.md)：既有 Ubuntu/Nginx + Supabase，部署尚未验收。
 7. [M0-02B 云端 Go API 操作说明](architecture/CLOUD_GO_API_DEPLOY.md)：独立 systemd/Nginx 配置、部署步骤与真实环境验收门禁。
-7. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0001：M0-03 Go 实施选择](decisions/0001-language-and-modular-monolith.md) · [ADR-0005：M0 基础设施选型](decisions/0005-m0-infrastructure.md) · [全部 ADR](decisions/README.md)
+8. [后端设计（Go 单体）](architecture/BACKEND-DESIGN.md)：目录结构、分层规则、API 契约、身份与数据模型演进、任务与部署。
+9. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0001：M0-03 Go 实施选择](decisions/0001-language-and-modular-monolith.md) · [ADR-0005：M0 基础设施选型](decisions/0005-m0-infrastructure.md) · [全部 ADR](decisions/README.md)
 
 ## 产品工作流与商品编辑器
 
@@ -28,6 +29,7 @@
 ## 历史规划与竞品资料
 
 旧版商业化 SaaS 方案已从当前文件树移除，可在历史 Git 提交中查找，**不作为现行需求**。
+
 - [智赢静态分析研究](../research/zying/README.md)：了解业务，不复用第三方私有代码或接口。
 
 优先级：可验证的当前用户需求及平台规则 > ADR-0004 > 现行 FOUNDATION/DELIVERY/DOMAIN/CROSS_PLATFORM > 当前 MVP 任务书 > 旧 ADR > 历史规划/竞品研究。
