@@ -21,7 +21,7 @@
 
 ## Windows 构建产物验收（无需本机 Go/Rust 工具链）
 
-从 [PR #13 的 Windows Desktop Build](https://github.com/Fan6512/una-seller/actions/workflows/windows-desktop.yml) 下载 `una-seller-windows-x64` Artifact，解压后使用：
+从 **[本 PR #15 的 Windows Desktop Build（成功运行 #44009983090）](https://github.com/Fan6512/una-seller/actions/runs/44009983090)** 下载 `una-seller-windows-x64` Artifact，解压后使用。**不要下载 PR #13 的旧版产物，旧版没有登录功能。**
 
 - `una-seller.exe`：Tauri Windows 桌面客户端。
 - `una-seller-api.exe`：独立的本地 Go API 程序；**它只在 Artifact 中，不包含在 NSIS `*-setup.exe` 安装包内**。
