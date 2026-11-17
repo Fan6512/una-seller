@@ -2,7 +2,25 @@
 
 Private schema `app` holds users, source products, source images and actual variants. SQL migration: `migrations/0001_source_collections.sql`. Issue #14 uses Supabase Auth to identify users; **Mercado Libre OAuth and public deployment are not implemented**.
 
-本地开发（数据库已迁移时跳过 `migrate`；Supabase 项目中先创建可登录的受控用户并关闭公开注册）：
+## Windows：Go API 配置只保存一次
+
+首次在 PowerShell 创建目录 `New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\\UnaSeller"`，再用记事本创建 `%LOCALAPPDATA%\\UnaSeller\\api-config.json`：
+
+```json
+{
+  "DATABASE_URL": "postgresql://<数据库连接信息>",
+  "SUPABASE_URL": "https://rwktwfxzfkzglxwaulcm.supabase.co",
+  "SUPABASE_PUBLISHABLE_KEY": "<项目 publishable key>"
+}
+```
+
+该文件留在 Windows 用户目录，**以后替换或升级 `una-seller-api.exe` 不用重填环境变量**。它是本地明文配置，不能加入 Git、发布 Artifact 或截图公开；修改后重启 Go API。环境变量仍优先于文件，以便继续在 CI、Linux 和服务器使用。
+
+本地阶段负责人决定暂不关闭公开注册，**但 Supabase Auth 的注册接口仍对公网可达**，正式分发前需要限制。
+
+## Linux/macOS/CI 继续使用环境变量
+
+本地开发（数据库已迁移时跳过 `migrate`）：
 
 ```sh
 cd backend

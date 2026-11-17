@@ -16,9 +16,13 @@ func main() {
 	// Authenticated local development API. Public deployment requires separate
 	// HTTPS, proxy and client-origin review; never expose this listener directly.
 	const addr = "127.0.0.1:8787"
-	dsn := os.Getenv("DATABASE_URL")
-	supabaseURL := os.Getenv("SUPABASE_URL")
-	publishableKey := os.Getenv("SUPABASE_PUBLISHABLE_KEY")
+	local, err := loadLocalAPIConfig()
+	if err != nil {
+		log.Fatalf("local API configuration: %v", err)
+	}
+	dsn := configValue("DATABASE_URL", local.DatabaseURL)
+	supabaseURL := configValue("SUPABASE_URL", local.SupabaseURL)
+	publishableKey := configValue("SUPABASE_PUBLISHABLE_KEY", local.SupabasePublishableKey)
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		if dsn == "" {
 			log.Fatal("DATABASE_URL required for migrations")

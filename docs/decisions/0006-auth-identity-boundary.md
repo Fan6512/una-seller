@@ -8,7 +8,7 @@
 ## 决策
 
 1. **现有服务复用**：继续使用 Supabase PostgreSQL 作为唯一数据库，额外启用**现有 Supabase 项目的 Auth（开源 GoTrue）**负责邮箱密码、令牌签发和续签；不部署 Keycloak、Casdoor、Logto、独立 Node Auth 服务、密码表或另一套数据库。原有“不预设 Supabase Auth”属于 M0 初始数据库选型，已被本次明确批准的认证需求部分更新；**Edge Functions、Realtime、Storage 仍不采用**。
-2. **登录模式**：先由项目管理员通过 Supabase Authentication → Users 创建受控邮箱账号，项目设置必须**关闭公开注册**；UI 不提供注册入口。第一版不做 SMTP 自建、找回密码、邮箱验证码、第三方登录、邀请与多因素登录。关闭注册需要在 Supabase Dashboard 实际操作验证，**仅隐藏前端注册按钮不算关闭**。
+2. **登录模式**：管理员已在 Supabase Authentication → Users 创建本地测试账号；UI 不提供注册入口。按负责人决策，**本地联调阶段暂缓关闭公开注册**，但不能声称公开注册不可用：Supabase Auth 仍是公网服务，Go API 本地监听并不限制注册。正式向外分发或开放 API 前须在 Dashboard 实际关闭公开注册并验证。第一版不做 SMTP 自建、找回密码、邮箱验证码、第三方登录、邀请与多因素登录。
 3. **认证校验**：Go API 统一使用 Supabase Auth 官方 `GET /auth/v1/user` 以请求中的 Access Token 直接验证用户（不会依赖公开 publishable key 自行解析 JWT）。只有认证服务器确认的用户 UUID 能作为 `owner_user_id`；**拒绝 publishable key、旧 anon key、过期/伪造 token、未登录用户**，不能把 API Key 当作 Auth Token。未鉴权接口返回 401 和 `WWW-Authenticate: Bearer`，身份提供方不可达则 503 且拒绝读写，跨用户详情按 404 处理，不泄露记录存在性。
 4. **本期暂不做 JWKS**：当前 Go API 并发/规模较小，`/auth/v1/user` 的额外网络开销可接受；这样也不依赖项目究竟是 HS256 还是非对称签名。未来若实测延迟/限流成为瓶颈，再检查签名模式、JWKS 轮换和有界缓存后单独替换。**不把 `SUPABASE_JWT_SECRET` 发给客户端、写入 Git 或为了本期性能强行引入它**。
 5. **会话存储（MVP 显式取舍）**：桌面 WebView2/WebKit 的本地 `localStorage` 保留短期 Access Token 与 Refresh Token，用于关闭重开后的登录恢复。它对同一系统用户可读，**不是 Windows Credential Manager / DPAPI 意义上的加密凭据仓库**。当前个人自用阶段接受此局限；不存明文密码，不记录或打印 Token，不把 Token 上传到 Git/CI。正式向陌生用户分发或处理更高敏感度业务前，单独评估系统凭据库和设备退出/撤销策略，不在此次 PR 引入 Rust keyring 插件。

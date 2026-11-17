@@ -5,7 +5,7 @@
 ## 本地运行
 
 1. 确认 Go 1.26、Node.js 22+、Tauri 2 所需 Rust 与系统依赖已安装。
-2. 在 `backend/` 配置 `DATABASE_URL`、`SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY`；执行 `go run ./cmd/api migrate`（仅数据库尚未迁移时），然后 `go run ./cmd/api`。不再使用固定 `UNA_SELLER_LOCAL_USER_ID`。
+2. Windows 首次在 `%LOCALAPPDATA%\\UnaSeller\\api-config.json` 保存 `DATABASE_URL`、`SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY`（参考[后端说明](../../backend/README.md)）；以后重新下载 Go API 不再重填。执行 `go run ./cmd/api migrate`（仅未迁移时），然后 `go run ./cmd/api`。
 3. 在 Supabase Dashboard 的 **Authentication → Users** 创建/邀请一个允许登录的邮箱账号，确认邮箱和密码可用。桌面端内置的 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_PUBLISHABLE_KEY` 默认指向本仓库的 Supabase 项目，切换项目时必须同时修改构建环境与 CSP。
 4. 在 `apps/desktop/` 执行 `npm ci`、`npm run tauri:dev`（仅源码开发时需要 Rust/Tauri 工具链；使用 CI 产物时不需要）；用邮箱密码登录后进入采集箱。
 5. 桌面采集箱请求 `GET /api/v1/collections` 和详情 `GET /api/v1/collections/{id}`；列表如果为空会明确显示“这里还没有商品”，**不会伪造演示记录**。
@@ -14,7 +14,7 @@
 ## Issue #14 登录说明
 
 - Auth 后端使用已有 Supabase 项目的开源 **GoTrue / Supabase Auth**；桌面通过官方 HTTP API 实现邮箱密码登录、自动续签、恢复会话和退出登录，**不额外部署认证服务、也不创建密码表**。
-- 管理员先在 Supabase 的 Authentication → Users 中创建用户，**在 Supabase Auth 设置中关闭公共注册**；当前 UI 不提供注册入口。
+- 本地测试账号已由负责人创建；当前先不阻断公开注册配置。注意 **Supabase Auth 是公网服务**，只把 Go API 放在本机并不阻止外部调用注册接口；正式分发/公网开放前须关闭注册。
 - 登录会话由桌面 WebView 的本地存储保留，不包含用户密码；客户端发起业务请求时自动携带 Bearer Token。Go 服务端通过 `GET /auth/v1/user` 验证令牌并从服务端响应读取真实用户 ID，不接受客户端提交 owner UUID。
 - 若已安装的是 PR #13 的老版本，老版本尚无登录页面；请下载 Issue #14 对应的新版 Windows Artifact。旧本地 API + 旧客户端组合不能作为新 Auth 版本的验收证据。
 - 未对旧 UUID 对应的测试商品做迁移，避免把其他用户记录误归属到新账号。当前不开放自助注册、忘记密码入口、Google 登录或团队权限。
@@ -27,7 +27,7 @@
 - `una-seller-api.exe`：独立的本地 Go API 程序；**它只在 Artifact 中，不包含在 NSIS `*-setup.exe` 安装包内**。
 - `Una Seller_0.1.0_x64-setup.exe`：仅安装桌面客户端，**安装后不会自动启动或附带 Go API**。单独安装后看到“连接异常”不代表桌面程序安装失败。
 
-测试真实商品读取时，推荐解压后使用**独立二进制组合**，而不是只装 NSIS：在 `una-seller-api.exe` 所在目录打开 PowerShell，设置当前会话的 `DATABASE_URL`（从 Supabase Connect 获取的 PostgreSQL 连接字符串）、`SUPABASE_URL`（项目 URL）和 `SUPABASE_PUBLISHABLE_KEY`（公开 publishable key），执行 `.\una-seller-api.exe`。保持此窗口运行，再打开 `una-seller.exe` 或已安装的桌面客户端；它们通过本机 `127.0.0.1:8787` 通信。
+测试真实商品读取时，解压 Artifact 后，在首次创建的 `%LOCALAPPDATA%\\UnaSeller\\api-config.json` 中保存配置。在 `una-seller-api.exe` 所在目录的 PowerShell 中执行 `.\\una-seller-api.exe`，保持 API 运行，再打开 `una-seller.exe` 或已安装的客户端。**此后换新版 EXE 直接运行，不再逐次配置**；Go API 继续监听本机 `127.0.0.1:8787`。
 
 - 不要将数据库连接字符串/密码贴到 issue、PR、截图、公开 Actions 日志，也不要写入客户端环境变量；仅本机 Go API 进程需要数据库凭据。
 - **新 Supabase Auth 用户 ID 与旧本地 UUID 不同。** 以前手动创建的测试商品仍在数据库原用户下面，登录新账号后列表为空属于预期；未经授权不自动迁移或改写商品所属用户。
