@@ -13,11 +13,12 @@ import (
 )
 
 func main() {
-	// M0-03 is still local-only. Never expose these routes through public Nginx:
-	// user login and browser extension pairing are not implemented in PR-A.
+	// Authenticated local development API. Public deployment requires separate
+	// HTTPS, proxy and client-origin review; never expose this listener directly.
 	const addr = "127.0.0.1:8787"
 	dsn := os.Getenv("DATABASE_URL")
-	owner := os.Getenv("UNA_SELLER_LOCAL_USER_ID")
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	publishableKey := os.Getenv("SUPABASE_PUBLISHABLE_KEY")
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		if dsn == "" {
 			log.Fatal("DATABASE_URL required for migrations")
@@ -39,13 +40,15 @@ func main() {
 		log.Fatal("usage: api [migrate]")
 	}
 	var store *collections.Store
+	var verifier httpapi.IdentityVerifier
 	if dsn != "" {
-		if !collections.ValidUserID(owner) {
-			log.Fatal("UNA_SELLER_LOCAL_USER_ID must be a persistent UUID")
+		var err error
+		verifier, err = httpapi.NewSupabaseVerifier(supabaseURL, publishableKey)
+		if err != nil {
+			log.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		var err error
 		store, err = collections.Open(ctx, dsn)
 		if err != nil {
 			log.Fatal(err)
@@ -53,5 +56,5 @@ func main() {
 		defer store.DB.Close()
 	}
 	log.Printf("Una Seller local development API at http://%s (collections configured: %t)", addr, store != nil)
-	log.Fatal(http.ListenAndServe(addr, httpapi.HandlerWithCollections(store, owner)))
+	log.Fatal(http.ListenAndServe(addr, httpapi.HandlerWithCollections(store, verifier)))
 }

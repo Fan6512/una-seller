@@ -14,7 +14,7 @@
 4. **数据库**：前期 **Supabase 托管 PostgreSQL**，在 **M0-03 / Issue #6 的 PR-A 首次需要真实采集数据持久化时**按需接入，M1-D 才增加 OAuth/店铺授权数据；只建立当期确需的数据表与迁移。Go 服务使用 PostgreSQL 协议，不预装额外 Supabase 服务。IPv4-only 服务器可使用官方 Session Pooler（5432），连接信息取自实际 Supabase 项目并启用 TLS 验证；凭据仅在 Go 服务端。
 5. **应用回调**：计划使用 `https://mkd.186512.xyz/oauth/mercadolibre/callback`，**尚未核实是否已在 Mercado Libre 开发者后台登记**，也未部署回调接口；实施 OAuth 前需确认并匹配真实登记 URI。Mercado Libre 开发者应用已创建，Client ID 已取得；不把 Client Secret、Token、证书私钥写入仓库或终端日志。
 6. **保护现有服务**：同机 Nginx 和 Docker 容器 `we-mp-rss` 保持正常；任何配置变更先备份、执行 `nginx -t` 后才 reload。仅在本子域名处理 TLS/重定向，不擅自改全站加密模式。
-7. **不做**：Redis、Kafka、集群、Kubernetes、收费系统、业务多租户、Supabase Auth/Realtime/Edge Functions 的预设集成。
+7. **不预设**：Redis、Kafka、集群、Kubernetes、收费系统、业务多租户及 Supabase Auth/Realtime/Edge Functions；其中 **Supabase Auth 已由 2026-11-17 的 [ADR-0006](0006-auth-identity-boundary.md) 根据明确的登录需求单独授权**。Realtime/Edge Functions 仍不引入。
 
 ## 理由及可逆性
 

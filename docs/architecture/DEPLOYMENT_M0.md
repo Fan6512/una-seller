@@ -60,7 +60,7 @@
 ## 5. Supabase 托管 PostgreSQL 的最简使用法
 
 - **M0-01 健康检查暂不需要建库**；M0-03 / Issue #6 的 PR-A 开始采集商品写入时，按需准备 Supabase PostgreSQL 或 CI 临时 PostgreSQL，使用最小采集表及 SQL 迁移；真正店铺 Token 的存储与授权迁移留在 M1-D，不能在 PR-A 预建授权表。
-- Go 服务端使用标准 PostgreSQL 连接；**不用同时引入 Supabase Auth、Edge Functions、Realtime、Storage**。桌面端不得持有数据库 URL、密码、Service Role Key。
+- Go 服务端使用标准 PostgreSQL 连接；**Issue #14 已批准复用现有 Supabase Auth 进行 Una Seller 登录，实施边界见 [ADR-0006](../decisions/0006-auth-identity-boundary.md)**；仍不引入 Edge Functions、Realtime、Storage。桌面端不得持有数据库 URL、密码、Service Role Key。
 - 在 Ubuntu 服务器上检查 IPv6 出站能力。**IPv6 可用**优先使用 Supabase Dashboard 提供的 Direct connection；**仅 IPv4** 时使用官方 Shared Session Pooler（端口 **5432**，非 serverless 常用 Transaction Pooler **6543**），连接字符串必须从 Supabase Dashboard 的 Connect 复制，开启 TLS 校验，不猜测主机名或密码。
 - 持久化客户端连接池先保持低并发，例如按实际调用量配置 2–5 个连接，而非部署 Redis 或多个实例；出现连接耗尽时先观测。
 - Token、Refresh Token 应在服务端受控、必要时加密存储；备份和恢复责任需明确。**免费计划可能有容量/暂停限制**，不能当成正式 SLA 或无需备份的长期生产保障。

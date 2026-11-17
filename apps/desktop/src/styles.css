@@ -1,7 +1,17 @@
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: #202a39;
-  background: #f6f7f9;
+  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color-scheme: light;
+  --ui-canvas: #f5f5f7;
+  --ui-surface: #ffffff;
+  --ui-chrome: rgba(255, 255, 255, .72);
+  --ui-elevated: #f7f8fa;
+  --ui-text: #1d1d1f;
+  --ui-muted: #657080;
+  --ui-outline: rgba(0, 0, 0, .08);
+  --ui-selection: #eef4ff;
+  --ui-accent: #275db4;
+  color: var(--ui-text);
+  background: var(--ui-canvas);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -421,4 +431,172 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+
+/* Issue #14: minimal desktop login, using existing Una Seller visual tokens. */
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f6f7f9;
+}
+.login-card {
+  width: min(100%, 408px);
+  padding: 34px 36px 26px;
+  border: 1px solid #e7eaef;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 46px rgba(29, 42, 64, .065);
+}
+.login-brand { display: flex; justify-content: center; align-items: center; gap: 11px; }
+.login-heading { text-align: center; padding: 30px 0 27px; }
+.login-heading h1 { font-size: 22px; font-weight: 700; margin: 0 0 8px; color: #273449; }
+.login-heading p { font-size: 12px; color: #8793a3; margin: 0; }
+.login-form { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.login-form label { font-size: 12px; font-weight: 600; color: #465366; margin-top: 7px; }
+.login-form > input, .password-field input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  border: 1px solid #dfe5ed;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #273449;
+  background: #fff;
+  font-size: 13px;
+}
+.login-form > input:focus, .password-field:focus-within { border-color: #82a2df; box-shadow: 0 0 0 3px rgba(64,108,206,.08); outline: none; }
+.password-field { display: flex; align-items: center; border: 1px solid #dfe5ed; border-radius: 8px; overflow: hidden; }
+.password-field input { border: none; border-radius: 0; outline: none; box-shadow: none; }
+.password-field input:focus-visible { outline: none; }
+.password-field button { background: #fff; border: none; height: 40px; padding: 0 12px; color: #65758a; font-size: 12px; }
+.password-field button:hover:not(:disabled) { color: #315eb4; }
+.login-submit { height: 43px; margin-top: 13px; border: 1px solid #2d5fbb; border-radius: 8px; background: #2d5fbb; color: #fff; font-weight: 600; font-size: 13px; }
+.login-submit:hover:not(:disabled) { background: #254f9a; }
+.login-submit:disabled { opacity: .58; }
+.login-error { color: #a94742; background: #fff6f4; border: 1px solid #f1d8d2; border-radius: 7px; padding: 10px; font-size: 12px; line-height: 1.6; margin: 3px 0 0; }
+.login-footer { text-align: center; margin: 24px 0 0; color: #a1aab7; font-size: 11px; }
+.account-email { max-width: 210px; color: #667487; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logout-action { border: 1px solid #e1e6ed; border-radius: 7px; background: #fff; color: #546277; padding: 7px 11px; font-size: 11px; }
+.logout-action:hover { border-color: #bac9e1; color: #315eb4; }
+@media (max-width: 850px) {
+  .account-email { max-width: 105px; }
+  .login-card { padding: 30px 24px 22px; }
+}
+
+
+/* HIG-inspired desktop finish: native font fallbacks, deliberate contrast,
+   quiet depth, system appearance. No new components or runtime dependencies. */
+.app-shell { background: var(--ui-canvas); }
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--ui-chrome);
+  border-bottom: 1px solid var(--ui-outline);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+.brand-name, .page-heading h1, .login-heading h1, .product-summary h2 {
+  font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  letter-spacing: -.02em;
+}
+.brand-mark { border-radius: 11px; }
+.main-content { padding-top: 32px; }
+.workspace { gap: 20px; }
+.list-pane, .detail-pane, .login-card {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-outline);
+  border-radius: 20px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, .04);
+}
+.list-toolbar { padding: 20px 20px 14px; border-color: var(--ui-outline); }
+.product-detail { padding: 26px 28px 30px; }
+.page-heading { margin-bottom: 24px; }
+.page-heading h1 { color: var(--ui-text); }
+.page-heading p, .date-note, .detail-footer, .empty-state p, .list-meta,
+.row-meta, .source-name, .detail-eyebrow, .list-footer,
+.section-count, .login-heading p, .login-footer, .account-email,
+.variant-attribute small, .row-body .row-meta, .error-details,
+.loading-state, .error-details code, .detail-eyebrow {
+  color: var(--ui-muted);
+}
+.page-heading p, .source-name, .empty-state p, .date-note, .detail-footer,
+.row-meta, .list-meta, .login-heading p, .login-footer { font-size: 12px; }
+.list-meta, .detail-footer { font-variant-numeric: tabular-nums; }
+.search-box {
+  height: 44px;
+  background: var(--ui-elevated);
+  border: 1px solid var(--ui-outline);
+  border-radius: 12px;
+  color: var(--ui-muted);
+}
+.search-box input { color: var(--ui-text); }
+.search-box input::placeholder { color: var(--ui-muted); }
+.search-box:focus-within { border-color: #87a9e0; background: var(--ui-surface); }
+.product-row {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  border-color: var(--ui-outline);
+  transition: background .2s cubic-bezier(.22, 1, .36, 1);
+}
+.product-row:hover:not(:disabled) { background: var(--ui-elevated); }
+.product-row.selected { background: var(--ui-selection); }
+.row-title, .product-summary h2, .detail-section h3, .empty-state h2, .load-error h2,
+.row-price, .product-price, .variant-attribute strong, .variant-price { color: var(--ui-text); }
+.row-image, .gallery-stage, .gallery-main, .image-fallback, .empty-illustration {
+  background: var(--ui-elevated);
+  border-color: var(--ui-outline);
+}
+.row-image, .gallery-stage, .variant-card, .gallery-thumb, .empty-illustration { border-radius: 12px; }
+.list-footer, .detail-section, .detail-footer, .variant-card, .gallery-thumb,
+.list-toolbar, .row-image, .gallery-stage, .gallery-arrows button {
+  border-color: var(--ui-outline);
+}
+.variant-card, .gallery-thumb, .gallery-arrows button, .page-actions button,
+.refresh-button, .logout-action, .password-field button {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+.gallery-count { font-variant-numeric: tabular-nums; }
+.page-actions button, .refresh-button, .logout-action, .primary-button, .login-submit,
+.gallery-arrows button, .gallery-thumb, .login-form > input, .password-field,
+.password-field button {
+  border-radius: 11px;
+  transition: transform .22s cubic-bezier(.22, 1, .36, 1),
+              background .22s cubic-bezier(.22, 1, .36, 1),
+              border-color .22s cubic-bezier(.22, 1, .36, 1);
+}
+.refresh-button:active:not(:disabled), .page-actions button:active:not(:disabled),
+.primary-button:active:not(:disabled), .login-submit:active:not(:disabled),
+.logout-action:active:not(:disabled), .gallery-arrows button:active:not(:disabled) {
+  transform: scale(.97);
+}
+button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible {
+  outline: 2px solid #4f86db;
+  outline-offset: 3px;
+}
+.product-price, .row-price, .variant-price, .gallery-count { font-variant-numeric: tabular-nums; }
+.login-page { background: var(--ui-canvas); }
+.login-card { border-radius: 22px; box-shadow: 0 4px 24px rgba(0, 0, 0, .04); }
+.login-heading h1 { color: var(--ui-text); }
+.login-form label { color: var(--ui-text); }
+.login-form > input, .password-field, .password-field input {
+  background: var(--ui-surface);
+  border-color: var(--ui-outline);
+  color: var(--ui-text);
+}
+.login-form > input::placeholder, .password-field input::placeholder { color: var(--ui-muted); }
+.login-submit, .primary-button { background: var(--ui-accent); border-color: var(--ui-accent); }
+.login-submit:hover:not(:disabled), .primary-button:hover:not(:disabled) { filter: brightness(.94); }
+
+@media (max-width: 990px) {
+  .workspace { gap: 14px; }
+  .main-content { padding-top: 24px; }
+}
+@media (max-width: 700px) {
+  .main-content { padding: 20px 16px; }
+  .list-pane, .detail-pane { border-radius: 16px; }
+  .product-detail { padding: 20px; }
 }

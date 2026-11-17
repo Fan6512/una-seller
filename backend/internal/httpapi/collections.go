@@ -12,26 +12,26 @@ import (
 )
 
 type collectionAPI struct {
-	store   *collections.Store
-	ownerID string
+	store    *collections.Store
+	verifier IdentityVerifier
 }
 
-func HandlerWithCollections(store *collections.Store, ownerID string) http.Handler {
+func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
-	api := collectionAPI{store: store, ownerID: ownerID}
+	api := collectionAPI{store: store, verifier: verifier}
 	mux.HandleFunc("/api/v1/collections", api.collections)
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v1/collections") {
-			// This is local-only development code; PR-C will add extension pairing.
+			// Allow only known Tauri/dev origins; PR-C will add controlled extension access.
 			origin := r.Header.Get("Origin")
 			switch origin {
 			case "http://127.0.0.1:1420", "http://localhost:1420", "http://tauri.localhost", "tauri://localhost", "https://tauri.localhost":
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			case "":
 			default:
 				writeError(w, http.StatusForbidden, "origin not allowed")
@@ -54,15 +54,46 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
+func writeUnauthorized(w http.ResponseWriter, msg string) {
+	w.Header().Set("WWW-Authenticate", "Bearer")
+	writeError(w, http.StatusUnauthorized, msg)
+}
 func (a collectionAPI) ready(w http.ResponseWriter) bool {
-	if a.store == nil || !collections.ValidUserID(a.ownerID) {
-		writeError(w, http.StatusServiceUnavailable, "collections require configured local database and owner")
+	if a.store == nil || a.verifier == nil {
+		writeError(w, http.StatusServiceUnavailable, "collections require configured database and Supabase Auth")
 		return false
 	}
 	return true
 }
-func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
+
+// Owner identity comes exclusively from a verified Supabase access token.
+func (a collectionAPI) owner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if !a.ready(w) {
+		return "", false
+	}
+	fields := strings.Fields(r.Header.Get("Authorization"))
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		writeUnauthorized(w, "authentication required")
+		return "", false
+	}
+	id, err := a.verifier.Verify(r.Context(), fields[1])
+	if err != nil {
+		if errors.Is(err, ErrAuthUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "authentication temporarily unavailable")
+		} else {
+			writeUnauthorized(w, "invalid session")
+		}
+		return "", false
+	}
+	if !collections.ValidUserID(id) {
+		writeUnauthorized(w, "invalid session")
+		return "", false
+	}
+	return id, true
+}
+func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
+	ownerID, ok := a.owner(w, r)
+	if !ok {
 		return
 	}
 	switch r.Method {
@@ -87,7 +118,7 @@ func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		p, created, err := a.store.Save(r.Context(), a.ownerID, in)
+		p, created, err := a.store.Save(r.Context(), ownerID, in)
 		if errors.Is(err, collections.ErrReadback) {
 			// The transaction committed: do not lie to the caller that nothing was saved.
 			writeJSON(w, http.StatusAccepted, map[string]any{"result": "saved_unverified", "id": p.ID, "collection_status": p.Status})
@@ -130,7 +161,7 @@ func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid query")
 			return
 		}
-		items, err := a.store.List(r.Context(), a.ownerID, q, limit, offset)
+		items, err := a.store.List(r.Context(), ownerID, q, limit, offset)
 		if err != nil {
 			writeError(w, 500, "collections unavailable")
 			return
@@ -142,7 +173,8 @@ func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (a collectionAPI) detail(w http.ResponseWriter, r *http.Request) {
-	if !a.ready(w) {
+	ownerID, ok := a.owner(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -155,7 +187,7 @@ func (a collectionAPI) detail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "collection not found")
 		return
 	}
-	p, err := a.store.Get(r.Context(), a.ownerID, id)
+	p, err := a.store.Get(r.Context(), ownerID, id)
 	if errors.Is(err, collections.ErrNotFound) {
 		writeError(w, 404, "collection not found")
 		return
