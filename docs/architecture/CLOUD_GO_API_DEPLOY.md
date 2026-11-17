@@ -1,0 +1,89 @@
+# M0-02B：Una Seller 云端 Go API 最小部署操作说明
+
+> 2026-11-17 · 对应 [Issue #17](https://github.com/Fan6512/una-seller/issues/17) · **准备/待服务器验收（SERVER_E2E_BLOCKED）**
+>
+> 仓库配置可以通过 CI 验证；**以下命令没有在现有 Ubuntu 主机上执行过**。只有 SSH 真机、HTTPS 与 Windows 真实登录后才允许标记 `CLOUD_DEPLOYED / PASS`。
+
+## 目标与范围
+- 现有 Ubuntu 24.04 服务器（Docker 正在承载 `we-mp-rss`）+ 现有 Nginx + Cloudflare `mkd.186512.xyz` + 一个 Go API + 已有 Supabase Auth/PostgreSQL。
+- 本地 `tauri:dev` 仍默认 `http://127.0.0.1:8787`，正式 Windows 打包默认 `https://mkd.186512.xyz`；`VITE_API_BASE_URL` 是编译时覆盖选项。**部署完成前不要把新包作为可用的云端客户端**。
+- Go 服务在云端仍只监听 `127.0.0.1:8787`，Nginx 暴露 HTTPS；仅允许 `/healthz` 和 `/api/v1/collections...` 路由。使用已验证的 Supabase Auth Access Token；不得直接开放 8787。
+- 不建新数据库、不引入 Redis、Caddy、K8s 或自动 SSH 部署；**绝不修改或重启 `we-mp-rss` 容器**。
+
+## 1. 先只读检查服务器，不要覆盖配置
+在 Ubuntu 的 SSH 终端执行，检查输出后再决定是否继续：
+```sh
+uname -a
+docker --version
+sudo nginx -t
+sudo ss -lntp | grep -E ':(80|443|8787)\b' || true
+sudo nginx -T 2>/dev/null | grep -E 'server_name .*mkd\.186512\.xyz' || true
+getent ahosts mkd.186512.xyz || true
+curl -sS -o /dev/null -w 'Supabase Auth HTTP=%{http_code}\n' --max-time 10 https://rwktwfxzfkzglxwaulcm.supabase.co/auth/v1/user
+```
+对 Auth 的无凭据请求只检查是否获得 HTTP 响应；`000`/连接重置为网络阻断。已有 `mkd` 站点或 8787 端口占用时先停止操作并核对归属。不要公开完整 `nginx -T`、服务环境文件或密钥。
+
+另在 Cloudflare 检查 `mkd` 的 DNS 指向目标主机、安全组允许 80/443、代理及 TLS 模式。不要全局修改其它域名的 SSL/TLS 策略。
+
+## 2. 从仓库构建 Linux amd64 Go 程序（不要求主机安装 Go）
+服务器已有 Docker，可**仅用 Docker 临时编译**，不影响现有业务容器：
+```sh
+git clone --depth 1 --branch feat/m0-02b-cloud-go-api-20261117 https://github.com/Fan6512/una-seller.git /tmp/una-seller-cloud
+cd /tmp/una-seller-cloud
+sudo docker run --rm -v "$PWD:/src" -w /src/backend golang:1.26 sh -c 'go build -trimpath -o /src/una-seller-api ./cmd/api'
+sudo install -d -m 0755 /opt/una-seller
+sudo install -m 0755 una-seller-api /opt/una-seller/una-seller-api
+```
+适用于 `uname -m` 是 `x86_64` 的现有 Ubuntu；若架构不同，必须改成对应编译目标，不要强行运行。PR 合并后，后续更新应改为按已审核的 `main` 提交 SHA 检出，不长期依赖 Draft 分支。
+
+## 3. 使用 systemd 管理 Go，私有配置只存服务器
+```sh
+id una-seller >/dev/null 2>&1 || sudo useradd --system --create-home --home-dir /var/lib/una-seller --shell /usr/sbin/nologin una-seller
+sudo install -d -m 0700 /etc/una-seller
+sudo install -m 0600 deploy/una-seller/api.env.example /etc/una-seller/api.env
+sudoedit /etc/una-seller/api.env
+sudo install -m 0644 deploy/una-seller/una-seller-api.service /etc/systemd/system/una-seller-api.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now una-seller-api
+sudo systemctl is-active una-seller-api
+```
+在 `sudoedit` 中填入服务器专用的 `DATABASE_URL`、`SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY`。不要复制到 GitHub、日志或桌面程序。
+
+Supabase 数据库已建立 `app` schema，无需重新执行 migrate。连接串从 Supabase Dashboard → Connect 获取：服务器支持 IPv6 可选 Direct `:5432`；仅 IPv4 使用 **Session Pooler `:5432`**，均启用 TLS 校验（例如 `sslmode=verify-full`）。不要把 HTTP 代理用于 PostgreSQL 连接；若服务器访问 Auth 失败再单独核查服务器出站网络。
+
+**本机验证：**
+```sh
+curl -i http://127.0.0.1:8787/healthz
+curl -i http://127.0.0.1:8787/api/v1/collections
+```
+预期分别 **200** 和 **401**（第二条故意不带 Token）。若 `503` 或启动失败，先看 `sudo systemctl status una-seller-api` 与 `sudo journalctl -u una-seller-api -n 50 --no-pager`（分享前删去私密信息）。`UNA_SELLER_CLOUD=1` 会拒绝缺少 DB/Auth 环境配置的启动。
+
+## 4. 为独立域名取得证书，随后启用 Nginx 反代
+**先确认** `mkd.186512.xyz` 的 DNS 与 80/443 安全组、以及服务器没有同名 `server_name`。在初次签证书前，可以先为该域名创建一个只在 80 返回 404 的独立 Nginx vhost，运行 `sudo nginx -t` 后再重载；不能覆盖已有业务配置。使用 `sudo certbot --nginx -d mkd.186512.xyz` 签发 Let's Encrypt 证书；如果 Cloudflare 阻断 HTTP-01，则改用 DNS-01，不停止 Nginx。
+
+**证书实际签发后**，对 Certbot 生成的同名站点文件做备份，再用 `deploy/una-seller/nginx-mkd.conf` 模板替换/合并**仅该域名**的 vhost 内容：
+```sh
+sudo cp /etc/nginx/sites-available/mkd.186512.xyz.conf /etc/nginx/sites-available/mkd.186512.xyz.conf.pre-una-seller
+sudo install -m 0644 deploy/una-seller/nginx-mkd.conf /etc/nginx/sites-available/mkd.186512.xyz.conf
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot renew --dry-run
+```
+以上路径是假设 vhost 使用 `sites-available/mkd.186512.xyz.conf`；**必须先核对实际文件路径及 Certbot 编辑结果**再执行，不能盲目复制。确认证书文件路径与模板一致，Cloudflare 到源站的 TLS 使用 Full (strict)。模板的未知路径返回 404，敏感列表加 `Cache-Control: no-store`。
+
+## 5. 真正的外部验收（所有检查都需对准同一部署版本）
+```sh
+curl -i https://mkd.186512.xyz/healthz
+curl -i https://mkd.186512.xyz/api/v1/collections
+```
+预期 **200 / 401**。然后从新的 Windows 构建登录账号，检查右上角“服务正常”、采集箱空列表响应 **200**；不需要为了本轮验收创建测试商品或第二个账号。该登录后请求通过云端 API 获取商品，不能只凭 `/healthz` 200 宣称 DB/Auth 已通。
+
+- 无 Token 不能读写；已验证登录后能看到属于自己的列表；Go 8787 不监听公网地址。
+- 不影响既有 RSS 站点，Cloudflare 不缓存含认证的响应。
+- macOS 与浏览器插件独立后续验收，不能冒充已通过。
+
+**限制：桌面应用依然直接访问 Supabase Auth。** 即使 Go API 已云端化，当前 Windows 网络若无法访问 Supabase Auth，登录/续签仍可能需要本机代理；本期不另做登录代理。
+
+## 6. 回滚
+Go 服务可执行文件更新前备份上一版；需要回滚时恢复对应二进制并 `sudo systemctl restart una-seller-api`。Nginx 每次修改前备份新建的 `mkd` vhost，`nginx -t` 失败绝不 reload；已有其他站点保持原样。不要清空 Supabase 数据库或修改其他 Docker 容器。
+
+**完成状态判定：** 仓库 CI 通过 = `CODE_READY`；Ubuntu 服务器进程、DNS、TLS、客户端 Bearer 读回均通过 = `CLOUD_DEPLOYED / PASS`。目前只提交代码与部署模板，尚无后者的实测证据。

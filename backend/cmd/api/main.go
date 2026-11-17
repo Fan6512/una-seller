@@ -13,8 +13,7 @@ import (
 )
 
 func main() {
-	// Authenticated local development API. Public deployment requires separate
-	// HTTPS, proxy and client-origin review; never expose this listener directly.
+	// Bind to loopback in both local and cloud mode; public HTTPS is served by Nginx.
 	const addr = "127.0.0.1:8787"
 	local, err := loadLocalAPIConfig()
 	if err != nil {
@@ -43,6 +42,9 @@ func main() {
 	if len(os.Args) > 1 {
 		log.Fatal("usage: api [migrate]")
 	}
+	if os.Getenv("UNA_SELLER_CLOUD") == "1" && (dsn == "" || supabaseURL == "" || publishableKey == "") {
+		log.Fatal("cloud API requires DATABASE_URL, SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY")
+	}
 	var store *collections.Store
 	var verifier httpapi.IdentityVerifier
 	if dsn != "" {
@@ -59,6 +61,7 @@ func main() {
 		}
 		defer store.DB.Close()
 	}
-	log.Printf("Una Seller local development API at http://%s (collections configured: %t)", addr, store != nil)
-	log.Fatal(http.ListenAndServe(addr, httpapi.HandlerWithCollections(store, verifier)))
+	log.Printf("Una Seller API at http://%s (collections configured: %t)", addr, store != nil)
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCollections(store, verifier), ReadHeaderTimeout: 5 * time.Second}
+	log.Fatal(server.ListenAndServe())
 }

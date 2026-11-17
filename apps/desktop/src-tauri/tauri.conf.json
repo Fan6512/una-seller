@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:8787 http://localhost:8787 https://rwktwfxzfkzglxwaulcm.supabase.co ws://127.0.0.1:1420; img-src 'self' asset: http://asset.localhost https: data:; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:8787 http://localhost:8787 https://mkd.186512.xyz https://rwktwfxzfkzglxwaulcm.supabase.co ws://127.0.0.1:1420; img-src 'self' asset: http://asset.localhost https: data:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

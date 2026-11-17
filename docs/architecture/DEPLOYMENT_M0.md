@@ -1,6 +1,7 @@
 # Una Seller M0 基础设施、数据库与 HTTPS 部署基线
 
 > 决策日期：2026-10-26 · 与现行计划对齐：2026-11-16 · 状态：**选型确定，部署未验收** · 对应 [ADR-0005](../decisions/0005-m0-infrastructure.md)。
+> M0-02B 可执行步骤与 Draft PR 的交付范围见 [云端 Go API 部署操作说明](CLOUD_GO_API_DEPLOY.md)；**模板入库不等于真实云端部署已完成**。
 > 自用初期沿用 **一台现有 Ubuntu 服务器 + 一个 Go API + 一个 Supabase 托管 PostgreSQL 数据库**，Cloudflare/Nginx 使用现有资源。**这不是执行完成报告，也不等于本轮重新 SSH 验证**；业务阶段以 [Delivery v2.1](DELIVERY.md) 为准。
 
 ## 1. 最终选型与职责
