@@ -7,7 +7,7 @@
 1. 确认 Go 1.26、Node.js 22+、Tauri 2 所需 Rust 与系统依赖已安装。
 2. 在 `backend/` 配置自己的 `DATABASE_URL` 和持久的 `UNA_SELLER_LOCAL_USER_ID`；执行 `go run ./cmd/api migrate`（仅数据库尚未迁移时），然后 `go run ./cmd/api`。
 3. 在 `apps/desktop/` 执行 `npm ci`、`npm run tauri:dev`（仅源码开发时需要 Rust/Tauri 工具链；使用 CI 产物时不需要）。
-4. 桌面采集箱请求 `GET /api/v1/collections` 和详情 `GET /api/v1/collections/{id}`；列表如果为空会明确显示“还没有采集商品”，**不会伪造演示记录**。
+4. 桌面采集箱请求 `GET /api/v1/collections` 和详情 `GET /api/v1/collections/{id}`；列表如果为空会明确显示“这里还没有商品”，**不会伪造演示记录**。
 5. 当前仅支持本地 API `http://127.0.0.1:8787`（或 `http://localhost:8787`）。可在 `apps/desktop/.env.local` 设置 `VITE_API_BASE_URL=http://127.0.0.1:8787`，但仅修改环境变量**不能**切换到其他端口或远端 HTTPS 地址：Tauri `connect-src` 未放行这些来源。以后确需更换地址时，必须同步精确修改 CSP，并核对 Go API 的 CORS。不要将数据库 URL、密码、服务端 owner ID 或密钥放进 Vite 环境变量。
 
 ## Windows 构建产物验收（无需本机 Go/Rust 工具链）
