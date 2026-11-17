@@ -14,6 +14,8 @@ Private schema `app` holds users, source products, source images and actual vari
 }
 ```
 
+请将 JSON 文件保存为 **UTF-8**（推荐无 BOM；程序也兼容 UTF-8 BOM）。Windows PowerShell 5.1 使用 `>` 创建文件时可能默认写入 UTF-16LE，Go API 无法解析；遇到 `invalid JSON` 时请用记事本另存为 UTF-8，不要复制含密码的文件内容到 Issue。
+
 该文件留在 Windows 用户目录，**以后替换或升级 `una-seller-api.exe` 不用重填环境变量**。它是本地明文配置，不能加入 Git、发布 Artifact 或截图公开；修改后重启 Go API。环境变量仍优先于文件，以便继续在 CI、Linux 和服务器使用。
 
 本地阶段负责人决定暂不关闭公开注册，**但 Supabase Auth 的注册接口仍对公网可达**，正式分发前需要限制。

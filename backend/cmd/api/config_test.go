@@ -54,3 +54,26 @@ func TestLocalConfigOverrideAndBrokenJSON(t *testing.T) {
 		t.Fatalf("invalid config must fail clearly: %v", err)
 	}
 }
+
+func TestLocalConfigFileEncoding(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api-config.json")
+	content := []byte(`{"SUPABASE_URL":"https://example.supabase.co"}`)
+	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, content...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := readAPIConfig(path)
+	if err != nil || cfg.SupabaseURL != "https://example.supabase.co" {
+		t.Fatalf("UTF-8 BOM should be accepted: %+v %v", cfg, err)
+	}
+
+	utf16LE := []byte{0xFF, 0xFE}
+	for _, b := range content {
+		utf16LE = append(utf16LE, b, 0)
+	}
+	if err := os.WriteFile(path, utf16LE, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readAPIConfig(path); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("UTF-16LE config should explain required UTF-8 encoding: %v", err)
+	}
+}

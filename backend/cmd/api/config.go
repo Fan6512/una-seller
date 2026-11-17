@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,8 +47,8 @@ func readAPIConfig(path string) (apiConfig, error) {
 		return apiConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var cfg apiConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return apiConfig{}, fmt.Errorf("invalid JSON in %s: %w", path, err)
+	if err := json.Unmarshal(bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}), &cfg); err != nil {
+		return apiConfig{}, fmt.Errorf("invalid JSON in %s (please save as UTF-8 without BOM): %w", path, err)
 	}
 	return cfg, nil
 }

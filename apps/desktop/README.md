@@ -21,7 +21,7 @@
 
 ## Windows 构建产物验收（无需本机 Go/Rust 工具链）
 
-从 **[本 PR #15 的 Windows Desktop Build（成功运行 #44009983090）](https://github.com/Fan6512/una-seller/actions/runs/44009983090)** 下载 `una-seller-windows-x64` Artifact，解压后使用。**不要下载 PR #13 的旧版产物，旧版没有登录功能。**
+从 **[Windows Desktop Build 工作流](https://github.com/Fan6512/una-seller/actions/workflows/windows-desktop.yml)** 选择与本 PR 当前 HEAD（或拟验收提交）一致的**最新成功运行**，下载 `una-seller-windows-x64` Artifact，解压后使用。请核对运行详情的提交 SHA，**不要使用旧版运行或过期的固定 Run 链接**；Artifact 可能过期，必要时手动触发当前分支的构建。旧版 PR #13 产物没有登录功能，早期 PR #15 产物也不支持持久化配置。
 
 - `una-seller.exe`：Tauri Windows 桌面客户端。
 - `una-seller-api.exe`：独立的本地 Go API 程序；**它只在 Artifact 中，不包含在 NSIS `*-setup.exe` 安装包内**。
@@ -41,7 +41,7 @@
 - 未登录时只显示登录页，未配置 Go API / 数据库 / Auth 服务时显示明确错误；未登录、无效或过期 Token 不可读写商品。退出登录清除本地会话；已发出的短期 access token 仍按 Supabase Auth 的有效期自然失效。
 - `npm run build` 仅验证 TypeScript/Vite；GitHub Actions 的 Windows NSIS 构建另行验证原生可编译，不代替 GUI 真机检查。
 - **（PR #13 无登录版本）2026-11-17 Windows x64 已实测 PASS**：Tauri 安装和启动、本机 Go API 连接 Supabase PostgreSQL、合成商品成功入库并在采集箱展示、重启桌面及 Go API 后仍能读取。它不代表浏览器插件已完成真实商品采集。
-- **PR #15 登录版本：Windows 实机登录/会话恢复/跨账号隔离仍为 `UNVERIFIED`**，不能沿用 PR #13 的无登录验收结论。
+- **PR #15 登录版本：Windows 真实邮箱登录、关闭重开自动恢复、退出后再次登录实机 `PASS`**（2026-11-17）；Go 自动化覆盖跨账号隔离 `PASS`，真实双账号/商品展示和过期续签仍 `NOT_RUN`。本地 Go API 访问 Supabase Auth 在当前网络下需要代理，云端部署尚未验收。
 - 本版界面保持浅色模式，已优化小字对比度、布局与按钮反馈；自动深色模式后置，不把未实测的深色主题纳入登录验收。
 - **macOS arm64 / x64 均为 `UNVERIFIED`**，不宣称跨平台已验收。
 
