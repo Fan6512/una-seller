@@ -12,12 +12,12 @@
 | --- | --- | --- |
 | GitHub Actions 标准托管 Runner | PR 自动 Go 编译/单测、TS/Vite 构建；PR-A 起使用临时 PostgreSQL；PR-B 起增加 Win/macOS Tauri 原生构建；PR-C 起检查 MV3 插件 | 生产数据库、真实店铺 Token、常驻应用服务器 |
 | 本地 Windows 开发电脑 | Codex 编写和审查代码；可用 Vite 预览普通 UI；需要 Windows 原生启动验收时再安装 Rust/Cargo 及 Windows 所需工具链 | 必须本机同时安装 Go、PG、Docker、Rust 的假设 |
-| **已有** Ubuntu Linux 服务器（ADR-0005 记录的历史 SSH 检查，部署状态待复核） | 现有 Nginx + 后续单 Go API；通过 TLS 访问 **Supabase 托管 PostgreSQL**，维护原有 `we-mp-rss` 服务 | 自建 PostgreSQL、Caddy、CI 编译、大型 AI 推理 |
+| **已有** Ubuntu Linux 服务器（部署状态以私有运维检查为准） | 现有 Nginx + 单 Go API；通过 TLS 访问 **Supabase 托管 PostgreSQL**，保持既有服务不变 | 自建 PostgreSQL、Caddy、CI 编译、大型 AI 推理 |
 
-ADR-0005 记录的**历史 SSH 观察**：Ubuntu 24.04.4 LTS、2 vCPU、约 3.6GiB RAM（当时 available 约 2.3GiB）、59GB 根盘（当时剩余约 37GB）、约 980MiB swap 已用、Nginx 80 端口在用、已有 Docker `we-mp-rss`。这些不是本轮重新 SSH 核验的当前运行指标，也**不代表 Una Seller 已部署**。部署前重新检查 `free -h`、`vmstat`、磁盘、Nginx 监听及既有服务；swap 已用并不能单凭数值判定内存不足。此配置能否支撑新 Go 服务须依实测，优先不在同机额外部署 PostgreSQL。
+**公开仓库不保存真实服务器资源或运行服务盘点。** 部署人员仅在非公开会话中检查 `free -h`、`vmstat`、磁盘、Nginx 监听和已有服务，确认不会占用冲突端口；优先不在同机额外部署 PostgreSQL。CI 通过不代表云端部署完成。
 
 - 云端 API 暴露公网前必须启用 HTTPS、有效 ERP 身份认证；**数据库采用 Supabase 托管 PostgreSQL**，仅 Go 服务持有其 TLS 连接凭据，不让桌面端直连，不公开本机数据库端口。GitHub CI 的临时 PostgreSQL 与 Supabase 正式/测试项目隔离；凭据不进公开仓库或构建产物。
-- 部署依据 [ADR-0005](../decisions/0005-m0-infrastructure.md)，采用 **Cloudflare `mkd.186512.xyz` + 现有 Nginx + Go 进程（候选 systemd）+ Supabase**；[PR #4](https://github.com/Fan6512/una-seller/pull/4) 的 Nginx/HTTPS 配置仍是独立代码候选。不得覆盖现有 Nginx、`we-mp-rss`，也不得将 Caddy、自建 PostgreSQL 或 Compose 视为默认方案；部署与证书均需单独验证。
+- 部署依据 [ADR-0005](../decisions/0005-m0-infrastructure.md)，采用 **Cloudflare `mkd.186512.xyz` + 现有 Nginx + Go 进程（候选 systemd）+ Supabase**；[PR #4](https://github.com/Fan6512/una-seller/pull/4) 的 Nginx/HTTPS 配置仍是独立代码候选。不得覆盖现有 Nginx、其他业务服务，也不得将 Caddy、自建 PostgreSQL 或 Compose 视为默认方案；部署与证书均需单独验证。
 - Supabase 的持久化与备份能力、免费计划限制、恢复责任需要在项目实际创建后核实；**托管数据库不等于已经具备可恢复的备份**。PR-B 需要独立可达的真实测试数据库及 Go API，具体前置条件见下文 CI-2。
 - GitHub 标准托管 Runner 可编译 Win/macOS 目标，但 **Vite 通过 ≠ Tauri 原生编译通过 ≠ 真实设备 GUI 启动通过**；无实机时标 `UNVERIFIED`。
 - 前端实际 API origin、Tauri `connect-src` 与图片 `img-src` 需在 PR-B 一起对齐；允许所需 HTTPS 来源，勿因 CSP 默认值使商品图片不可见，也不要为解决图片问题全面关闭 CSP。

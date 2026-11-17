@@ -81,3 +81,27 @@ func TestCollectionAuthFailureAndCORS(t *testing.T) {
 		t.Fatalf("auth outage must not pass as authorized, status=%d", w.Code)
 	}
 }
+
+func TestHealthCORSForTauriCloudAPI(t *testing.T) {
+	h := HandlerWithCollections(nil, nil)
+	for _, method := range []string{http.MethodGet, http.MethodOptions} {
+		r := httptest.NewRequest(method, "/healthz", nil)
+		r.Header.Set("Origin", "http://tauri.localhost")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		want := http.StatusOK
+		if method == http.MethodOptions {
+			want = http.StatusNoContent
+		}
+		if w.Code != want || w.Header().Get("Access-Control-Allow-Origin") != "http://tauri.localhost" {
+			t.Fatalf("%s /healthz status=%d cors=%q", method, w.Code, w.Header().Get("Access-Control-Allow-Origin"))
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	r.Header.Set("Origin", "https://untrusted.example")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("untrusted origin must be rejected, got %d", w.Code)
+	}
+}

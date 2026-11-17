@@ -9,7 +9,7 @@
 3. 在 Supabase Dashboard 的 **Authentication → Users** 创建/邀请一个允许登录的邮箱账号，确认邮箱和密码可用。桌面端内置的 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_PUBLISHABLE_KEY` 默认指向本仓库的 Supabase 项目，切换项目时必须同时修改构建环境与 CSP。
 4. 在 `apps/desktop/` 执行 `npm ci`、`npm run tauri:dev`（仅源码开发时需要 Rust/Tauri 工具链；使用 CI 产物时不需要）；用邮箱密码登录后进入采集箱。
 5. 桌面采集箱请求 `GET /api/v1/collections` 和详情 `GET /api/v1/collections/{id}`；列表如果为空会明确显示“这里还没有商品”，**不会伪造演示记录**。
-6. 当前仅支持本地 API `http://127.0.0.1:8787`（或 `http://localhost:8787`）。可在 `apps/desktop/.env.local` 设置 `VITE_API_BASE_URL=http://127.0.0.1:8787`，但仅修改环境变量**不能**切换到其他端口或远端 HTTPS 地址：Tauri `connect-src` 未放行这些来源。以后确需更换地址时，必须同步精确修改 CSP，并核对 Go API 的 CORS。不要将数据库 URL、密码、服务端 owner ID 或密钥放进 Vite 环境变量。
+6. **开发模式**（`tauri:dev`）默认访问 `http://127.0.0.1:8787`；**正式打包版本**默认访问 `https://mkd.186512.xyz`（云端上线后才可用）。可用 `VITE_API_BASE_URL` 在构建时显式覆盖；这是**构建时**选项，不是安装后动态设置。Tauri CSP 只放行本地 API 和准确的云 API 域名，更换域名仍需同步修改 CSP 与 Go CORS。不要将数据库 URL、密码、服务端 owner ID 或密钥放进 Vite 环境变量。
 
 ## Issue #14 登录说明
 
@@ -44,6 +44,10 @@
 - **PR #15 登录版本：Windows 真实邮箱登录、关闭重开自动恢复、退出后再次登录实机 `PASS`**（2026-11-17）；Go 自动化覆盖跨账号隔离 `PASS`，真实双账号/商品展示和过期续签仍 `NOT_RUN`。本地 Go API 访问 Supabase Auth 在当前网络下需要代理，云端部署尚未验收。
 - 本版界面保持浅色模式，已优化小字对比度、布局与按钮反馈；自动深色模式后置，不把未实测的深色主题纳入登录验收。
 - **macOS arm64 / x64 均为 `UNVERIFIED`**，不宣称跨平台已验收。
+
+## 云端部署（M0-02B）
+
+云端部署步骤与验收见 [云端 Go API 部署操作说明](../../docs/architecture/CLOUD_GO_API_DEPLOY.md)。**本 PR 仅准备云端运行代码和配置，未核实服务器真实部署。** 旧版 Windows Artifact 仍默认连接本地；新版正式包默认使用云域名，仅在 HTTPS、Go 服务和数据库连通后使用。客户端仍直接连接 Supabase Auth，客户端网络无法访问该域名时仍可能需要本机代理。
 
 ## 下一阶段
 

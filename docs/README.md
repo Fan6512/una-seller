@@ -11,6 +11,7 @@
 4. [CI 与运行环境 v1：GitHub Actions、开发/部署分工与验收边界](architecture/CI_AND_RUNTIME.md)
 5. [Windows/macOS 双平台规范](architecture/CROSS_PLATFORM.md)
 6. [M0 基础设施与部署验收说明](architecture/DEPLOYMENT_M0.md)：既有 Ubuntu/Nginx + Supabase，部署尚未验收。
+7. [M0-02B 云端 Go API 操作说明](architecture/CLOUD_GO_API_DEPLOY.md)：独立 systemd/Nginx 配置、部署步骤与真实环境验收门禁。
 7. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0001：M0-03 Go 实施选择](decisions/0001-language-and-modular-monolith.md) · [ADR-0005：M0 基础设施选型](decisions/0005-m0-infrastructure.md) · [全部 ADR](decisions/README.md)
 
 ## 产品工作流与商品编辑器

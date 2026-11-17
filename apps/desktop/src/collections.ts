@@ -53,7 +53,9 @@ export type CollectionPage = {
   offset: number;
 };
 
-export const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8787").replace(/\/$/, "");
+// Packaged desktop builds use the cloud API; source dev stays on loopback.
+const defaultApiBase = import.meta.env.DEV ? "http://127.0.0.1:8787" : "https://mkd.186512.xyz";
+export const apiBase = (import.meta.env.VITE_API_BASE_URL || defaultApiBase).replace(/\/$/, "");
 
 async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true): Promise<T> {
   let response: Response;

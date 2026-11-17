@@ -1,0 +1,20 @@
+[Unit]
+Description=Una Seller Go API (cloud, loopback only)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=una-seller
+Group=una-seller
+WorkingDirectory=/opt/una-seller
+Environment=UNA_SELLER_CLOUD=1
+EnvironmentFile=/etc/una-seller/api.env
+ExecStart=/opt/una-seller/una-seller-api
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
