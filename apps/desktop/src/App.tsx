@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { restoreSession, signOut, type AuthSession } from "./auth";
+import Login from "./Login";
 import {
   apiBase, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
   type CollectionDetail, type CollectionSummary,
@@ -172,7 +174,7 @@ function LoadError({ detail, onRetry, isDetail = false }: { detail: string; onRe
   );
 }
 
-export default function App() {
+function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () => void }) {
   const [service, setService] = useState<ServiceStatus>("checking");
   const [serviceError, setServiceError] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
@@ -284,6 +286,8 @@ export default function App() {
           <span className="connection-dot" aria-hidden="true" />
           {connectionStatus === "checking" ? "连接中" : connectionStatus === "online" ? "服务正常" : "连接异常"}
         </span>
+        <span className="account-email" title={email}>{email || "当前用户"}</span>
+        <button type="button" className="logout-action" onClick={onLogout}>退出登录</button>
       </header>
 
       <main className="main-content">
@@ -355,4 +359,33 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+export default function App() {
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [restoring, setRestoring] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const sessionLost = () => { if (active) setSession(null); };
+    window.addEventListener("una-seller:auth-lost", sessionLost);
+    void restoreSession().then((saved) => {
+      if (active) setSession(saved);
+    }).finally(() => {
+      if (active) setRestoring(false);
+    });
+    return () => {
+      active = false;
+      window.removeEventListener("una-seller:auth-lost", sessionLost);
+    };
+  }, []);
+
+  if (restoring) {
+    return <div className="login-page"><div className="loading-state" role="status"><span className="spinner" />正在恢复登录…</div></div>;
+  }
+  if (!session) return <Login onSignedIn={setSession} />;
+  return <CollectionWorkspace key={session.user.id} email={session.user.email} onLogout={() => {
+    setSession(null);
+    void signOut();
+  }} />;
 }

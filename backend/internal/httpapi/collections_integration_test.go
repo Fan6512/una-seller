@@ -37,10 +37,11 @@ func TestCollectionHTTPWithPostgres(t *testing.T) {
 		store.DB.Exec(context.Background(), `DELETE FROM app.source_products WHERE owner_user_id=$1`, owner)
 		store.DB.Exec(context.Background(), `DELETE FROM app.users WHERE id=$1`, owner)
 	}()
-	h := HandlerWithCollections(store, owner)
+	h := HandlerWithCollections(store, stubVerifier{id: owner})
 	submit := func(body string) (*httptest.ResponseRecorder, map[string]any) {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/collections", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer verified-test-session")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		var response map[string]any
@@ -73,12 +74,30 @@ func TestCollectionHTTPWithPostgres(t *testing.T) {
 	}
 	for _, path := range []string{"/api/v1/collections?q=Synthetic", "/api/v1/collections/" + id} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Authorization", "Bearer verified-test-session")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Original details") && strings.Contains(path, id) {
 			t.Fatalf("GET %s status=%d: %s", path, w.Code, w.Body.String())
 		}
 	}
+	// Authenticated users cannot see a record owned by another user.
+	otherOwner := "3a9c0000-0000-4000-8000-000000000014"
+	other := HandlerWithCollections(store, stubVerifier{id: otherOwner})
+	for _, path := range []string{"/api/v1/collections", "/api/v1/collections/" + id} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Authorization", "Bearer verified-other-session")
+		w := httptest.NewRecorder()
+		other.ServeHTTP(w, r)
+		if strings.Contains(path, id) {
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("other user read product: status=%d", w.Code)
+			}
+		} else if w.Code != http.StatusOK || strings.Contains(w.Body.String(), id) {
+			t.Fatalf("other user listed product: status=%d body=%s", w.Code, w.Body.String())
+		}
+	}
+
 	w, _ = submit(`{"source_platform":"amazon","source_site":"US","source_url":"https://evil.example/dp/B777777777","collection_status":"complete"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid host status=%d", w.Code)
