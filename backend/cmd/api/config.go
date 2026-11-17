@@ -12,8 +12,8 @@ import (
 // Local settings are outside Git, Windows installers, and extracted artifacts.
 // Existing environment variables take precedence, including in CI or production.
 type apiConfig struct {
-	DatabaseURL           string `json:"DATABASE_URL"`
-	SupabaseURL           string `json:"SUPABASE_URL"`
+	DatabaseURL            string `json:"DATABASE_URL"`
+	SupabaseURL            string `json:"SUPABASE_URL"`
 	SupabasePublishableKey string `json:"SUPABASE_PUBLISHABLE_KEY"`
 }
 
