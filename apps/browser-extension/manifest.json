@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Una Seller 商品采集",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "手动采集 Amazon.com 商品，保存到 Una Seller 采集箱。",
   "permissions": [
     "storage"

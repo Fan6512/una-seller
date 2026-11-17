@@ -105,13 +105,13 @@ async function saveCollection(collection, sender) {
   let response = await submit(await getAccessToken());
   if (response.status === 401) response = await submit(await getAccessToken(true));
   if (response.status === 401) throw new Error("账号登录已失效，请在插件弹窗重新登录");
-  if (response.status === 202) return { ok: true, status: "unverified", message: "服务端已提交，回读待确认；请在采集箱核对" };
+  if (response.status === 202) return { ok: true, status: "unverified", action: "unverified", message: "服务端已提交，回读待确认；请在采集箱核对" };
   if (!response.ok) throw new Error("商品未确认保存（HTTP " + response.status + "），请检查后重试");
   const result = await response.json();
   if ((result.result !== "created" && result.result !== "updated") || !result.collection?.id) {
     throw new Error("服务端返回缺少保存确认，暂不标记成功");
   }
-  return { ok: true, status: result.collection.collection_status || collection.collection_status, id: result.collection.id };
+  return { ok: true, status: result.collection.collection_status || collection.collection_status, action: result.result, id: result.collection.id };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

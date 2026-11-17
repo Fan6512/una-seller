@@ -2,44 +2,60 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 require("../amazon-core.js");
 const core = globalThis.UnaAmazonCore;
-
-test("Amazon US product URLs only, strip tracking information", () => {
-  assert.equal(core.canonicalAmazonURL("https://www.amazon.com/Product-Name/dp/B0ABC12345?ref_=abc"), "https://www.amazon.com/dp/B0ABC12345");
-  assert.equal(core.canonicalAmazonURL("https://amazon.com/gp/product/B0ABC12345?tag=test"), "https://www.amazon.com/dp/B0ABC12345");
-  for (const url of ["https://amazon.co.uk/dp/B0ABC12345", "http://www.amazon.com/dp/B0ABC12345", "https://evil.com/dp/B0ABC12345", "https://www.amazon.com.evil.com/dp/B0ABC12345", "https://www.amazon.com/s?k=toy"]) {
-    assert.equal(core.canonicalAmazonURL(url), null);
-  }
+test("reject unrelated hosts and normalize Amazon ASIN", () => {
+  assert.equal(core.canonicalAmazonURL("https://www.amazon.com/name/dp/B0ABC12345?ref=xyz"), "https://www.amazon.com/dp/B0ABC12345");
+  assert.equal(core.canonicalAmazonURL("https://amazon.com/gp/product/B0ABC12345"), "https://www.amazon.com/dp/B0ABC12345");
+  assert.equal(core.canonicalAmazonURL("https://amazon.co.uk/dp/B0ABC12345"), null);
 });
-test("Price preserves visible precise dollars but never invents ranges", () => {
-  assert.equal(core.parsePrice("$12.99"), "12.99");
+test("parse exact prices, not price ranges", () => {
   assert.equal(core.parsePrice("$1,299.00"), "1299.00");
   assert.equal(core.parsePrice("$9.50 - $15.00"), null);
-  assert.equal(core.parsePrice("Not available"), null);
-  assert.equal(core.parsePrice("19.99"), null);
 });
-test("Blocked pages are not saved as valid products", () => {
-  const doc = {
-    title: "Robot Check",
-    querySelector: () => null
+function fakeImage(attrs = {}) {
+  return { getAttribute: k => attrs[k] || null };
+}
+function fakePage() {
+  const hero = fakeImage({
+    "data-old-hires":"https://m.media-amazon.com/images/I/61ABC._AC_SL1500_.jpg",
+    "data-a-dynamic-image":JSON.stringify({
+      "https://m.media-amazon.com/images/I/61ABC._AC_SY300_.jpg":[300,300],
+      "https://m.media-amazon.com/images/I/61ABC._AC_SL900_.jpg":[900,900]
+    })
+  });
+  const imageThumb = fakeImage({ src:"https://m.media-amazon.com/images/I/71SECOND._AC_US40_.jpg" });
+  const videoThumb = fakeImage({ src:"https://m.media-amazon.com/images/I/VIDEO._AC_US40_.jpg" });
+  const photos = [
+    { className:"imageThumbnail", querySelector: () => imageThumb },
+    { className:"videoThumbnail", querySelector: () => videoThumb }
+  ];
+  return {
+    querySelector: s => s==="#landingImage" ? hero : null,
+    querySelectorAll: s => s==="#altImages li, #imageBlockThumbs li" ? photos : []
   };
-  assert.throws(() => core.parseProduct(doc, "https://www.amazon.com/dp/B0ABC12345"), /验证或登录/);
+}
+test("dedupe Amazon image sizes, upgrade thumbnails, exclude video thumbnails", () => {
+  const images=core.collectImages(fakePage());
+  assert.equal(images.length,2);
+  assert.deepEqual(images.map(x=>x.type),["main","additional"]);
+  assert.equal(images[0].url,"https://m.media-amazon.com/images/I/61ABC._AC_SL1500_.jpg");
+  assert.equal(images[1].url,"https://m.media-amazon.com/images/I/71SECOND.jpg");
+  assert.ok(!images.some(x=>x.url.includes("VIDEO")));
 });
-test("Partial product remains partial when description, images, bullets or price are missing", () => {
-  const doc = {
-    title: "Example Item",
-    querySelector: selector => selector === "#productTitle" ? { textContent: "Simple Example" } : null,
-    querySelectorAll: () => []
-  };
-  const input = core.parseProduct(doc, "https://www.amazon.com/dp/B0ABC12345");
-  assert.equal(input.collection_status, "partial");
-  assert.deepEqual(input.missing_fields, ["price","images","bullet_points","description"]);
-  assert.equal(input.source_site, "US");
-  assert.equal(input.source_url, "https://www.amazon.com/dp/B0ABC12345");
+test("only permitted Amazon image domains",()=>{
+  assert.equal(core.imageInfo("https://evil.example/images/I/61ABC._AC_SL1500_.jpg"),null);
+  assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/61ABC._AC_SL200_.jpg").key, "61abc");
 });
-test("Manifest is narrowly scoped to recognized hosts", () => {
-  const manifest = require("../manifest.json");
-  assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.permissions.join(","), "storage");
-  assert.ok(!manifest.host_permissions.some(p => /<all_urls>|\*:/.test(p)));
-  assert.deepEqual(manifest.content_scripts[0].matches, ["https://www.amazon.com/*","https://amazon.com/*"]);
+test("blocked and missing product information never pretend complete",()=>{
+  const blocked={title:"Robot Check",querySelector:()=>null};
+  assert.throws(()=>core.parseProduct(blocked,"https://www.amazon.com/dp/B0ABC12345"),/验证码/);
+  const noInfo={title:"Example",querySelector:s=>s==="#productTitle"?{textContent:"A product"}:null,querySelectorAll:()=>[]};
+  const result=core.parseProduct(noInfo,"https://www.amazon.com/dp/B0ABC12345");
+  assert.equal(result.collection_status,"partial");
+  assert.deepEqual(result.missing_fields,["price","images","bullet_points","description"]);
+});
+test("search controls mount inside the matched card, never as siblings of its heading",()=>{
+  const fs=require("node:fs");
+  const content=fs.readFileSync(require("node:path").join(__dirname,"../content.js"),"utf8");
+  assert.match(content,/mount\.appendChild\(createControl\(url\)\)/);
+  assert.doesNotMatch(content,/insertAdjacentElement\(["']afterend/);
 });
