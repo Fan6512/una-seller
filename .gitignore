@@ -1,8 +1,8 @@
 # ---- 第三方研究原件、逆向分析输出与本地工作文件：不纳入 Git ----
-# 这些目录已从当前工作树清理；历史 Git 提交仍可追溯，不代表公开历史已删除。
+# 这些内容只在本地留存，不入库、不上传；历史 Git 提交仍可追溯，不代表公开历史已删除。
 /分析材料/
-/research/zying/analysis/
-/research/zying/target/
+/research/zying/*
+!/research/zying/README.md
 /analysis/
 /target/
 .workbuddy/
