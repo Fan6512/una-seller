@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import {
@@ -43,6 +43,36 @@ function ProductImage({ src, alt, className = "", eager = false }: { src: string
     return <span className={"image-fallback " + className} role="img" aria-label="暂无商品图片"><Icon name="image" size={24} /></span>;
   }
   return <img className={className} src={src} alt={alt} loading={eager ? "eager" : "lazy"} referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+}
+
+// The cloud database retains original source URLs for auditability. Displaying a
+// low-resolution transform and its high-resolution sibling as separate photos
+// makes an image gallery misleading. Collapse display-only duplicates.
+function distinctGalleryImages(images: CollectionDetail["images"]): CollectionDetail["images"] {
+  const selected: Array<{ image: CollectionDetail["images"][number]; score: number }> = [];
+  const seen = new Map<string, number>();
+  for (const image of images) {
+    let identity = image.url;
+    let score = 1;
+    try {
+      const url = new URL(image.url);
+      if (/\\.(mp4|webm|m3u8)$/i.test(url.pathname)) continue;
+      const match = url.pathname.match(/\\/images\\/I\\/([^/]+?)\\.(jpe?g|png|webp)$/i);
+      if (match && /(?:media-amazon|ssl-images-amazon)/i.test(url.hostname)) {
+        identity = url.hostname + "/" + match[1].replace(/\\._[A-Za-z0-9,+_-]+$/i, "").toLowerCase();
+        const size = match[1].match(/_(?:SL|SX|SY|SS|US)(\\d+)/i);
+        score = size ? Number(size[1]) : 10000;
+      }
+    } catch { /* Keep non-Amazon URLs untouched. */ }
+    const position = seen.get(identity);
+    if (position === undefined) {
+      seen.set(identity, selected.length);
+      selected.push({ image, score });
+    } else if (score > selected[position].score) {
+      selected[position] = { image, score };
+    }
+  }
+  return selected.map(x => x.image);
 }
 
 function ProductGallery({ images, title }: { images: CollectionDetail["images"]; title: string }) {
@@ -98,7 +128,7 @@ function ProductDetail({ product }: { product: CollectionDetail }) {
         <a href={product.source_url} target="_blank" rel="noopener noreferrer" className="source-link">查看原商品 <Icon name="external" size={15} /></a>
       </div>
       <div className="product-top">
-        <ProductGallery images={product.images} title={product.title} />
+        <ProductGallery key={product.id} images={distinctGalleryImages(product.images)} title={product.title} />
         <div className="product-summary">
           <p className="source-name">{siteName(product.source_platform, product.source_site)}</p>
           <h2>{product.title}</h2>
@@ -190,8 +220,12 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const detailCache = useRef(new Map<string, { value: CollectionDetail; savedAt: number }>());
 
-  const reload = () => setRefresh((n) => n + 1);
+  const reload = () => {
+    detailCache.current.clear();
+    setRefresh((n) => n + 1);
+  };
   const checkHealth = useCallback(async (signal: AbortSignal) => {
     try {
       const result = await getHealth(signal);
@@ -235,6 +269,11 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
         setOffset(Math.max(0, offset - PAGE_SIZE));
         return;
       }
+      // A new collection timestamp invalidates any previously viewed detail.
+      for (const item of page.items) {
+        const cached = detailCache.current.get(item.id);
+        if (cached && cached.value.last_collected_at !== item.last_collected_at) detailCache.current.delete(item.id);
+      }
       setItems(page.items);
       setHasMore(page.hasMore);
       setSelectedId((old) => page.items.some((item) => item.id === old) ? old : page.items[0]?.id ?? null);
@@ -257,12 +296,22 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
       setDetailLoading(false);
       return;
     }
-    const controller = new AbortController();
-    setDetail(null);
+    const cached = detailCache.current.get(selectedId);
+    setDetail(cached?.value ?? null);
     setDetailError(null);
-    setDetailLoading(true);
+    setDetailLoading(!cached);
+    // No new network/Auth round trip when returning to a recently viewed product.
+    if (cached && Date.now() - cached.savedAt < 90_000) return;
+    const controller = new AbortController();
     void getCollection(selectedId, controller.signal).then((product) => {
-      if (!controller.signal.aborted) setDetail(product);
+      if (controller.signal.aborted) return;
+      detailCache.current.set(selectedId, { value: product, savedAt: Date.now() });
+      // Bound memory usage: a small, per-login in-memory cache, never persisted.
+      if (detailCache.current.size > 16) {
+        const oldest = detailCache.current.keys().next().value;
+        if (oldest) detailCache.current.delete(oldest);
+      }
+      setDetail(product);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setDetailError(error instanceof Error ? error.message : "商品详情加载失败");
     }).finally(() => {
