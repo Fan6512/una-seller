@@ -42,6 +42,7 @@
 - `npm run build` 仅验证 TypeScript/Vite；GitHub Actions 的 Windows NSIS 构建另行验证原生可编译，不代替 GUI 真机检查。
 - **（PR #13 无登录版本）2026-11-17 Windows x64 已实测 PASS**：Tauri 安装和启动、本机 Go API 连接 Supabase PostgreSQL、合成商品成功入库并在采集箱展示、重启桌面及 Go API 后仍能读取。它不代表浏览器插件已完成真实商品采集。
 - **PR #15 登录版本：Windows 实机登录/会话恢复/跨账号隔离仍为 `UNVERIFIED`**，不能沿用 PR #13 的无登录验收结论。
+- 本版界面保持浅色模式，已优化小字对比度、布局与按钮反馈；自动深色模式后置，不把未实测的深色主题纳入登录验收。
 - **macOS arm64 / x64 均为 `UNVERIFIED`**，不宣称跨平台已验收。
 
 ## 下一阶段
