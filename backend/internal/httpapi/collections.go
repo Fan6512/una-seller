@@ -46,7 +46,6 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier)
 	})
 }
 
-
 // allowedCollectionOrigin only grants CORS transport, not API access.
 // Requests never rely on browser cookies for authentication.
 func allowedCollectionOrigin(origin string) bool {
