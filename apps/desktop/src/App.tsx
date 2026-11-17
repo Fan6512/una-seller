@@ -56,11 +56,11 @@ function distinctGalleryImages(images: CollectionDetail["images"]): CollectionDe
     let score = 1;
     try {
       const url = new URL(image.url);
-      if (/\\.(mp4|webm|m3u8)$/i.test(url.pathname)) continue;
-      const match = url.pathname.match(/\\/images\\/I\\/([^/]+?)\\.(jpe?g|png|webp)$/i);
+      if (/\.(mp4|webm|m3u8)$/i.test(url.pathname)) continue;
+      const match = url.pathname.match(/\/images\/I\/([^/]+?)\.(jpe?g|png|webp)$/i);
       if (match && /(?:media-amazon|ssl-images-amazon)/i.test(url.hostname)) {
-        identity = url.hostname + "/" + match[1].replace(/\\._[A-Za-z0-9,+_-]+$/i, "").toLowerCase();
-        const size = match[1].match(/_(?:SL|SX|SY|SS|US)(\\d+)/i);
+        identity = url.hostname + "/" + match[1].replace(/\._[A-Za-z0-9,+_-]+$/i, "").toLowerCase();
+        const size = match[1].match(/_(?:SL|SX|SY|SS|US)(\d+)/i);
         score = size ? Number(size[1]) : 10000;
       }
     } catch { /* Keep non-Amazon URLs untouched. */ }
