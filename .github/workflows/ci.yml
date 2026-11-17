@@ -112,3 +112,25 @@ jobs:
 
       - name: TypeScript check and Vite build
         run: npm run build
+
+  extension:
+    name: Browser Extension MV3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: apps/browser-extension
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+      - name: Validate manifest, script syntax and parser
+        run: |
+          node --check amazon-core.js
+          node --check content.js
+          node --check background.js
+          node --check popup.js
+          node --test tests/*.test.cjs

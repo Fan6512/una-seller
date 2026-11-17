@@ -59,6 +59,7 @@
     const images = [];
     const seen = new Set();
     function addImage(raw, type) {
+      if (!raw || typeof raw !== "string") return;
       try {
         const u = new URL(raw, sourceURL);
         if (u.protocol !== "https:" || u.username || u.password || u.port || u.href.length > 2000 || seen.has(u.href)) return;

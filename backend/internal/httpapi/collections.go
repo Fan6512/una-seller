@@ -24,18 +24,18 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier)
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") {
-			// Allow only known Tauri/dev origins; PR-C will add controlled extension access.
+			// Chrome MV3 IDs are per-install; only accept syntactically valid
+			// extension origins. API access still requires a verified Bearer token.
 			origin := r.Header.Get("Origin")
-			switch origin {
-			case "http://127.0.0.1:1420", "http://localhost:1420", "http://tauri.localhost", "tauri://localhost", "https://tauri.localhost":
+			if origin != "" {
+				if !allowedCollectionOrigin(origin) {
+					writeError(w, http.StatusForbidden, "origin not allowed")
+					return
+				}
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			case "":
-			default:
-				writeError(w, http.StatusForbidden, "origin not allowed")
-				return
 			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -44,6 +44,30 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier)
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+
+// allowedCollectionOrigin only grants CORS transport, not API access.
+// Requests never rely on browser cookies for authentication.
+func allowedCollectionOrigin(origin string) bool {
+	switch origin {
+	case "http://127.0.0.1:1420", "http://localhost:1420", "http://tauri.localhost", "tauri://localhost", "https://tauri.localhost":
+		return true
+	}
+	const prefix = "chrome-extension://"
+	if !strings.HasPrefix(origin, prefix) {
+		return false
+	}
+	id := strings.TrimPrefix(origin, prefix)
+	if len(id) != 32 {
+		return false
+	}
+	for _, b := range id {
+		if b < 'a' || b > 'p' {
+			return false
+		}
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
