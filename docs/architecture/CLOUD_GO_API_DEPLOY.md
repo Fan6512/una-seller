@@ -25,6 +25,8 @@ curl -sS -o /dev/null -w 'Supabase Auth HTTP=%{http_code}\n' --max-time 10 https
 
 另在 Cloudflare 检查 `mkd` 的 DNS 指向目标主机、安全组允许 80/443、代理及 TLS 模式。不要全局修改其它域名的 SSL/TLS 策略。
 
+**准备公网启用前的账号门禁**：本项目当前仅有一个负责人账号、尚未对外注册。进入 Supabase Dashboard → Authentication 的登录提供商/注册设置，确认**关闭新的公开账号注册**，再开放云端 Go API。现有账号的邮箱密码登录应继续可用并在客户端复测。这项设置在本地开发阶段已被允许暂缓，但**公网部署前不能继续当作已完成**；不要通过删除现有用户来达到限制注册的目的。
+
 ## 2. 从仓库构建 Linux amd64 Go 程序（不要求主机安装 Go）
 服务器已有 Docker，可**仅用 Docker 临时编译**，不影响现有业务容器：
 ```sh
