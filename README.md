@@ -39,7 +39,7 @@
 
 [运行步骤](docs/architecture/M0-01-IMPLEMENTATION.md) · [验证状态](docs/architecture/M0-01-STATUS.md)
 
-目前 `apps/desktop/` 是 Tauri + React 最小界面，`backend/` 是**仅本机运行**的 Go 健康检查 HTTP 服务。未提供公网 ERP API、OAuth、数据库或收费功能。暂未配置 `mkd.186512.xyz`；KYC 未完成前不做真实授权。
+目前 `apps/desktop/` 是 Tauri + React 采集箱，`backend/` 是**仅本机运行**的 Go API，已支持来源商品写入、列表与详情读取，并使用 Supabase PostgreSQL 持久化；**尚未部署公网 ERP API、用户登录或 Mercado Libre OAuth**。`mkd.186512.xyz` 的 HTTPS 仍待部署验收。
 
 Windows PowerShell 示例（在仓库根目录打开两个终端）：
 
