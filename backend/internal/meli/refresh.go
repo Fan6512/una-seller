@@ -253,7 +253,9 @@ func (s *Service) refreshToken(ctx context.Context, oldToken string) (Token, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		var failure struct { Error string `json:"error"` }
+		var failure struct {
+			Error string `json:"error"`
+		}
 		_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<15)).Decode(&failure)
 		if failure.Error == "invalid_grant" {
 			return Token{}, ErrReauthorizationRequired
