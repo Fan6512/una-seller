@@ -40,7 +40,7 @@
       const match = url.pathname.match(/^\/images\/I\/([^/]+?)\.(jpe?g|png|webp)$/i);
       if (!match) return null;
       const base = match[1].replace(/\._[A-Za-z0-9,+_-]+$/i, "");
-      if (!base || /(?:play[-_]?button|video[-_]?(?:icon|thumb|poster)|sprite)/i.test(base)) return null;
+      if (!base || /(?:play[-_]?(?:button|icon)|video[-_]?(?:icon|thumb|poster)|sprite)/i.test(match[1])) return null;
       const ext = match[2].toLowerCase();
       const original = url.origin + "/images/I/" + base + "." + ext;
       const transformed = base !== match[1];

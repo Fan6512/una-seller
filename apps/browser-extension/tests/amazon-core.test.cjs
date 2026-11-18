@@ -43,6 +43,7 @@ test("dedupe Amazon image sizes, upgrade thumbnails, exclude video thumbnails", 
 });
 test("only permitted Amazon image domains",()=>{
   assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/video-poster.jpg"), null);
+  assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/ABC._SS40_PKdp-play-icon-overlay__.jpg"), null);
   assert.equal(core.imageInfo("https://evil.example/images/I/61ABC._AC_SL1500_.jpg"),null);
   assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/61ABC._AC_SL200_.jpg").key, "61abc");
 });
