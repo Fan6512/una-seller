@@ -25,7 +25,7 @@ M0 只建立真实接口需要的数据表，不提前为订单、退款、广�
 1. **SourceProduct / 采集箱**：用户 + 来源平台 + 站点 + 规范化来源 URL 唯一；包含原始标题、普通描述、按顺序的卖点、图片 URL、实际来源变体、采集状态和警告。不得因 AI 编辑或再次采集覆盖人工已经确认的自有商品。来源采集合同**不增加**销量、评价、卖家、独立 ASIN、品牌列。
 2. **CollectionWorkingDraft / 整理工作稿**（M1-A 基础、M1-B 加入 AI）：绑定采集箱来源，但与 SourceProduct 原始快照**独立存储**；可保存人工补充和后续 AI 候选、重启后恢复。转入产品库后保留来源记录与追溯关系，采集箱默认筛选未整理记录，允许查看已整理并再次整理。不要求 M0 预建工作稿表。
 3. **OwnProduct / 产品库**（M1-A 才创建）：自有可编辑草稿，可追溯来源，持有人工补充真实材质、重量、包装、成本、SKU 等。采集内容复制成初稿后独立演化；同一来源可以产生多个草稿。产品库内 AI 重新生成只更新 OwnProduct 草稿，不回写 SourceProduct 或原整理工作稿。
-4. **StoreConnection / StoreTemplate**（M1-D 才创建）：真实账号 OAuth 与有权限站点；模板只是默认勾选和站点销售参数，不代表授权。
+4. **StoreConnection / StoreTemplate**（StoreConnection 基础提前至 M0-ML-AUTH，StoreTemplate 仍属 M1-D）：真实账号 OAuth 与有权限站点；模板只是默认勾选和站点销售参数，不代表授权。
 5. **PublicationTarget / PublicationOperation**（M1-E 才创建）：每个店铺×站点**业务目标**单独记录状态、错误与回读；官方 API 可以按账户当前发布模型用一个请求处理多个目标站点，不能假定一站点一请求。请求 ID/目标状态与官方对象 ID 分开。
 6. **PublishedListing / 产品列表**（M1-D 先只读、M1-E 增加自建刊登）：包括授权账号**原有**经官方只读同步的真实商品和本系统新发布并确认的对象。原有商品允许暂时没有 OwnProduct 或本系统发布任务，后续按需关联；一个 OwnProduct 可对应多个店铺、站点、平台对象。Global UP / Local UP / Item / Variations 具体关系按账号和官方当前协议映射。
 
@@ -52,7 +52,8 @@ M0 只建立真实接口需要的数据表，不提前为订单、退款、广�
 
 ### 官方接入何时展开
 
-- M1-D 才实现 Mercado Libre OAuth、Token 更新/刷新、店铺只读同步。并发刷新可使用 PostgreSQL 行锁或其他轻量事务方案协调，具体 Token 有效期及轮换语义以官方当期文档和账号实际响应为准，**不为未来 Token 刷新在 M0 预装 Redis**。
+- Issue #21 / Draft PR #23 在 M0-ML-AUTH 提前实现 OAuth state、Token 交换、/users/me、加密凭据与店铺基础列表/断开；OAuth 要求主账号的 `site_id` 为 `CBT`，一份 Token 通过官方 `/marketplace/users/{user_id}` 映射多个物流子账号。自动续签通过进程内 singleflight + PostgreSQL 短事务行锁/租约与 fencing 更新；未知结果停止自动刷新，不在事务里等网络。`RequireSiteConnection` 按已核实的 `(site_id, logistic_type)` 查找子账号，同站可有不同物流模式。**真实授权、账号刊登模型的写入权限与原有商品只读同步尚未验收/实施**；后者留在 M1-D。参考 [Global Selling 账号官方说明](https://global-selling.mercadolibre.com/devsite/manage-users-global-selling)。
+- M1-A 可保存字段尚未补齐的整理工作稿。产品库支持包装尺寸和重量，发布时按类目与实际刊登模型校验必填项。保存英语基础标题和人工确认的 es-MX、pt-BR 等站点标题候选，在支持站点标题的流程中提交相应字段。图片、变体、标题和发布对象 ID 的映射依据 M1-D 只读证据及对应官方接口。参考 [CBT 标题显示说明](https://global-selling.mercadolibre.com/devsite/en_us/authentication-and-authorization-global-selling/cbt-publication-titles-descriptions-and-rendering)和 [User Products 刊登说明](https://global-selling.mercadolibre.com/devsite/en_us/support-for-integrators/price-per-variation-cbt)。
 - M1-E 根据当前账号是否启用 `user_product_seller` 选择 User Products 或仍受支持的 Legacy 操作，不把任何一份旧 CBT API 清单当成所有账号通用合同。参考 [User Products 官方说明](https://global-selling.mercadolibre.com/devsite/manage-sales-global-selling/user-products-cbt)；各目标站点单独记录状态和平台 ID，API 请求数量由实际模型决定。
 - M3 出现真实订单/问答/售后需求后再验证 Webhook topics、返回要求和接口权限，可先使用 PostgreSQL 持久通知/任务与 Go worker，不因历史逆向资料提前增加 `meli_orders`、`meli_interactions` 等空表或 Redis。
 

@@ -45,3 +45,23 @@ func TestExtensionOriginRejectsMalformedAndWebOrigins(t *testing.T) {
 		}
 	}
 }
+
+// The extension may post collections, but OAuth initiation and store actions
+// belong to the desktop shell only.
+func TestStoreRoutesRejectExtensionOrigin(t *testing.T) {
+	h := HandlerWithCollections(nil, nil)
+	r := httptest.NewRequest(http.MethodOptions, "/api/v1/stores", nil)
+	r.Header.Set("Origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden || w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("store preflight from extension status=%d origin=%q", w.Code, w.Header().Get("Access-Control-Allow-Origin"))
+	}
+	r = httptest.NewRequest(http.MethodOptions, "/api/v1/stores", nil)
+	r.Header.Set("Origin", "tauri://localhost")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("tauri store preflight status=%d", w.Code)
+	}
+}

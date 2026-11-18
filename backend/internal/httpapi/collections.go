@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Fan6512/una-seller/backend/internal/collections"
+	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
 type collectionAPI struct {
@@ -16,19 +17,33 @@ type collectionAPI struct {
 	verifier IdentityVerifier
 }
 
-func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier) http.Handler {
+func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier, stores ...*meli.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
 	api := collectionAPI{store: store, verifier: verifier}
 	mux.HandleFunc("/api/v1/collections", api.collections)
 	mux.HandleFunc("/api/v1/collections/", api.detail)
+	var storeService *meli.Service
+	if len(stores) != 0 {
+		storeService = stores[0]
+	}
+	s := storeAPI{auth: api, service: storeService}
+	mux.HandleFunc("/api/v1/stores", s.stores)
+	mux.HandleFunc("/api/v1/stores/oauth/start", s.start)
+	mux.HandleFunc("/api/v1/stores/", s.storeAction)
+	mux.HandleFunc(meli.CallbackPath, s.callback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") {
+		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") {
 			// Chrome MV3 IDs are per-install; only accept syntactically valid
-			// extension origins. API access still requires a verified Bearer token.
+			// extension origins, and only for the collection API. Store and OAuth
+			// routes stay Tauri-only. API access still requires a Bearer token.
+			allowOrigin := allowedAppOrigin
+			if strings.HasPrefix(r.URL.Path, "/api/v1/collections") {
+				allowOrigin = allowedCollectionOrigin
+			}
 			origin := r.Header.Get("Origin")
 			if origin != "" {
-				if !allowedCollectionOrigin(origin) {
+				if !allowOrigin(origin) {
 					writeError(w, http.StatusForbidden, "origin not allowed")
 					return
 				}
@@ -46,11 +61,20 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier)
 	})
 }
 
-// allowedCollectionOrigin only grants CORS transport, not API access.
+// allowedAppOrigin only grants CORS transport to the desktop shell, not API access.
 // Requests never rely on browser cookies for authentication.
-func allowedCollectionOrigin(origin string) bool {
+func allowedAppOrigin(origin string) bool {
 	switch origin {
 	case "http://127.0.0.1:1420", "http://localhost:1420", "http://tauri.localhost", "tauri://localhost", "https://tauri.localhost":
+		return true
+	}
+	return false
+}
+
+// allowedCollectionOrigin additionally accepts any syntactically valid Chrome MV3
+// extension origin; the extension posts collections without a cookie session.
+func allowedCollectionOrigin(origin string) bool {
+	if allowedAppOrigin(origin) {
 		return true
 	}
 	const prefix = "chrome-extension://"
