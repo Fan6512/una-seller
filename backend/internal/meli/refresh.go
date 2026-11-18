@@ -18,27 +18,26 @@ var ErrRefreshUnknown = errors.New("Mercado Libre token refresh outcome unknown"
 var ErrRefreshBusy = errors.New("Mercado Libre token refresh in progress")
 var ErrSiteNotAuthorized = errors.New("marketplace site not verified for this seller")
 
-const refreshLeaseDuration = 30 * time.Second
 const refreshAhead = 60 * time.Second
 
 // AuthorizedStore is server-only. Do not JSON-encode it or send its token to clients.
 type AuthorizedStore struct {
-	SellerID    string
-	AccessToken string
-	Markets     []Marketplace
-	Verified    bool
+	SellerID	string
+	AccessToken	string
+	Markets	[]Marketplace
+	Verified	bool
 }
 
 type tokenSnapshot struct {
-	sellerID       string
-	status         string
-	accessCipher   []byte
-	refreshCipher  []byte
-	expires        *time.Time
-	lock           *string
-	leaseUntil     *time.Time
-	marketsJSON    []byte
-	marketsStatus  string
+	sellerID	string
+	status	string
+	accessCipher	[]byte
+	refreshCipher	[]byte
+	expires	*time.Time
+	lock	*string
+	leaseUntil	*time.Time
+	marketsJSON	[]byte
+	marketsStatus	string
 }
 
 func (s *Service) snapshot(ctx context.Context, owner, storeID string) (tokenSnapshot, error) {
