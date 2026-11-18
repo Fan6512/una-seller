@@ -48,12 +48,14 @@ GitHub Actions provisions disposable PostgreSQL 17 for synthetic integration tes
 
 ## Mercado Libre CBT 店铺连接（Issue #21 / Draft PR #23）
 
-这是**未合并的授权基础切片**：Go 已实现一次性 OAuth state、可选 PKCE、官方 `/oauth/token` 和 `/users/me`、Token 加密存储、店铺列表与断开；Tauri 已有店铺管理页面。GitHub CI 的 HTTP Mock/PostgreSQL 合成数据通过，不代表真实卖家授权 PASS。
+这是**未合并的 OAuth + Refresh/门禁切片**：Go 已实现一次性 OAuth state、可选 PKCE、官方 `/oauth/token` 和 `/users/me`、官方 CBT 主账号/子站点映射、Token 加密存储、单次轮换续签、店铺列表与断开；Tauri 已有店铺管理页面。代码与合成数据测试不代表真实卖家授权 PASS，当前 HEAD CI 状态以 GitHub 检查为准。
 
 - 服务器私有配置：`MELI_CLIENT_ID`、`MELI_CLIENT_SECRET`、`MELI_REDIRECT_URI`、`MELI_TOKEN_ENCRYPTION_KEY`，如 DevCenter 启用 PKCE，另设 `MELI_PKCE_ENABLED=1`。具体占位配置见 `deploy/una-seller/api.env.example`；Secret、加密密钥不得放入桌面构建、Git 或公开日志。缺少完整配置时，授权 API 返回 503。
 - 在 DevCenter 登记的 HTTPS Callback URI 与 `MELI_REDIRECT_URI` **必须完全相同**：`https://<your-owned-api-domain>/api/v1/mercadolibre/oauth/callback`；路径由服务端固定，不能增加随用户变化的 query。
 - 服务器代理模板 `deploy/una-seller/nginx-mkd.conf` 已包含店铺 API 和 Callback，Callback 关闭 Nginx access log，避免 code/state 被日志收集。**仓库模板更新不等于已更改真实服务器**。
 - 显式执行 `go run ./cmd/api migrate`（包含 `0002_meli_store_connections.sql`）时必须先核对已有数据库及备份/审批，不做自动迁移。
-- `POST /api/v1/stores/oauth/start`（Supabase Bearer）：返回官方 `authorization_url`；`GET /api/v1/mercadolibre/oauth/callback`（一次性 state）：交换 Token 并绑定官方卖家身份；`GET /api/v1/stores`（Supabase Bearer）：仅列出本人店铺；`POST /api/v1/stores/{uuid}/disconnect`：仅断开本人店铺。上述 API 不返回 access/refresh token。
-- 授权成功后尚**没有 Token 自动刷新**。过期时列表会提示 `token_expired`，不能当作可继续发单/拉订单；自动轮换、服务端授权门禁、能力核验归后续切片。订单拉取、真实刊登均未实施。
+- `POST /api/v1/stores/oauth/start`（Supabase Bearer）：返回官方 `authorization_url`；`GET /api/v1/mercadolibre/oauth/callback`（一次性 state）：交换 Token 并绑定官方卖家身份；`GET /api/v1/stores`（Supabase Bearer）：仅列出本人店铺；`POST /api/v1/stores/{uuid}/disconnect`：仅断开本人店铺；`POST /api/v1/stores/{uuid}/connection-check`：仅本人触发 Token 状态检查及必要的自动续签，返回去敏状态，不含 Token。上述 API 不返回 access/refresh token。
+- **CBT 账号模型**：`meli_store_connections.seller_id` 是 CBT 主账号的 global user_id，一账号只有一套 Token。由 `GET /marketplace/users/{user_id}` 得到 `marketplaces[]`（站点 site_id + 子账号 user_id + logistic_type）并保存在同一行 JSONB；失败时状态为 `unverified`，不是猜测五站全开。只有 verified 的明确站点才能通过 `RequireSiteConnection`。
+- **Token 自动续签与统一门禁已写入 Go**：`RequireStoreConnection` / `RequireSiteConnection` 只在服务端供后续订单和刊登复用；进程内 singleflight + PostgreSQL 短事务行锁/刷新租约，**不在数据库事务里等待外部 HTTP**。平台返回 `invalid_grant` 标记 `reauth_required`；无法确定续签是否成功标记 `refresh_unknown`，拒绝盲目重试旧 Refresh Token。
+- 当前仅实现连接状态/站点映射和服务端门禁组件，**不等于真实 Orders/刊登 API 已经接入**。手动强制续签仅用于服务端受控测试，不向普通桌面 UI 暴露不受限的强制轮换按钮。
 - Windows 真实 OAuth 操作、DevCenter 权限、线上 Callback、第二卖家店铺以及 macOS 运行尚未验收；请如实记 NOT_RUN/UNVERIFIED。
