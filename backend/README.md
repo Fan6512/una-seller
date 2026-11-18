@@ -33,9 +33,10 @@ go run ./cmd/api migrate
 go run ./cmd/api
 ```
 
-- `GET /healthz` is available with or without a database. **All collection GET/POST routes require `Authorization: Bearer <Supabase Auth access_token>`**; missing/invalid sessions return HTTP 401. The backend verifies the token via `/auth/v1/user` and uses the verified `user.id` as the owner; `UNA_SELLER_LOCAL_USER_ID` is no longer used.
+- `GET /healthz` is available with or without a database. **All collection GET/POST/DELETE routes require `Authorization: Bearer <Supabase Auth access_token>`**; missing/invalid sessions return HTTP 401. The backend verifies the token via `/auth/v1/user` and uses the verified `user.id` as the owner; `UNA_SELLER_LOCAL_USER_ID` is no longer used.
 - `POST /api/v1/collections` accepts only structured JSON, returns 201 (new), 200 (recapture), or an error (not saved).
 - `GET /api/v1/collections?q=...&limit=30&offset=0` and `GET /api/v1/collections/{uuid}` read persisted source data.
+- `DELETE /api/v1/collections/{uuid}` permanently deletes only the authenticated user's collected source product (204); other users' records and missing UUIDs return 404. Its source images/variants cascade; this never deletes Mercado Libre listings.
 - `price` is a decimal **string** or null, never a JSON floating-point number; missing is distinct from null. `bullet_points` and images retain order. Variants are **only real captured attribute combinations**.
 - Partial recaptures merge valid supplied fields and preserve prior data: missing fields, nulls, and empty arrays do not erase saved content.
 - Complete recaptures preserve omitted fields; explicit null clears nullable scalars, and either null or [] clears `bullet_points`, top-level `images`, and `variants`. An explicitly supplied variant with `image_urls: null` or `[]` has no variant images. Do not send null to mean 'not collected'; omit the field instead.

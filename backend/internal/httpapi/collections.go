@@ -49,7 +49,11 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 				}
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				if strings.HasPrefix(r.URL.Path, "/api/v1/collections") && allowedAppOrigin(origin) {
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+				} else {
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				}
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			}
 			if r.Method == http.MethodOptions {
@@ -224,14 +228,27 @@ func (a collectionAPI) detail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
+	if r.Method != http.MethodGet && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "GET, DELETE")
 		writeError(w, 405, "method not allowed")
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/collections/")
 	if !collections.ValidUserID(id) {
 		writeError(w, 404, "collection not found")
+		return
+	}
+	if r.Method == http.MethodDelete {
+		err := a.store.Delete(r.Context(), ownerID, id)
+		if errors.Is(err, collections.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "collection not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "collection could not be deleted")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	p, err := a.store.Get(r.Context(), ownerID, id)

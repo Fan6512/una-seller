@@ -3,7 +3,7 @@ import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import StoresPage from "./StoresPage";
 import {
-  apiBase, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
+  apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
   type CollectionDetail, type CollectionSummary,
 } from "./collections";
 
@@ -124,13 +124,17 @@ function Description({ value }: { value: string }) {
   );
 }
 
-function ProductDetail({ product }: { product: CollectionDetail }) {
+function ProductDetail({ product, onDelete, deleting, deleteError }: { product: CollectionDetail; onDelete: () => void; deleting: boolean; deleteError: string | null }) {
   return (
     <article className="product-detail">
       <div className="detail-toolbar">
         <span className="detail-eyebrow">商品详情</span>
-        <a href={product.source_url} target="_blank" rel="noopener noreferrer" className="source-link">查看原商品 <Icon name="external" size={15} /></a>
+        <div className="detail-actions">
+          <button type="button" className="delete-source-button" onClick={onDelete} disabled={deleting}>{deleting ? "删除中…" : "删除商品"}</button>
+          <a href={product.source_url} target="_blank" rel="noopener noreferrer" className="source-link">查看原商品 <Icon name="external" size={15} /></a>
+        </div>
       </div>
+      {deleteError && <p className="delete-source-error" role="alert">{deleteError}</p>}
       <div className="product-top">
         <ProductGallery key={product.id + ":" + product.last_collected_at} images={distinctGalleryImages(product.images)} title={product.title} />
         <div className="product-summary">
@@ -225,12 +229,38 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const detailCache = useRef(new Map<string, { value: CollectionDetail; savedAt: number }>());
 
   const reload = () => {
     detailCache.current.clear();
     setRefresh((n) => n + 1);
   };
+
+  async function removeCollection(product: CollectionDetail) {
+    if (deletingId) return;
+    if (!window.confirm("确定永久删除采集商品“" + product.title + "”吗？图片和规格采集记录也将删除，此操作不可撤销。")) return;
+    setDeletingId(product.id);
+    setDeleteError(null);
+    try {
+      await deleteCollection(product.id, new AbortController().signal);
+      detailCache.current.delete(product.id);
+      setItems((previous) => previous.filter((item) => item.id !== product.id));
+      setSelectedId((current) => current === product.id ? null : current);
+      setDetail((current) => current?.id === product.id ? null : current);
+      if (items.length <= 1 && offset > 0) {
+        setOffset(Math.max(0, offset - PAGE_SIZE));
+      } else {
+        setRefresh((n) => n + 1);
+      }
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "删除商品失败，请重试");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const checkHealth = useCallback(async (signal: AbortSignal) => {
     try {
       const result = await getHealth(signal);
@@ -295,6 +325,7 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
   }, [search, offset, refresh]);
 
   useEffect(() => {
+    setDeleteError(null);
     if (!selectedId) {
       setDetail(null);
       setDetailError(null);
@@ -407,7 +438,7 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
               ) : detailLoading || !detail || detail.id !== selectedId ? (
                 <div className="loading-state detail-loading" role="status"><span className="spinner" />正在加载详情…</div>
               ) : (
-                <ProductDetail key={detail.id} product={detail} />
+                <ProductDetail key={detail.id} product={detail} onDelete={() => void removeCollection(detail)} deleting={deletingId !== null} deleteError={deleteError} />
               )}
             </section>
           )}

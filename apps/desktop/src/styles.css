@@ -296,6 +296,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
 
 .product-detail { padding: 24px 27px 28px; }
 .detail-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+.detail-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.delete-source-button { border: 1px solid #e7c9c9; border-radius: 7px; background: #fff; color: #a83c3c; padding: 7px 10px; font-size: 12px; cursor: pointer; }
+.delete-source-button:hover:not(:disabled) { background: #fff4f4; border-color: #d99a9a; }
+.delete-source-button:disabled { opacity: .55; cursor: wait; }
+.delete-source-error { color: #a83c3c; font-size: 12px; margin: -10px 0 15px; }
 .detail-eyebrow { color: #738093; font-weight: 600; font-size: 12px; }
 .source-link {
   display: inline-flex;

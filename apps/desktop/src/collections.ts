@@ -57,9 +57,10 @@ export type CollectionPage = {
 const defaultApiBase = import.meta.env.DEV ? "http://127.0.0.1:8787" : "https://mkd.186512.xyz";
 export const apiBase = (import.meta.env.VITE_API_BASE_URL || defaultApiBase).replace(/\/$/, "");
 
-async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true): Promise<T> {
+async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true, method: "GET" | "DELETE" = "GET"): Promise<T> {
   let response: Response;
   const fetchWithToken = (token: string | null) => fetch(apiBase + path, {
+    method,
     signal,
     cache: "no-store",
     headers: token ? { "Authorization": "Bearer " + token } : undefined,
@@ -93,6 +94,7 @@ async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = 
         : "请求失败（HTTP " + response.status + "）";
     throw new Error(message);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -111,13 +113,23 @@ export function getCollection(id: string, signal: AbortSignal) {
   return requestJSON<CollectionDetail>("/api/v1/collections/" + encodeURIComponent(id), signal);
 }
 
+export function deleteCollection(id: string, signal: AbortSignal) {
+  return requestJSON<void>("/api/v1/collections/" + encodeURIComponent(id), signal, true, "DELETE");
+}
+
 export function getHealth(signal: AbortSignal) {
   return requestJSON<{ status: string; service: string }>("/healthz", signal, false);
 }
 
 export function formatMoney(value: string | null, currency: string | null) {
   if (value === null) return "价格未采到";
-  return (currency ? currency + " " : "") + value;
+  // DB keeps up to 4 fractional digits. Trim only trailing zeros beyond cents,
+  // preserving meaningful precision without using floating-point conversion.
+  const match = /^(-?\d+)\.(\d+)$/.exec(value);
+  const amount = match
+    ? match[1] + "." + match[2].slice(0, Math.max(2, match[2].replace(/0+$/, "").length)).padEnd(2, "0")
+    : value;
+  return (currency ? currency + " " : "") + amount;
 }
 
 function parseCollectedDate(value: string) {

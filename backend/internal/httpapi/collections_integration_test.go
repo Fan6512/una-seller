@@ -102,4 +102,39 @@ func TestCollectionHTTPWithPostgres(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid host status=%d", w.Code)
 	}
+
+	// DELETE is owner-scoped. No other user may remove this collection.
+	deleteReq := func(handler http.Handler, bearer string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodDelete, "/api/v1/collections/"+id, nil)
+		if bearer != "" {
+			r.Header.Set("Authorization", bearer)
+		}
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, r)
+		return out
+	}
+	if out := deleteReq(other, "Bearer verified-other-session"); out.Code != http.StatusNotFound {
+		t.Fatalf("other owner DELETE status=%d", out.Code)
+	}
+	if out := deleteReq(h, ""); out.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous DELETE status=%d", out.Code)
+	}
+	if _, err := store.Get(ctx, owner, id); err != nil {
+		t.Fatalf("product changed by rejected DELETE: %v", err)
+	}
+	if out := deleteReq(h, "Bearer verified-test-session"); out.Code != http.StatusNoContent {
+		t.Fatalf("owner DELETE status=%d: %s", out.Code, out.Body.String())
+	}
+	for _, table := range []string{"app.source_product_images", "app.source_product_variants"} {
+		var count int
+		if err := store.DB.QueryRow(ctx, "SELECT count(*) FROM "+table+" WHERE source_product_id=$1::uuid", id).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s cascade count=%d err=%v", table, count, err)
+		}
+	}
+	if _, err := store.Get(ctx, owner, id); err != collections.ErrNotFound {
+		t.Fatalf("deleted product still visible: %v", err)
+	}
+	if out := deleteReq(h, "Bearer verified-test-session"); out.Code != http.StatusNotFound {
+		t.Fatalf("duplicate DELETE status=%d", out.Code)
+	}
 }
