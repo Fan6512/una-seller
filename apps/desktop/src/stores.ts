@@ -1,6 +1,12 @@
 import { getAccessToken, rejectSession } from "./auth";
 import { apiBase } from "./collections";
 
+export type StoreMarketplace = {
+  user_id: number | string;
+  site_id: string;
+  logistic_type: string;
+};
+
 export type StoreConnection = {
   id: string;
   seller_id: string;
@@ -8,6 +14,8 @@ export type StoreConnection = {
   status: "connected" | "token_expired" | "reauth_required" | "refresh_unknown" | "disconnected";
   token_expires_at?: string | null;
   updated_at: string;
+  marketplaces_status: "verified" | "unverified";
+  marketplaces: StoreMarketplace[];
 };
 
 async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal): Promise<T> {
@@ -28,6 +36,8 @@ async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: Ab
   if (!response.ok) {
     if (response.status === 503) throw new Error("美客多授权尚未在服务器上配置或服务不可用");
     if (response.status === 404) throw new Error("店铺不存在或无权访问");
+    if (response.status === 403) throw new Error("此店铺需要重新授权");
+    if (response.status === 409) throw new Error("Token 续签结果不确定，需要重新授权");
     throw new Error("店铺操作失败（HTTP " + response.status + "）");
   }
   return await response.json() as T;
@@ -49,4 +59,10 @@ export async function startStoreAuthorization() {
 
 export function disconnectStore(id: string) {
   return storeRequest<{ status: string }>("/api/v1/stores/" + encodeURIComponent(id) + "/disconnect", "POST");
+}
+
+export function checkStoreConnection(id: string) {
+  return storeRequest<{ status: string; seller_id: string; marketplaces_verified: boolean }>(
+    "/api/v1/stores/" + encodeURIComponent(id) + "/connection-check", "POST"
+  );
 }
