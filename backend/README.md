@@ -1,6 +1,6 @@
 # Una Seller Go API：采集箱与 Supabase Auth
 
-Private schema `app` holds users, source products, source images and actual variants. SQL migration: `migrations/0001_source_collections.sql`. Issue #14 uses Supabase Auth to identify users; **Mercado Libre OAuth is not implemented**. Cloud Nginx/systemd deployment is prepared separately (M0-02B), but actual Ubuntu and public HTTPS verification remain pending.
+Private schema `app` holds users, source products, source images and actual variants. SQL migration: `migrations/0001_source_collections.sql`. Issue #14 uses Supabase Auth to identify users. **Issue #21 / Draft PR #23 adds Mercado Libre CBT OAuth, but live seller authorization has not been tested or merged.** Cloud infrastructure verification is tracked separately in Issue #17; this README does not establish current live deployment state.
 
 ## Windows：Go API 配置只保存一次
 
@@ -45,3 +45,15 @@ go run ./cmd/api
 GitHub Actions provisions disposable PostgreSQL 17 for synthetic integration tests. It requires `TEST_DATABASE_URL` in CI, prints named test results, checks disconnect/reconnect read-back, and runs explicit seed → Docker PostgreSQL service restart → verify phases for process-restart persistence. This does **not** establish host/power-loss recovery or live Supabase connectivity.
 
 `app` is a private schema with RLS enabled and no anon/authenticated grants or policies. The local Go backend must connect using the schema/table-owning PostgreSQL role (which bypasses RLS by default). A different non-owner role without policies cannot read the data; do not silently switch roles or expose the schema via Supabase Data API.
+
+## Mercado Libre CBT 店铺连接（Issue #21 / Draft PR #23）
+
+这是**未合并的授权基础切片**：Go 已实现一次性 OAuth state、可选 PKCE、官方 `/oauth/token` 和 `/users/me`、Token 加密存储、店铺列表与断开；Tauri 已有店铺管理页面。GitHub CI 的 HTTP Mock/PostgreSQL 合成数据通过，不代表真实卖家授权 PASS。
+
+- 服务器私有配置：`MELI_CLIENT_ID`、`MELI_CLIENT_SECRET`、`MELI_REDIRECT_URI`、`MELI_TOKEN_ENCRYPTION_KEY`，如 DevCenter 启用 PKCE，另设 `MELI_PKCE_ENABLED=1`。具体占位配置见 `deploy/una-seller/api.env.example`；Secret、加密密钥不得放入桌面构建、Git 或公开日志。缺少完整配置时，授权 API 返回 503。
+- 在 DevCenter 登记的 HTTPS Callback URI 与 `MELI_REDIRECT_URI` **必须完全相同**：`https://<your-owned-api-domain>/api/v1/mercadolibre/oauth/callback`；路径由服务端固定，不能增加随用户变化的 query。
+- 服务器代理模板 `deploy/una-seller/nginx-mkd.conf` 已包含店铺 API 和 Callback，Callback 关闭 Nginx access log，避免 code/state 被日志收集。**仓库模板更新不等于已更改真实服务器**。
+- 显式执行 `go run ./cmd/api migrate`（包含 `0002_meli_store_connections.sql`）时必须先核对已有数据库及备份/审批，不做自动迁移。
+- `POST /api/v1/stores/oauth/start`（Supabase Bearer）：返回官方 `authorization_url`；`GET /api/v1/mercadolibre/oauth/callback`（一次性 state）：交换 Token 并绑定官方卖家身份；`GET /api/v1/stores`（Supabase Bearer）：仅列出本人店铺；`POST /api/v1/stores/{uuid}/disconnect`：仅断开本人店铺。上述 API 不返回 access/refresh token。
+- 授权成功后尚**没有 Token 自动刷新**。过期时列表会提示 `token_expired`，不能当作可继续发单/拉订单；自动轮换、服务端授权门禁、能力核验归后续切片。订单拉取、真实刊登均未实施。
+- Windows 真实 OAuth 操作、DevCenter 权限、线上 Callback、第二卖家店铺以及 macOS 运行尚未验收；请如实记 NOT_RUN/UNVERIFIED。
