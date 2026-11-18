@@ -58,10 +58,13 @@ function distinctGalleryImages(images: CollectionDetail["images"]): CollectionDe
       const url = new URL(image.url);
       if (/\.(mp4|webm|m3u8)$/i.test(url.pathname)) continue;
       const match = url.pathname.match(/\/images\/I\/([^/]+?)\.(jpe?g|png|webp)$/i);
-      if (match && /(?:media-amazon|ssl-images-amazon)/i.test(url.hostname)) {
-        identity = url.hostname + "/" + match[1].replace(/\._[A-Za-z0-9,+_-]+$/i, "").toLowerCase();
-        const size = match[1].match(/_(?:SL|SX|SY|SS|US)(\d+)/i);
-        score = size ? Number(size[1]) : 10000;
+      if (match && /^(?:m\.media-amazon\.com|images-(?:na|eu|fe)\.ssl-images-amazon\.com)$/i.test(url.hostname)) {
+        if (/(?:play[-_]?(?:button|icon)|video[-_]?(?:icon|thumb|poster)|sprite)/i.test(match[1])) continue;
+        const photo = match[1].split("._", 1)[0];
+        identity = "/images/I/" + photo;
+        const transform = match[1].slice(photo.length);
+        const size = transform.match(/_(?:SL|SX|SY|SS|US|UL|UX|UY|SR)(\d+)/i);
+        score = size ? Number(size[1]) : transform ? 0 : Number.POSITIVE_INFINITY;
       }
     } catch { /* Keep non-Amazon URLs untouched. */ }
     const position = seen.get(identity);
@@ -128,7 +131,7 @@ function ProductDetail({ product }: { product: CollectionDetail }) {
         <a href={product.source_url} target="_blank" rel="noopener noreferrer" className="source-link">查看原商品 <Icon name="external" size={15} /></a>
       </div>
       <div className="product-top">
-        <ProductGallery key={product.id} images={distinctGalleryImages(product.images)} title={product.title} />
+        <ProductGallery key={product.id + ":" + product.last_collected_at} images={distinctGalleryImages(product.images)} title={product.title} />
         <div className="product-summary">
           <p className="source-name">{siteName(product.source_platform, product.source_site)}</p>
           <h2>{product.title}</h2>
