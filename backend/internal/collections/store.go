@@ -17,6 +17,24 @@ type Store struct{ DB *pgxpool.Pool }
 var ErrNotFound = errors.New("collection not found")
 var ErrReadback = errors.New("collection committed, but readback failed")
 
+// Delete removes only a source collection owned by the verified user. Existing
+// foreign keys cascade to its images and variants; published/own products are separate.
+func (s *Store) Delete(ctx context.Context, owner, id string) error {
+	if !ValidUserID(owner) || !ValidUserID(id) {
+		return ErrNotFound
+	}
+	tag, err := s.DB.Exec(ctx,
+		"DELETE FROM app.source_products WHERE id=$1::uuid AND owner_user_id=$2::uuid",
+		id, owner)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Save is a single transaction. The unique key and row lock serialize recaptures.
 // A partial recapture merges known values only, never deleting previously saved subitems.
 func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool, error) {
