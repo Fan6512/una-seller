@@ -90,13 +90,14 @@
           let gallery;
           try { gallery = JSON.parse(match[1].replace(/\\(['\\])/g, "$1")); } catch { continue; }
           if (!Array.isArray(gallery) || gallery[0]?.variant !== "MAIN" ||
-              imageInfo(gallery[0].large)?.key !== heroKey) continue;
+              (imageInfo(gallery[0].large)?.key || gallery[0].physicalIdForMedia) !== heroKey) continue;
 
           for (const photo of gallery.slice(0, 30)) {
             if (typeof photo?.variant !== "string" || !/^(MAIN|PT\d{2})$/.test(photo.variant) ||
                 photo.video || photo.videoUrl ||
                 photo.videoId || photo.isVideo || /video/i.test(photo.mediaType || "")) continue;
-            const key = imageInfo(photo.large)?.key;
+            // Some pages use an unsupported CDN path for large; main still has sized source URLs.
+            const key = imageInfo(photo.large)?.key || photo.physicalIdForMedia;
             if (!key || (photo.variant === "MAIN" && key !== heroKey)) continue;
             add(photo.large, 0);
             for (const [url, dims] of Object.entries(photo.main || {})) {

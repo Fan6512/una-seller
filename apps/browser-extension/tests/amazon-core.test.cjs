@@ -82,6 +82,9 @@ test("reads only the active ImageBlockATF gallery when the DOM has no thumbnails
   ]);
   assert.ok(!product.missing_fields.includes("additional_images"));
 
+  const wrongMedia = core.parseProduct(page(heroURL, source.replace('"physicalIdForMedia":"PhotoB"', '"physicalIdForMedia":"WrongColor"')), url);
+  assert.equal(wrongMedia.images[1].url, "https://m.media-amazon.com/images/I/PhotoB._AC_SY200_.jpg");
+
   for (const doc of [page(heroURL, ""), page(heroURL.replace("MainA", "mainA"))]) {
     const partial = core.parseProduct(doc, url);
     assert.equal(partial.images.length, 1);
