@@ -135,12 +135,15 @@ jobs:
           node --check popup.js
           node --test tests/*.test.cjs
       - name: Package extension ZIP
+        id: package
         run: |
-          zip -9 una-seller-extension-v0.1.3.zip manifest.json amazon-core.js content.js content.css background.js popup.html popup.js popup.css README.md
+          version="$(node -p 'require("./manifest.json").version')"
+          zip -9 "una-seller-extension-v${version}.zip" manifest.json amazon-core.js content.js content.css background.js popup.html popup.js popup.css README.md
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: Upload installable extension ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: una-seller-extension-v0.1.3
-          path: apps/browser-extension/una-seller-extension-v0.1.3.zip
+          name: una-seller-extension-v${{ steps.package.outputs.version }}
+          path: apps/browser-extension/una-seller-extension-v${{ steps.package.outputs.version }}.zip
           if-no-files-found: error
           retention-days: 14
