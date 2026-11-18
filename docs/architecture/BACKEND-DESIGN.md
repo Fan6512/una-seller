@@ -3,15 +3,15 @@
 > 2026-11-18 · 设计基线 · 面向现有 `backend/` 与 M0→M3 路线
 > 关联：[Foundation](FOUNDATION.md) · [Delivery](DELIVERY.md) · [Domain](DOMAIN_AND_EXECUTION.md) · [ERP-MVP](ERP-MVP.md) · [M0 部署](DEPLOYMENT_M0.md) · [ADR-0006 身份边界](../decisions/0006-auth-identity-boundary.md) · [云端 Go API 部署](CLOUD_GO_API_DEPLOY.md)
 > 本文是目标结构与落地顺序，**不是已完成功能清单**。
-> 修订：2026-11-18 第三版；`origin/main` 已含采集接口、Supabase 登录与云端部署，据此重写「代码现状」。
+> 修订：2026-11-18；本 PR 代码对照基线为 `main` 的 `6b42689`，现场状态以 PR #18、#19 的执行报告及用户反馈为据；规划不等于交付。
 
 ## 代码现状（先读）
 
 | 位置 | 实际状态 |
 | --- | --- |
-| `origin/main` `6b42689`（2026-11-18） | `/healthz`；`/api/v1/collections` 与明细接口（pgx v5、私有 `app` schema、`0001` 迁移、显式 `api migrate`）；Supabase Auth 校验（`/auth/v1/user`）已接入采集路由；`Field[T]`、`migrations.Apply` 均已在代码中。仅监听 `127.0.0.1:8787`。 |
-| 云端部署 | `deploy/una-seller/` 已有 systemd/Nginx 配置与 `api.env.example`，**公网部署与云库连通仍未验收**，见[云端 Go API 部署](CLOUD_GO_API_DEPLOY.md)。 |
-| 尚未落地 | 订单、刊登、AI 文案/图片、对象存储与异步任务（第 8–9 章）；浏览器插件配对令牌（6.2）目前只在设计中。 |
+| 本 PR 对照基线 `main` `6b42689` | `/healthz`；`/api/v1/collections` 与明细接口（pgx v5、私有 `app` schema、`0001` 迁移、显式 `api migrate`）；Supabase Auth 校验（`/auth/v1/user`）已接入采集路由；`Field[T]`、`migrations.Apply` 均已在代码中。仅监听 `127.0.0.1:8787`。 |
+| 云端部署 | PR #18 已合并；据现场执行报告，HTTPS、Supabase Auth、云端 PostgreSQL 读回、Windows 登录验收通过。用户也确认 Amazon 采集真实入库及桌面读回。PR #19 新版搜索按钮/图片、PR #20 桌面性能仍待实机回归；早期部署说明保留历史状态，不代表当前未上线。 |
+| 尚未落地 | 订单、刊登、AI 文案/图片、对象存储与异步任务（第 8–9 章）。独立插件配对令牌属未来候选，未决策、未实施。 |
 
 **新表与新接口按第 7 章里程碑推进，先补迁移再改代码；不预建空表，也不在本文约束之外引入 ORM、缓存或消息队列。**
 
@@ -27,7 +27,7 @@ HTTP 层（路由/中间件/DTO/错误映射）
 存储层（pgx + 手写 SQL，不抽象 Repository）
 ```
 
-PostgreSQL 同时承担持久化和轻量任务队列；Mercado Libre、AI、对象存储通过窄接口接入；不引入微服务、ORM、CQRS、Redis、消息总线。身份沿用 **ADR-0006 的 Supabase Auth**：Go 只验证 token，不自建密码/会话表；浏览器插件使用独立配对令牌。未来团队化不是“加一张成员表”就完成，见 6.6 与 7.1。
+PostgreSQL 同时承担持久化和轻量任务队列；Mercado Libre、AI、对象存储通过窄接口接入；不引入微服务、ORM、CQRS、Redis、消息总线。身份沿用 **ADR-0006 的 Supabase Auth**：Go 只验证 token，不自建密码/会话表；当前浏览器插件复用 Supabase Auth Bearer Token；独立插件配对凭据另行按需评估。未来团队化不是“加一张成员表”就完成，见 6.6 与 7.1。
 
 ## 1. 不可违背的既有约束
 
@@ -37,7 +37,7 @@ PostgreSQL 同时承担持久化和轻量任务队列；Mercado Libre、AI、对
 - 桌面客户端和浏览器插件不直连 PostgreSQL；Mercado Libre Token 只在后端。
 - 金额用精确 decimal，经 API 传字符串；缺失值必须是 null，不能填 0。
 - 部分采集不得覆盖已有完整数据；来源快照不得被 AI 或编辑覆盖。
-- 公网 API 必须 HTTPS + 有效登录鉴权；浏览器插件使用独立凭据。
+- 公网 API 必须 HTTPS + 有效登录鉴权；当前插件与桌面端复用 Supabase Auth Bearer Token。
 - 数据表按里程碑建立，不预建订单、团队、多租户等空表。
 - 新组件必须回答：解决什么已存在问题、有没有更简单方案、运维成本与删除路径。
 
@@ -49,18 +49,18 @@ Chrome/Edge 插件 ─────┼─ HTTPS ─→ Cloudflare ─→ Nginx 44
 Mercado Libre OAuth ──┘                              │
                                                      └─ /healthz 公开；其余路径按鉴权放行
 
-Go API ─→ Supabase Auth（仅验证桌面 token）
+Go API ─→ Supabase Auth（验证桌面及插件的登录 token）
        ├→ Mercado Libre 官方 API（M1-D）
        ├→ AI Provider（M1-B）
        └→ 对象存储（M1-C）
 ```
 
 - Go 进程只监听 loopback，由 systemd 以非 root 用户托管；Nginx 负责 TLS 和路径转发。
-- 一个二进制，子命令：`api`（默认）、`migrate`、`version`；任务量出现后增加 `worker` 子命令，复用同一份代码。用户由 Supabase Auth 管理，Go 不提供建管理员或重置密码子命令。
+- **当前 CLI 仅支持** `api`（默认）与 `api migrate`；`version`、`worker` 是未来候选，尚不可执行。用户由 Supabase Auth 管理，Go 不提供建管理员或重置密码子命令。
 - 迁移**不在启动时自动执行**；部署步骤显式 `api migrate`，失败则停止发布。
 - 构建静态二进制（`CGO_ENABLED=0`），产物带版本号；保留上一版二进制用于回滚。
 - 数据库连接池保持 2–5 个连接，走 Supabase Session Pooler（5432）或 Direct connection；TLS 必须开启，不关闭证书校验。
-- 现有 `we-mp-rss`、Nginx 默认站点不受影响；8787 不对公网开放。
+- 同机其他业务服务不受影响；8787 不对公网开放。
 
 ## 3. 代码结构
 
@@ -74,15 +74,15 @@ backend/
       router.go
       middleware.go            # recover / requestID / log / CORS / bodyLimit / auth
       errors.go                # 统一错误结构与 code 映射
-      extension_handlers.go    # 配对码、插件令牌
+      extension_handlers.go    # 可选配对接口（批准后再建）
       collection_handlers.go
       draft_handlers.go        # M1-A 再建
       product_handlers.go      # M1-A 再建
       listing_handlers.go      # M1-D/E 再建
     auth/                      # 身份边界，不自建密码体系
-      supabase.go              # 调 /auth/v1/user 验证桌面 token
-      extension.go             # 配对码、插件令牌、scope 检查
-      store.go                 # 插件凭据 SQL
+      supabase.go              # 未来按需从 httpapi/auth.go 抽离
+      extension.go             # 未来候选配对、scope 检查
+      store.go                 # 未来候选插件凭据 SQL
     collections/               # 采集箱
       types.go                 # 领域类型 + 校验
       service.go               # 规则变复杂时再抽；简单读可直接 handler → store
@@ -102,7 +102,7 @@ backend/
     migrate.go                 # 版本表 + advisory lock + 顺序执行
 ```
 
-上面的树是**目标形态，不是一次性脚手架**。当前主线只有 `cmd/api`、`internal/httpapi`、`internal/collections`、`migrations`；PR #15 额外有 `internal/httpapi/auth.go` 与 `cmd/api/config.go`。`drafts`、`products`、`listings`、`meli`、`ai`、`storage`、`jobs`、`audit` 在对应里程碑开始时再建，禁止先建空包、空接口。PR #15 的 `httpapi/auth.go` 可以先不动；出现插件令牌/scope 后，再把公共身份逻辑抽到 `auth` 包，不为目录好看做一次性搬迁。
+上面的树是**目标形态，不是一次性脚手架**。当前主线已有 `cmd/api`、`internal/httpapi/auth.go`、`cmd/api/config.go`、`internal/collections` 和 `migrations`；不再把已合并的身份功能描述为待合并。`drafts`、`products`、`listings`、`meli`、`ai`、`storage`、`jobs`、`audit` 在对应里程碑开始时再建，禁止先建空包、空接口。现有身份校验继续保留在 `httpapi/auth.go`，确有复用需求才抽包；不为目录好看做一次性搬迁。
 
 依赖方向固定：
 
@@ -170,7 +170,7 @@ backend/
 ### 5.5 健康检查
 
 - `GET /healthz`：进程存活，不查数据库，可供 Nginx/Cloudflare 探活。
-- `GET /readyz`：数据库 Ping + 迁移版本检查；只允许本机或内网访问，不放公网。
+- `GET /readyz`：**未来候选，当前尚未实现**。如新增则检查数据库 Ping 与迁移版本，并限制本机/内网访问。
 - 不在健康响应里返回 DSN、版本库地址、环境变量等敏感信息。
 
 ### 5.6 文档与 SDK
@@ -179,7 +179,7 @@ backend/
 
 ## 6. 身份与权限
 
-首期单用户。桌面登录沿用 **ADR-0006**：Supabase Auth 负责邮箱密码、令牌签发与续签；Go 不自建 `sessions`、`password_hash`，也不签发桌面 JWT。浏览器插件使用单独配对令牌。
+首期单用户。桌面端和当前浏览器插件沿用 **ADR-0006**：Supabase Auth 负责邮箱密码、令牌签发与续签；Go 不自建 `sessions`、`password_hash`，也不签发 JWT。独立插件配对令牌只是未来候选。
 
 ### 6.1 桌面登录（Supabase Auth）
 
@@ -189,44 +189,24 @@ backend/
 - 本期不做 JWKS/本地验签；实测 `/auth/v1/user` 延迟或限流成为瓶颈后，再单独评估签名模式、JWKS 轮换与有界缓存。
 - 不在 Go 建 `users.email`、`password_hash`、`sessions`；`app.users` 只保留 Supabase user UUID 与创建时间，首次写入时 `INSERT ... ON CONFLICT DO NOTHING`。
 - 用户创建、禁用、密码重置都在 Supabase Dashboard 完成；Go 不提供 `create-admin`/`reset-password` 子命令，也不建邮件服务。
-- 公开注册：ADR-0006 记录本地联调阶段暂未关闭；公网开放前必须在 Supabase Dashboard 实际关闭并验证，不能只在文档里写“已关闭”。
+- 公开注册：PR #18 曾登记 `disable_signup=false` 为待处理项；本 PR 无新证据证明已关闭。应由有权限的执行者另行核对运行配置并限制不必要的公开注册，不虚报 PASS，也不因本次文档修订重做现场部署。
 
-### 6.2 插件配对与令牌
+### 6.2 浏览器插件身份现状与未来候选
 
-| 表 | 关键列 | 用途 |
-| --- | --- | --- |
-| `app.extension_pairing_codes` | code_hash、user_id、expires_at、used_at、attempts | 配对码，5 分钟、一次性 |
-| `app.extension_tokens` | token_hash、user_id、name、scopes、expires_at、revoked_at、last_used_at | 插件凭据，90 天、可吊销 |
-
-- 配对码 8 位 Base32，明文只在生成时返回一次；数据库存 SHA-256。插件令牌 32 字节随机数，Base64URL 编码，前缀 `una_ext_`，数据库只存 SHA-256。
-- 流程：桌面已登录 → 确保 `app.users` 有该 Supabase UUID（`INSERT ... ON CONFLICT DO NOTHING`）→ `POST /api/v1/extension/pairing-codes` 生成短码 → 插件 `POST /api/v1/extension/pair` 提交短码 → 服务端校验未过期、未使用、尝试次数未超限 → 签发插件令牌。
-- Scope 首版只开 `collections:read`、`collections:write`。每个路由显式检查，不靠“有令牌就能访问”；插件令牌不能调用店铺授权、刊登、账号管理或生成配对码。
-- 配对入口独立限速：每 IP 10 次/分钟、全局 100 次/小时；同一配对码 5 次失败即作废。**随机错误短码不会匹配任何记录，记录上的 `attempts` 单独不够**，必须同时有 IP/全局限速。
-- 插件令牌存 `chrome.storage.local`，只在 service worker 使用；内容脚本通过 `chrome.runtime.sendMessage` 转发，绝不把令牌注入页面 `window`。
-- 首版至少提供吊销接口；插件令牌列表、设备命名与批量管理按需再加，不先做复杂设备管理。
+- **现行实现**：浏览器插件和桌面端分别登录 Supabase Auth，业务请求都带 `Authorization: Bearer <Supabase access_token>`。Go 经 `/auth/v1/user` 校验并基于实际 user id 限制采集数据归属；内容脚本不能将令牌暴露给网页 `window`。
+- **未来候选**：确有设备配对、插件独立吊销或细粒度 scope 需求时，再通过单独 ADR/PR 评估配对码、`extension_pairing_codes`、`extension_tokens`、限速和生命周期。当前不预建表，不开发双身份体系，不作为已运行云端 API 的追溯性上线门禁。
 
 ### 6.3 鉴权边界
 
-| 路由 | 桌面 Supabase token | 插件 token |
-| --- | --- | --- |
-| `GET /healthz` | 公开 | 公开 |
-| `GET /api/v1/collections` | 允许 | `collections:read` |
-| `POST /api/v1/collections` | 允许 | `collections:write` |
-| `POST /api/v1/extension/pairing-codes` | 允许 | 拒绝 |
-| `POST /api/v1/extension/pair` | 不需要（用配对码） | 拒绝 |
-| `/api/v1/stores/*`、`/listings/*`、`/publish/*` | 允许 | 拒绝 |
-| `/oauth/mercadolibre/callback` | 公开，但校验一次性 state | 拒绝 |
-
-- 中间件先看令牌前缀：`una_ext_` 走插件令牌哈希查询；其余走 Supabase 验证。**绝不把插件令牌发给 Supabase**。
-- 所有业务 SQL 的 `owner_user_id` 来自已验证的 principal，**绝不接受请求体里的 user id**。
-- 未登录返回 401；凭据有效但无该操作权限返回 403；跨用户资源统一 404。
-- 公网开放前必须完成：关闭 Supabase 公开注册、插件配对与 scope 检查、限速、CORS/CSP、HTTPS、备份与恢复验证；未完成前不得把 `/api/v1/collections` 经 Nginx 暴露。
+- `GET /healthz` 公开；当前 `GET/POST /api/v1/collections` 需要有效的 Supabase Bearer Token。插件与桌面端复用 Go 验证链，所有业务 SQL 的 `owner_user_id` 必须来自已验证用户身份，不接受请求体里的 user id。
+- 未登录返回 401；有效凭据无相应权限时返回 403；跨用户资源统一按 404 处理。未来店铺、刊登、OAuth 路由在对应实施 PR 内定义权限与回调 state。
+- 已部署的 HTTPS 和 Bearer 读回已有现场执行报告；CORS/CSP 与开放路由仍须保持最小范围。Supabase 公开注册状态需单独核对；独立插件配对非当前前置条件。
 
 ### 6.4 会话存储
 
 - ADR-0006 当前 MVP 接受桌面 `localStorage` 保存 access/refresh token，并明确它不是 Windows Credential Manager/DPAPI 意义上的凭据库；不存明文密码，不打印 Token。
 - 正式向陌生用户分发或处理更高敏感数据前，再单独评估系统凭据库、设备退出与撤销策略；本期不引入 Rust keyring 插件。
-- 插件令牌只存 `chrome.storage.local`，不进入页面上下文。
+- 插件的 Supabase 会话令牌只存扩展自身可信存储，不进入页面上下文。
 
 ### 6.5 CORS
 
@@ -270,8 +250,8 @@ SourceProduct（采集来源快照）
 
 | 阶段 | 新增表 | 说明 |
 | --- | --- | --- |
-| 当前 M0（`origin/main`） | `users`、`source_products`、`source_product_images`、`source_product_variants` | 已合并；`app` 私有 schema。本地 `e10b4b0` 尚无这些表 |
-| 公网开放前 | `extension_pairing_codes`、`extension_tokens` | 插件凭据；桌面身份由 Supabase Auth 提供，不建 sessions/password 表 |
+| 当前 M0（本 PR 代码基线） | `users`、`source_products`、`source_product_images`、`source_product_variants` | 已合并主线；`app` 私有 schema |
+| 未来候选（另行 ADR/PR） | `extension_pairing_codes`、`extension_tokens` | 有真实插件独立配对/吊销需求才建表；当前复用 Supabase Auth |
 | M1-A | `collection_working_drafts`、`own_products`、`own_product_variants`、`own_product_images`、`own_product_localizations` | 工作稿每来源一份；自有商品可多份 |
 | M1-B | `ai_runs`、`jobs` | 生成审计与用量；异步生成从这时开始用任务表 |
 | M1-C | `image_assets`（及必要的 derivative 行） | 原图不可变；派生物单独记录 |
@@ -289,7 +269,7 @@ SourceProduct（采集来源快照）
 - `own_product_images` 存 `role`（main/additional/variant）、`sort_order`、`source_image_id`、`asset_id`（M1-C 起）、`selected_derivative_id`；不覆盖原图。
 - `published_listings` 唯一键 `(store_connection_id, site_id, platform_item_id)`；`own_product_id` 与 `operation_id` 可空，官方只读同步的旧商品不要求本地草稿或刊登操作。只读同步只 upsert，不因某次未返回就删除本地记录，用 `last_synced_at` 标记。
 - `publication_targets` 唯一键 `(operation_id, store_connection_id, site_id)`；当前产品模型是一次操作一个账号，因此再加约束保证 target 的店铺与 operation 的店铺一致。把店铺放进唯一键成本为零，可防止未来跨店铺批量时同一站点撞键；若真做跨店铺批次，则把 operation 定义为批次。保存平台 item id、permalink、字段级错误、`last_checked_at`。
-- `jobs` 用 `status`（pending/processing/needs_check/done/failed/dead）+ `run_at` + `attempts` + `dedupe_key` + `lock_token` + `locked_until`；部分索引只扫 pending。`dedupe_key` 用部分唯一索引，只约束 pending/processing，任务完成后允许同 key 再入队。`lock_token` 是 fencing token，防止崩溃前的旧执行者覆盖新执行者结果。
+- `jobs` 用 `status`（pending/processing/needs_check/done/failed/dead）+ `run_at` + `attempts` + `dedupe_key` + `lock_token` + `locked_until`；部分索引覆盖到期 pending 与租约过期的 processing。`dedupe_key` 用部分唯一索引，只约束 pending/processing，任务完成后允许同 key 再入队。`lock_token` 是 fencing token，防止崩溃前的旧执行者覆盖新执行者结果。
 
 ### 7.4 删除与保留
 
@@ -342,15 +322,15 @@ SourceProduct（采集来源快照）
 设计：
 
 - `jobs` 表列：`id`、`kind`、`payload jsonb`、`status`、`run_at`、`check_at`、`attempts`、`max_attempts`、`dedupe_key`、`lock_token uuid`、`locked_until timestamptz`、`last_error`、`created_at`、`updated_at`。状态：`pending/processing/needs_check/done/failed/dead`。
-- 领取用短事务：`UPDATE ... SET status='processing', lock_token=$2, locked_until=now()+lease, attempts=attempts+1 WHERE id = (SELECT id FROM jobs WHERE status='pending' AND run_at<=now() ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING ...`，立即提交，再执行外部调用。**不要在整个任务执行期间持有数据库事务。**
+- 领取用短事务：从 `(status='pending' AND run_at<=now()) OR (status='processing' AND locked_until<now())` 中以 `FOR UPDATE SKIP LOCKED` 选任务，换新 `lock_token`、设新租约、递增 `attempts`，提交后再执行外部调用。过期 `processing` 必须能够重新领取；`needs_check` 不自动重发。**不要在整个任务执行期间持有数据库事务。**
 - 完成时条件更新：`WHERE id=$1 AND lock_token=$2`。命中 0 行说明租约已被别人接管，旧执行者必须丢弃结果，不能覆盖新执行者。
-- 进程崩溃后租约到期，另一个 worker 可重新领取；长任务每 30 秒心跳延长 `locked_until`，租约默认 2 分钟。心跳与完成都必须带 `WHERE id=$1 AND lock_token=$2` 条件；心跳失败立即停止执行，避免两个执行者同时写。`lock_token` 是 fencing token，解决“旧执行者晚到写入”的竞态。
+- 进程崩溃后租约到期，另一个 worker 可重新领取；长任务每 30 秒心跳延长 `locked_until`，租约默认 2 分钟。心跳与完成都必须带 `WHERE id=$1 AND lock_token=$2` 条件；心跳失败立即停止执行，避免两个执行者同时写。`lock_token` 防止旧执行者覆盖本地状态，但不能保证外部平台调用恰好执行一次；外部写操作仍须回读或核实。
 - 外部写入结果不明确（超时、连接中断、平台 5xx 无法判断是否已执行）时，任务转 `needs_check` 并设 `check_at`；由回读任务确认成功/失败，**不能直接改回 pending 重发**。
 - 每个 handler 必须可重入：先查业务状态与操作记录，再决定是否执行；外部写操作先回读。
 - 失败退避：1m、5m、30m、2h；超过 `max_attempts` 进 `dead`，保留错误供人工处理。
-- 单进程内 runner 默认开启（`WORKER_ENABLED=true`）；需要隔离时用同一二进制的 `worker` 子命令单独跑，代码不分叉。
+- **当前尚未实现 runner**；M1-B 起按需落地，默认 `WORKER_ENABLED=false`，只有明确启用后才领取任务。未来有隔离需求时再评估 `worker` 子命令，当前不可执行。
 - 轮询 1–2 秒；单用户规模足够。出现真实积压/延迟证据再评估 River/Redis，不在现在安装。
-- 优雅退出：停止领取新任务，等待当前任务最多 30 秒；仍未完成则清空自己的 `lock_token` 并保留 `processing`，让租约自然过期后被重新领取，避免两个执行者同时写。
+- 优雅退出：停止领取新任务，等待当前任务最多 30 秒；未完成则停止心跳，让租约过期后重领。旧执行者不得继续写入；重领前先判断业务操作是否已产生外部副作用。
 
 ## 10. 配置、日志与运维
 
@@ -392,17 +372,19 @@ SourceProduct（采集来源快照）
 - 采用 expand/contract：先加可空列/新表 → 发布兼容代码 → 回填 → 再加约束；保证上一版二进制在迁移后仍能运行，便于回滚。
 - 生产迁移前先备份；破坏性变更（删列/改类型）拆成两次发布。
 
-### 10.4 部署与回滚
+### 10.4 目标部署与回滚方案（部分未实现）
 
-1. **验证产物**：CI 构建 `api` 并输出版本号与 SHA-256；服务器下载后先校验 checksum，再执行 `api version`，确认不是截断/错架构的二进制。
+本节是**未来增强方案**，不可直接照抄到线上；现行部署参考 [M0-02B 云端 Go API 操作说明](CLOUD_GO_API_DEPLOY.md) 与 PR #18 现场验收报告，未实现的命令不得执行。
+
+1. **验证产物**：CI 构建 `api` 并输出版本号与 SHA-256；服务器下载后先校验 checksum，未来实现 `api version` 后再核验版本；当前仅校验 SHA-256 与构建来源，不执行不存在的命令。
 2. **备份**：备份当前 release 的二进制、systemd 配置与数据库；记录当前版本号，作为回滚点。
 3. **验证迁移兼容性**：在 staging 副本或维护窗口内先跑 `api migrate`，用**上一版二进制**对迁移后的库做启动和读取冒烟；确认 expand/contract 成立。不能只靠约定，也不能在生产直接试。
 4. **放置新版本**：上传到 `/opt/una-seller/releases/<version>/api`，设置属主与 `0755`，不要直接覆盖正在运行的 `current/api`。
 5. **执行迁移**：运行 `releases/<version>/api migrate`；失败则停止，不动当前进程。
 6. **原子切换**：创建临时符号链接指向新 release，再用 `mv -T` 原子替换 `current`，然后 `systemctl restart una-seller-api`；不要用“先删后传”的覆盖方式。
-7. **就绪检查**：检查 `/healthz`、`/readyz`、一次登录后读取采集列表、一次写入；观察 5 分钟日志与错误率。全部通过才算发布完成。
+7. **就绪检查**：当前可检查 `/healthz` 与登录后采集列表读回；未来实现 `/readyz` 后再纳入就绪探测。按实际变更范围观察日志和错误率，不以文档代替现场验收。
 8. **回滚**：把 `current` 切回上一版本并重启；因迁移已按 expand/contract 验证，旧二进制应能继续读取。若迁移是破坏性的，只能用第 2 步备份恢复，不能靠切二进制。
-9. Nginx 只新增独立 server block；每次 `nginx -t` 通过后再 reload，不覆盖现有站点与 `we-mp-rss`。
+9. Nginx 只新增独立 server block；每次 `nginx -t` 通过后再 reload，不覆盖同机其他业务服务。
 10. 保留最近 3 个 release 目录；确认新版本稳定后再清理旧产物，不在发布当时删。
 
 ### 10.5 备份与恢复
@@ -413,11 +395,11 @@ SourceProduct（采集来源快照）
 
 ### 10.6 观测
 
-单用户阶段不引入 Prometheus/Grafana。`/healthz`、`/readyz`、结构化日志、数据库慢查询日志足够。出现真实性能问题再加指标，不提前部署监控栈。
+单用户阶段不引入 Prometheus/Grafana。当前以 `/healthz`、结构化日志和数据库慢查询日志为主；`/readyz` 为未来候选。出现真实性能问题再加指标，不提前部署监控栈。
 
 ## 11. 测试策略
 
-- 单元测试：URL 规范化、金额/币种校验、三态合并、状态流转、Token 加密、错误映射、限流、Supabase verifier 的 401/503、插件 scope 与配对限速。
+- 单元测试：URL 规范化、金额/币种校验、三态合并、状态流转、Token 加密、错误映射、限流及 Supabase verifier 的 401/503；插件独立配对与 scope 测试只在相应方案获批并实施后添加。
 - 集成测试：真实 PostgreSQL（CI 临时库）验证迁移从零、升级、事务回滚、并发去重、部分采集不覆盖、`version` 冲突、任务租约过期后的接管与旧执行者写入被拒绝。
 - 外部服务：`httptest.Server` 模拟 Meli 的 401 刷新、429、5xx、超时、`site_items[]` 混合结果，以及 Supabase `/auth/v1/user` 的成功/失效/不可达；不访问真实店铺。
 - 契约测试：关键 DTO 用 golden JSON 固定字段名与 null 语义；OpenAPI 出现后再加 schema 校验。
@@ -428,9 +410,9 @@ SourceProduct（采集来源快照）
 
 | 阶段 | 后端工作 | 完成标志 |
 | --- | --- | --- |
-| 当前 M0（同步后） | collections 的 PG 迁移、幂等写入、读回；把 PR #15 的 Supabase Auth 验证并入主线 | 部分采集不覆盖旧数据；重启后读回；未登录 401，跨用户 404 |
-| M0 PR-C | 采集插件 → API → 桌面闭环；Amazon.com 单商品 | 入库、去重、桌面可见 |
-| 公网开放前 | 插件配对/令牌/scope/限速；Supabase Auth 跨账号隔离验证；统一错误与 request id；迁移 runner v2；CORS/CSP；HTTPS；关闭 Supabase 公开注册；备份恢复演练 | 公网只开必要路径；插件只能提交采集；未授权写全部拒绝 |
+| 当前 M0（主线已实现） | collections 的 PG 迁移、入库、读回及 Supabase Auth 服务端校验已合并；PR #18 云端链路有现场执行报告 | 主线具备基本采集能力；具体未验收路径仍在对应 PR 登记 |
+| M0 PR-C（PR #19 Draft） | Amazon.com 插件 → Go API → 桌面采集箱；用户确认真实入库和读回 | v0.1.3 搜索按钮位置、高清图片/视频过滤与提示文案待实机回归 |
+| 已部署环境的持续核对 | 保持 HTTPS、有效 Bearer 鉴权、归属隔离和最小 CORS；核对 Supabase 公开注册开关与备份恢复能力；统一错误和迁移 runner 依真实需求迭代 | 已完成的现场验收与仍缺的配置证据分开登记；独立插件配对不作前置 |
 | M1-A | 工作稿、自有商品、变体/图片/多语言表；`version` 并发控制；删除关联规则 | 关闭重启后工作稿可恢复；来源快照不被覆盖 |
 | M1-B | AI 适配器、`ai_runs`、异步生成任务与轮询 | 候选可按字段采纳；失败可见；不自动刊登 |
 | M1-C | 对象存储、`image_assets`、白底任务、签名 URL | 原图/候选/选用可追溯；不覆盖原图 |
@@ -451,7 +433,7 @@ SourceProduct（采集来源快照）
 - 把 Mercado Libre Token 放进桌面端、插件、日志或 AI 提示词。
 - 另建 `users.password_hash`、`sessions` 或独立认证服务；身份按 ADR-0006 用 Supabase Auth，Go 只验证 token。
 - 把桌面 `localStorage` 说成系统凭据库；它只是 ADR-0006 记录的 MVP 取舍。
-- 在插件凭据、scope 检查、限速、Supabase 公开注册限制未完成前，把采集 API 暴露到公网。
+- 在缺少 HTTPS、有效 Bearer 鉴权或数据归属隔离时开放业务 API；不将未实现的独立插件凭据当作现有认证的替代品。公开注册状态仍须独立核对。
 - 为未来团队/多租户预建组织、角色、权限表。
 
 ## 14. 待确认的三个实现选择
