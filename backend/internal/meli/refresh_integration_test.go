@@ -135,11 +135,11 @@ func TestRefreshSingleflightAndLease(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	auth, childID, err := s.RequireSiteConnection(ctx, owner, storeID, "MLB")
+	auth, childID, err := s.RequireSiteConnection(ctx, owner, storeID, "MLB", "remote")
 	if err != nil || childID != "987654" || auth.SellerID == "" {
 		t.Fatalf("verified site mapping not preserved: %s, %v", childID, err)
 	}
-	if _, _, err := s.RequireSiteConnection(ctx, owner, storeID, "MLA"); !errors.Is(err, ErrSiteNotAuthorized) {
+	if _, _, err := s.RequireSiteConnection(ctx, owner, storeID, "MLA", "remote"); !errors.Is(err, ErrSiteNotAuthorized) {
 		t.Fatalf("unmapped site must be rejected: %v", err)
 	}
 	otherOwner := "550e8400-e29b-41d4-a716-446655440000"

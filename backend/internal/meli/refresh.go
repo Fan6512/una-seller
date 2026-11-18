@@ -117,9 +117,11 @@ func (s *Service) RequireStoreConnection(ctx context.Context, owner, storeID str
 	return value.(AuthorizedStore), nil
 }
 
-// RequireSiteConnection also checks that this exact site-child relationship
-// was confirmed by the platform; a hard-coded list of CBT countries is unsafe.
-func (s *Service) RequireSiteConnection(ctx context.Context, owner, storeID, siteID string) (AuthorizedStore, string, error) {
+// RequireSiteConnection requires a verified child for the exact site and logistics mode.
+func (s *Service) RequireSiteConnection(ctx context.Context, owner, storeID, siteID, logisticType string) (AuthorizedStore, string, error) {
+	if logisticType == "" {
+		return AuthorizedStore{}, "", ErrSiteNotAuthorized
+	}
 	auth, err := s.RequireStoreConnection(ctx, owner, storeID)
 	if err != nil {
 		return AuthorizedStore{}, "", err
@@ -128,7 +130,7 @@ func (s *Service) RequireSiteConnection(ctx context.Context, owner, storeID, sit
 		return AuthorizedStore{}, "", ErrSiteNotAuthorized
 	}
 	for _, child := range auth.Markets {
-		if child.SiteID == siteID {
+		if child.SiteID == siteID && child.LogisticType == logisticType {
 			return auth, child.UserID.String(), nil
 		}
 	}

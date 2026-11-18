@@ -48,16 +48,17 @@ func (s *Service) getMarketplaces(ctx context.Context, parentID, accessToken str
 		mapping.Marketplaces == nil || len(mapping.Marketplaces) > 32 {
 		return nil, errors.New("marketplace mapping does not match CBT parent")
 	}
-	seen := make(map[string]bool, len(mapping.Marketplaces))
+	seen := make(map[[2]string]bool, len(mapping.Marketplaces))
 	for _, m := range mapping.Marketplaces {
-		site := strings.TrimSpace(m.SiteID)
+		site, mode := m.SiteID, m.LogisticType
+		key := [2]string{site, mode}
 		child := m.UserID.String()
 		if len(site) < 3 || len(site) > 8 || strings.ToUpper(site) != site ||
-			child == "" || child == "0" || len(child) > 64 || seen[site] ||
-			len(m.LogisticType) > 40 {
+			site != strings.TrimSpace(site) || child == "" || child == "0" || len(child) > 64 ||
+			mode == "" || mode != strings.TrimSpace(mode) || len(mode) > 40 || seen[key] {
 			return nil, errors.New("invalid marketplace child identity")
 		}
-		seen[site] = true
+		seen[key] = true
 	}
 	return mapping.Marketplaces, nil
 }

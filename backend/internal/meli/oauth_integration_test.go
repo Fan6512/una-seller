@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,7 +50,8 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 	const refreshToken = "fake-refresh-token"
 	const callback = "https://example.test" + CallbackPath
 
-	var challenge string
+	var challenge, sellerSite atomic.Value
+	sellerSite.Store("CBT")
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/oauth/token":
@@ -67,7 +69,7 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 			}
 			verifier := r.PostForm.Get("code_verifier")
 			proof := sha256.Sum256([]byte(verifier))
-			if verifier == "" || base64.RawURLEncoding.EncodeToString(proof[:]) != challenge {
+			if verifier == "" || base64.RawURLEncoding.EncodeToString(proof[:]) != challenge.Load() {
 				http.Error(w, "incorrect PKCE proof", 400)
 				return
 			}
@@ -77,7 +79,7 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 				http.Error(w, "invalid token", 401)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": json.Number(sellerID), "nickname": "Synthetic CBT Seller"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": json.Number(sellerID), "nickname": "Synthetic CBT Seller", "site_id": sellerSite.Load()})
 		case "/marketplace/users/" + sellerID:
 			if r.Header.Get("Authorization") != "Bearer "+accessToken {
 				http.Error(w, "invalid marketplace token", http.StatusUnauthorized)
@@ -88,7 +90,7 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 				"site_id": "CBT",
 				"marketplaces": []map[string]any{
 					{"user_id": 123456, "site_id": "MLM", "logistic_type": "remote"},
-					{"user_id": 345678, "site_id": "MLB", "logistic_type": "remote"},
+					{"user_id": 345678, "site_id": "MLM", "logistic_type": "fulfillment"},
 				},
 			})
 		default:
@@ -121,8 +123,8 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 		t.Fatal("authorization URL missing expected parameters")
 	}
 	state := u.Query().Get("state")
-	challenge = u.Query().Get("code_challenge")
-	if len(state) < 40 || challenge == "" {
+	challenge.Store(u.Query().Get("code_challenge"))
+	if len(state) < 40 || challenge.Load() == "" {
 		t.Fatal("missing CSRF state or PKCE challenge")
 	}
 
@@ -135,11 +137,21 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 	}
 	if store.MarketsStatus != "verified" || len(store.Marketplaces) != 2 ||
 		store.Marketplaces[0].SiteID != "MLM" || store.Marketplaces[0].UserID.String() != "123456" ||
-		store.Marketplaces[1].SiteID != "MLB" {
+		store.Marketplaces[1].SiteID != "MLM" || store.Marketplaces[1].UserID.String() != "345678" {
 		t.Fatalf("CBT parent/child marketplace mapping missing: %+v", store)
 	}
 	if _, err := service.Complete(ctx, state, "code_test", ""); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("replayed state accepted: %v", err)
+	}
+	for mode, want := range map[string]string{"remote": "123456", "fulfillment": "345678"} {
+		if _, got, err := service.RequireSiteConnection(ctx, owner1, store.ID, "MLM", mode); err != nil || got != want {
+			t.Fatalf("MLM %s: got child %s, err %v; want %s", mode, got, err, want)
+		}
+	}
+	for _, mode := range []string{"", "unknown"} {
+		if _, _, err := service.RequireSiteConnection(ctx, owner1, store.ID, "MLM", mode); !errors.Is(err, ErrSiteNotAuthorized) {
+			t.Fatalf("MLM %q must be rejected: %v", mode, err)
+		}
 	}
 
 	var accessCipher, refreshCipher []byte
@@ -172,9 +184,24 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	challenge = otherURL.Query().Get("code_challenge")
+	challenge.Store(otherURL.Query().Get("code_challenge"))
 	if _, err := service.Complete(ctx, otherURL.Query().Get("state"), "code_test", ""); !errors.Is(err, ErrSellerOwned) {
 		t.Fatalf("seller ownership transfer was not refused: %v", err)
+	}
+	for _, site := range []string{"", "MLM"} {
+		sellerSite.Store(site)
+		link, err := service.Start(ctx, owner2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, err := urlParse(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		challenge.Store(u.Query().Get("code_challenge"))
+		if _, err := service.Complete(ctx, u.Query().Get("state"), "code_test", ""); err == nil || err.Error() != "seller is not a CBT global account" {
+			t.Fatalf("seller site %q must be rejected before binding: %v", site, err)
+		}
 	}
 
 	if err := service.Disconnect(ctx, owner1, store.ID); err != nil {

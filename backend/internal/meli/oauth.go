@@ -252,7 +252,7 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 		return Store{}, err
 	}
 	sid := seller.ID.String()
-	if seller.SiteID != "" && seller.SiteID != "CBT" {
+	if seller.SiteID != "CBT" {
 		return Store{}, errors.New("seller is not a CBT global account")
 	}
 	marketplaces, mapErr := s.getMarketplaces(ctx, sid, token.AccessToken)
