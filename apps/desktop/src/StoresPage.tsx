@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { disconnectStore, listStores, startStoreAuthorization, type StoreConnection } from "./stores";
+import { checkStoreConnection, disconnectStore, listStores, startStoreAuthorization, type StoreConnection } from "./stores";
 
 const statusText: Record<StoreConnection["status"], string> = {
   connected: "已连接",
-  token_expired: "Token 已过期（等待续签功能）",
+  token_expired: "Token 可能过期，点击验证连接进行续签",
   reauth_required: "需要重新授权",
   refresh_unknown: "续签状态待确认",
   disconnected: "已断开",
@@ -33,7 +33,12 @@ export default function StoresPage() {
   useEffect(() => {
     const controller = new AbortController();
     void reload(controller.signal);
-    return () => controller.abort();
+    const onFocus = () => void reload();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", onFocus);
+    };
   }, [reload]);
 
   async function authorize() {
@@ -59,6 +64,23 @@ export default function StoresPage() {
       setNotice("授权链接已复制，请粘贴到系统浏览器打开。");
     } catch {
       setNotice("复制失败，请手动选中下方链接复制到系统浏览器。");
+    }
+  }
+
+  async function check(item: StoreConnection) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await checkStoreConnection(item.id);
+      setNotice(result.marketplaces_verified
+        ? "Token 有效；获准站点映射已核实，具体刊登能力仍需验证。"
+        : "Token 有效；站点映射尚未核实，不允许直接刊登。");
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "检查授权失败");
+      await reload();
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -110,12 +132,22 @@ export default function StoresPage() {
           {items.map((item) => (
             <article key={item.id} className="store-card">
               <div className="store-card-top">
-                <div><strong>{item.nickname || "未提供昵称"}</strong><p>卖家 ID：{item.seller_id}</p></div>
+                <div><strong>{item.nickname || "未提供昵称"}</strong><p>CBT 主账号 ID：{item.seller_id}</p></div>
                 <span className={"store-status " + (item.status === "connected" ? "store-connected" : "store-attention")}>{statusText[item.status] || "状态未知"}</span>
               </div>
-              <p className="store-note">此处仅确认卖家授权身份；站点范围、订单与刊登能力仍需单独验证。</p>
+              <p className="store-note">
+                {item.marketplaces_status === "verified"
+                  ? item.marketplaces.length === 0
+                    ? "该账号目前没有返回可经营站点。"
+                    : "已核实站点：" + item.marketplaces.map((site) => site.site_id + "（子账号 " + site.user_id + " · " + site.logistic_type + "）").join("、")
+                  : "站点映射未验证：不开放站点刊登或订单操作。"}
+              </p>
+              <p className="store-note">授权成功不代表商品刊登/订单接口已经实施；站点具体写入权限仍需验证。</p>
               <div className="store-actions">
                 <button type="button" className="refresh-button" disabled={busy} onClick={() => void authorize()}>重新授权</button>
+                {item.status !== "disconnected" && (
+                  <button type="button" className="refresh-button" disabled={busy} onClick={() => void check(item)}>验证连接</button>
+                )}
                 {item.status !== "disconnected" && <button type="button" className="refresh-button" disabled={busy} onClick={() => void disconnect(item)}>断开连接</button>}
               </div>
             </article>
