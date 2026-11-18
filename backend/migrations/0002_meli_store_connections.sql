@@ -13,7 +13,12 @@ CREATE TABLE IF NOT EXISTS app.meli_store_connections (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_user_id uuid NOT NULL REFERENCES app.users(id),
     -- The unique seller identity comes only from the authenticated Mercado Libre /users/me response.
+    -- seller_id is the CBT PARENT / global user_id; site-specific child IDs stay in marketplaces.
     seller_id text NOT NULL UNIQUE CHECK (length(seller_id) BETWEEN 1 AND 64),
+    marketplaces jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(marketplaces) = 'array'),
+    marketplaces_status text NOT NULL DEFAULT 'unverified'
+        CHECK (marketplaces_status IN ('verified', 'unverified')),
+    marketplaces_checked_at timestamptz,
     nickname text,
     status text NOT NULL DEFAULT 'connected'
         CHECK (status IN ('connected', 'reauth_required', 'refresh_unknown', 'disconnected')),
