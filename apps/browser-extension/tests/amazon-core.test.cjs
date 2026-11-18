@@ -146,6 +146,16 @@ test("omits images when a thumbnail is present but the hero identity is ambiguou
   assert.equal(product.collection_status, "partial");
 });
 
+test("a seven-photo ATF fixture preserves one main and six ordered additional photos", () => {
+  const gallery = fs.readFileSync(path.join(__dirname, "image-block-atf-seven.fixture.txt"), "utf8");
+  const images = core.collectImages(page({src: heroURL}, gallery));
+  assert.equal(images.length, 7);
+  assert.deepEqual(images.map(image => image.type), ["main", ...Array(6).fill("additional")]);
+  assert.deepEqual(images.map(image => core.imageInfo(image.url)?.key),
+    ["MainA", "Photo1", "Photo2", "Photo3", "Photo4", "Photo5", "Photo6"]);
+  assert.equal(new Set(images.map(image => core.imageInfo(image.url)?.key)).size, 7);
+});
+
 test("storage isolation failure blocks session operations and network requests", async () => {
   const vm = require("node:vm");
   const worker = fs.readFileSync(path.join(__dirname, "../background.js"), "utf8");
