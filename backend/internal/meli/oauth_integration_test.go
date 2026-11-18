@@ -78,6 +78,19 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": json.Number(sellerID), "nickname": "Synthetic CBT Seller"})
+		case "/marketplace/users/" + sellerID:
+			if r.Header.Get("Authorization") != "Bearer "+accessToken {
+				http.Error(w, "invalid marketplace token", http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user_id": json.Number(sellerID),
+				"site_id": "CBT",
+				"marketplaces": []map[string]any{
+					{"user_id": 123456, "site_id": "MLM", "logistic_type": "remote"},
+					{"user_id": 345678, "site_id": "MLB", "logistic_type": "remote"},
+				},
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -119,6 +132,11 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 	}
 	if store.SellerID != sellerID || store.Nickname != "Synthetic CBT Seller" || store.Status != "connected" {
 		t.Fatalf("store data mismatch: %+v", store)
+	}
+	if store.MarketsStatus != "verified" || len(store.Marketplaces) != 2 ||
+		store.Marketplaces[0].SiteID != "MLM" || store.Marketplaces[0].UserID.String() != "123456" ||
+		store.Marketplaces[1].SiteID != "MLB" {
+		t.Fatalf("CBT parent/child marketplace mapping missing: %+v", store)
 	}
 	if _, err := service.Complete(ctx, state, "code_test", ""); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("replayed state accepted: %v", err)
