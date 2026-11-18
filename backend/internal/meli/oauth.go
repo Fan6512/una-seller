@@ -47,12 +47,12 @@ type Service struct {
 }
 
 type Store struct {
-	ID             string     `json:"id"`
-	SellerID       string     `json:"seller_id"`
-	Nickname       string     `json:"nickname"`
-	Status         string     `json:"status"`
-	TokenExpiresAt *time.Time `json:"token_expires_at,omitempty"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID             string        `json:"id"`
+	SellerID       string        `json:"seller_id"`
+	Nickname       string        `json:"nickname"`
+	Status         string        `json:"status"`
+	TokenExpiresAt *time.Time    `json:"token_expires_at,omitempty"`
+	UpdatedAt      time.Time     `json:"updated_at"`
 	Marketplaces   []Marketplace `json:"marketplaces"`
 	MarketsStatus  string        `json:"marketplaces_status"`
 }
