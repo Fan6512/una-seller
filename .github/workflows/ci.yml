@@ -52,8 +52,6 @@ jobs:
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
             printf 'Unformatted Go files:\n%s\n' "$unformatted"
-            # Temporary diagnostics for PR #23 only; revert after correcting formatting.
-            gofmt -d ./internal/meli/refresh.go
             exit 1
           fi
 
