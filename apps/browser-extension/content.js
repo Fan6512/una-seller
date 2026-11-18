@@ -64,12 +64,12 @@
         if (result.status === "unverified") {
           button.textContent = "待核对";
           update("已提交，请到采集箱确认是否保存", "warning");
-        } else if (result.action === "updated") {
-          button.textContent = "已更新";
-          update("之前采集过，已更新记录。" + (result.status === "partial" ? missingText(product) : ""), result.status === "partial" ? "warning" : "success");
         } else if (result.status === "partial") {
           button.textContent = "部分成功";
-          update("已保存到采集箱，" + missingText(product), "warning");
+          update((result.action === "updated" ? "已更新采集箱记录，" : "已保存到采集箱，") + missingText(product), "warning");
+        } else if (result.action === "updated") {
+          button.textContent = "已更新";
+          update("已更新采集箱记录", "success");
         } else {
           button.textContent = "已采集";
           update("采集成功，已保存到采集箱", "success");
@@ -108,7 +108,8 @@
       if (!url) continue;
       // Crucially, mount INSIDE the card, after its content (not after a heading
       // or beside a grid item where the button may drift into the next row).
-      const mount = card.querySelector(".puis-card-container, .s-card-container") || card;
+      const mount = card.querySelector(".s-card-container > .a-section, .puis-card-container > .a-section") ||
+        card.querySelector(".puis-card-container, .s-card-container") || card;
       if (!mount.querySelector(BUTTON)) mount.appendChild(createControl(url));
     }
   }

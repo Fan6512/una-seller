@@ -40,7 +40,7 @@
       const match = url.pathname.match(/^\/images\/I\/([^/]+?)\.(jpe?g|png|webp)$/i);
       if (!match) return null;
       const base = match[1].replace(/\._[A-Za-z0-9,+_-]+$/i, "");
-      if (!base || /(?:playbutton|video-icon|videothumb|sprite)/i.test(base)) return null;
+      if (!base || /(?:play[-_]?button|video[-_]?(?:icon|thumb|poster)|sprite)/i.test(base)) return null;
       const ext = match[2].toLowerCase();
       const original = url.origin + "/images/I/" + base + "." + ext;
       const transformed = base !== match[1];
@@ -73,15 +73,16 @@
         const area = Array.isArray(dims) && dims.length >= 2 ? Number(dims[0]) * Number(dims[1]) : 0;
         add(url, Number.isFinite(area) ? area : 0, main);
       }
-      if (!hiRes && !Object.keys(dynamic).length) add(image.getAttribute("src"), 1000, main, true);
+      if (!hiRes && !Object.keys(dynamic).length) add(image.getAttribute("src"), 0, main, true);
     }
     const hero = doc.querySelector("#landingImage") || doc.querySelector("#imgTagWrapperId img") ||
       doc.querySelector("#mainImageContainer img[data-a-dynamic-image]");
-    if (hero) addDynamic(hero, true);
+    const videoMarker = 'video, [data-video], [data-action*="video" i], [class*="videoThumbnail" i], [class*="videoBlockIngress" i], [class*="playIcon" i]';
+    if (hero && !hero.closest?.(videoMarker)) addDynamic(hero, true);
     // Thumbnails are only identifiers for photos. Never keep low-res thumbnail URLs.
     for (const item of doc.querySelectorAll("#altImages li, #imageBlockThumbs li")) {
       if (/video|play|movie/i.test(String(item.className || "")) ||
-          item.querySelector("video, [data-video], .videoThumbnail, .videoBlockIngress")) continue;
+          item.querySelector(videoMarker)) continue;
       const image = item.querySelector("img");
       if (!image || /video|play/i.test(image.getAttribute("alt") || "")) continue;
       addDynamic(image, false);
@@ -89,7 +90,7 @@
     // Some page variants expose thumbnail images without an li wrapper.
     if (!doc.querySelector("#altImages li, #imageBlockThumbs li")) {
       for (const image of doc.querySelectorAll("#altImages img, #imageBlockThumbs img")) {
-        if (/video|play/i.test(image.getAttribute("alt") || "")) continue;
+        if (image.closest(videoMarker) || /video|play/i.test(image.getAttribute("alt") || "")) continue;
         addDynamic(image, false);
       }
     }
@@ -110,8 +111,7 @@
     };
     const priceNode = doc.querySelector("#corePrice_feature_div .a-price .a-offscreen") ||
       doc.querySelector("#corePriceDisplay_desktop_feature_div .a-price .a-offscreen") ||
-      doc.querySelector("#priceblock_ourprice") || doc.querySelector("#priceblock_dealprice") ||
-      doc.querySelector(".a-price .a-offscreen");
+      doc.querySelector("#priceblock_ourprice") || doc.querySelector("#priceblock_dealprice");
     const price = parsePrice(textOf(priceNode));
     if (price) { product.price = price; product.currency = "USD"; }
     else missing.push("price");

@@ -42,13 +42,14 @@ test("dedupe Amazon image sizes, upgrade thumbnails, exclude video thumbnails", 
   assert.ok(!images.some(x=>x.url.includes("VIDEO")));
 });
 test("only permitted Amazon image domains",()=>{
+  assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/video-poster.jpg"), null);
   assert.equal(core.imageInfo("https://evil.example/images/I/61ABC._AC_SL1500_.jpg"),null);
   assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/61ABC._AC_SL200_.jpg").key, "61abc");
 });
 test("blocked and missing product information never pretend complete",()=>{
   const blocked={title:"Robot Check",querySelector:()=>null};
   assert.throws(()=>core.parseProduct(blocked,"https://www.amazon.com/dp/B0ABC12345"),/验证码/);
-  const noInfo={title:"Example",querySelector:s=>s==="#productTitle"?{textContent:"A product"}:null,querySelectorAll:()=>[]};
+  const noInfo={title:"Example",querySelector:s=>s==="#productTitle"?{textContent:"A product"}:s===".a-price .a-offscreen"?{textContent:"$12.99"}:null,querySelectorAll:()=>[]};
   const result=core.parseProduct(noInfo,"https://www.amazon.com/dp/B0ABC12345");
   assert.equal(result.collection_status,"partial");
   assert.deepEqual(result.missing_fields,["price","images","bullet_points","description"]);
