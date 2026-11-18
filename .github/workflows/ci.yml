@@ -112,3 +112,38 @@ jobs:
 
       - name: TypeScript check and Vite build
         run: npm run build
+
+  extension:
+    name: Browser Extension MV3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: apps/browser-extension
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+      - name: Validate manifest, script syntax and parser
+        run: |
+          node --check amazon-core.js
+          node --check content.js
+          node --check background.js
+          node --check popup.js
+          node --test tests/*.test.cjs
+      - name: Package extension ZIP
+        id: package
+        run: |
+          version="$(node -p 'require("./manifest.json").version')"
+          zip -9 "una-seller-extension-v${version}.zip" manifest.json amazon-core.js content.js content.css background.js popup.html popup.js popup.css README.md
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Upload installable extension ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: una-seller-extension-v${{ steps.package.outputs.version }}
+          path: apps/browser-extension/una-seller-extension-v${{ steps.package.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 14

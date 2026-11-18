@@ -1,0 +1,6 @@
+P.when('A').register("ImageBlockATF", function(A) {
+  return {
+    'colorImages': { 'initial': A.$.parseJSON('[{"variant":"MAIN","hiRes":null,"physicalIdForMedia":"MainA","large":"https://m.media-amazon.com/images/alternate/filter/fixture/content/MainA._AC_SY395_.jpg","main":{"https://m.media-amazon.com/images/I/MainA._AC_SY695_.jpg":[695,695],"https://m.media-amazon.com/images/I/MainA._AC_SY395_.jpg":[395,395]}},{"variant":"PT01","physicalIdForMedia":"PhotoB","large":"https://m.media-amazon.com/images/alternate/filter/fixture/content/PhotoB._AC_SY395_.jpg","hiRes":"https://m.media-amazon.com/images/I/PhotoB._AC_SL1500_.jpg","main":{"https://m.media-amazon.com/images/I/PhotoB._AC_SY695_.jpg":[695,695],"https://m.media-amazon.com/images/I/OtherColor._AC_SL2000_.jpg":[2000,2000]}},{"variant":"PT02","large":"https://m.media-amazon.com/images/I/PhotoB._AC_SY200_.jpg"},{"variant":"PT03","large":"https://m.media-amazon.com/images/I/OpaqueMedia.jpg","isVideo":true},{"variant":"PT04","large":"https://m.media-amazon.com/images/I/OpaqueCover._SS40_PKdp-play-icon-overlay__.jpg"}]'),
+    'Other color': [{ "variant": "MAIN", "large": "https://m.media-amazon.com/images/I/OtherColor.jpg" }] }
+  };
+});
