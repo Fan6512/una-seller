@@ -19,6 +19,9 @@ func TestExtensionOriginPreflightAndAuth(t *testing.T) {
 	if w.Code != 204 || w.Header().Get("Access-Control-Allow-Origin") != origin {
 		t.Fatalf("extension preflight status=%d origin=%q", w.Code, w.Header().Get("Access-Control-Allow-Origin"))
 	}
+	if methods := w.Header().Get("Access-Control-Allow-Methods"); methods != "GET, POST, OPTIONS" {
+		t.Fatalf("extension preflight must not advertise DELETE: %q", methods)
+	}
 	r = httptest.NewRequest(http.MethodPost, "/api/v1/collections", nil)
 	r.Header.Set("Origin", origin)
 	r.Header.Set("Authorization", "Bearer invalid")
@@ -63,5 +66,12 @@ func TestStoreRoutesRejectExtensionOrigin(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("tauri store preflight status=%d", w.Code)
+	}
+	r = httptest.NewRequest(http.MethodOptions, "/api/v1/collections", nil)
+	r.Header.Set("Origin", "tauri://localhost")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Methods") != "GET, POST, DELETE, OPTIONS" {
+		t.Fatalf("tauri collection DELETE preflight status=%d methods=%q", w.Code, w.Header().Get("Access-Control-Allow-Methods"))
 	}
 }
