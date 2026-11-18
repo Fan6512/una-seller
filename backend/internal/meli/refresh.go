@@ -335,4 +335,3 @@ func (s *Service) setRefreshFailure(owner, storeID, leaseID, status string) {
  WHERE id=$2::uuid AND owner_user_id=$3::uuid AND refresh_lock=$4::uuid AND status='connected'`,
 		status, storeID, owner, leaseID)
 }
-
