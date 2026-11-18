@@ -24,14 +24,16 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 	mux.HandleFunc("/api/v1/collections", api.collections)
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	var storeService *meli.Service
-	if len(stores) != 0 { storeService = stores[0] }
+	if len(stores) != 0 {
+		storeService = stores[0]
+	}
 	s := storeAPI{auth: api, service: storeService}
 	mux.HandleFunc("/api/v1/stores", s.stores)
 	mux.HandleFunc("/api/v1/stores/oauth/start", s.start)
 	mux.HandleFunc("/api/v1/stores/", s.disconnect)
 	mux.HandleFunc(meli.CallbackPath, s.callback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || (strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores")) {
+		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") {
 			// Allow only known Tauri/dev origins; PR-C will add controlled extension access.
 			origin := r.Header.Get("Origin")
 			switch origin {
