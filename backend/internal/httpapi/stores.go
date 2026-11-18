@@ -63,7 +63,9 @@ func (a storeAPI) start(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"authorization_url": link})
 }
 
-func (a storeAPI) disconnect(w http.ResponseWriter, r *http.Request) {
+// storeAction is a reusable ownership/status gate for store-scoped operations.
+// The platform Access Token never leaves Go, including on a successful check.
+func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -74,13 +76,36 @@ func (a storeAPI) disconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	part := strings.TrimPrefix(r.URL.Path, "/api/v1/stores/")
-	if !strings.HasSuffix(part, "/disconnect") {
+	pieces := strings.Split(part, "/")
+	if len(pieces) != 2 || (pieces[1] != "disconnect" && pieces[1] != "connection-check") {
 		writeError(w, http.StatusNotFound, "store not found")
 		return
 	}
-	id := strings.TrimSuffix(part, "/disconnect")
+	id := pieces[0]
 	if strings.Contains(id, "/") {
 		writeError(w, http.StatusNotFound, "store not found")
+		return
+	}
+	if pieces[1] == "connection-check" {
+		authorized, err := a.service.RequireStoreConnection(r.Context(), owner, id)
+		switch {
+		case errors.Is(err, meli.ErrStoreNotFound):
+			writeError(w, http.StatusNotFound, "store not found")
+		case errors.Is(err, meli.ErrReauthorizationRequired):
+			writeError(w, http.StatusForbidden, "store needs reauthorization")
+		case errors.Is(err, meli.ErrRefreshUnknown):
+			writeError(w, http.StatusConflict, "refresh outcome unknown; reauthorize or check on Mercado Libre")
+		case errors.Is(err, meli.ErrRefreshBusy):
+			writeError(w, http.StatusServiceUnavailable, "store token refresh in progress")
+		case err != nil:
+			writeError(w, http.StatusServiceUnavailable, "store authorization unavailable")
+		default:
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "connected", "seller_id": authorized.SellerID,
+				"marketplaces_verified": authorized.Verified,
+			})
+		}
 		return
 	}
 	err := a.service.Disconnect(r.Context(), owner, id)
