@@ -52,7 +52,7 @@ M0 只建立真实接口需要的数据表，不提前为订单、退款、广�
 
 ### 官方接入何时展开
 
-- Issue #21 / Draft PR #23 在 M0-ML-AUTH 提前实现 OAuth state、Token 交换、/users/me、加密凭据与店铺基础列表/断开。**自动刷新、真实店铺权限/站点探测、账号既有商品只读同步尚未交付**；仍依 M1-D / 后续独立切片完成。并发刷新使用 PostgreSQL 轻量协调，不预装 Redis。
+- Issue #21 / Draft PR #23 在 M0-ML-AUTH 提前实现 OAuth state、Token 交换、/users/me、加密凭据与店铺基础列表/断开；OAuth 绑定 CBT parent `seller_id`，同一 Token 通过官方 `/marketplace/users/{user_id}` 映射多个 site-child `user_id`，**不按站点重复授权**。自动续签通过进程内 singleflight + PostgreSQL 短事务行锁/租约与 fencing 更新；未知结果停止自动刷新，不在事务里等网络。Go 提供 `RequireStoreConnection` / `RequireSiteConnection`，只给真实获准站点通过。**真实授权、账号刊登模型的写入权限与原有商品只读同步尚未验收/实施**；后者留在 M1-D。
 - M1-E 根据当前账号是否启用 `user_product_seller` 选择 User Products 或仍受支持的 Legacy 操作，不把任何一份旧 CBT API 清单当成所有账号通用合同。参考 [User Products 官方说明](https://global-selling.mercadolibre.com/devsite/manage-sales-global-selling/user-products-cbt)；各目标站点单独记录状态和平台 ID，API 请求数量由实际模型决定。
 - M3 出现真实订单/问答/售后需求后再验证 Webhook topics、返回要求和接口权限，可先使用 PostgreSQL 持久通知/任务与 Go worker，不因历史逆向资料提前增加 `meli_orders`、`meli_interactions` 等空表或 Redis。
 
