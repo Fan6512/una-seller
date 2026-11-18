@@ -41,7 +41,7 @@ func setupRefreshTest(t *testing.T) (*Service, *pgxpool.Pool, string, string) {
 	key := base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901"))
 	s, err := NewService(db, Config{
 		ClientID: "synthetic_app", ClientSecret: "synthetic_secret",
-		RedirectURI: "https://example.invalid" + CallbackPath,
+		RedirectURI:        "https://example.invalid" + CallbackPath,
 		TokenEncryptionKey: key,
 	})
 	if err != nil {
