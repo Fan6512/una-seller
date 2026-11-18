@@ -51,6 +51,8 @@ type Store struct {
 	Status         string     `json:"status"`
 	TokenExpiresAt *time.Time `json:"token_expires_at,omitempty"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+	Marketplaces   []Marketplace `json:"marketplaces"`
+	MarketsStatus  string        `json:"marketplaces_status"`
 }
 
 func NewService(db *pgxpool.Pool, cfg Config) (*Service, error) {
@@ -248,6 +250,19 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 		return Store{}, err
 	}
 	sid := seller.ID.String()
+	if seller.SiteID != "" && seller.SiteID != "CBT" {
+		return Store{}, errors.New("seller is not a CBT global account")
+	}
+	marketplaces, mapErr := s.getMarketplaces(ctx, sid, token.AccessToken)
+	marketplacesJSON := []byte("[]")
+	mappingStatus := "unverified"
+	if mapErr == nil {
+		marketplacesJSON, err = json.Marshal(marketplaces)
+		if err != nil {
+			return Store{}, err
+		}
+		mappingStatus = "verified"
+	}
 	access, err := s.cipher.Seal(token.AccessToken, tokenAAD(owner, sid, "access"))
 	if err != nil {
 		return Store{}, err
@@ -259,16 +274,25 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 	// seller_id is globally unique: one seller cannot silently migrate to a second owner.
 	var out Store
 	err = s.db.QueryRow(ctx, `INSERT INTO app.meli_store_connections
- (owner_user_id,seller_id,nickname,status,access_token_ciphertext,refresh_token_ciphertext,access_token_expires_at,last_checked_at)
- VALUES($1::uuid,$2,$3,'connected',$4,$5,now()+($6::bigint*interval '1 second'),now())
+ (owner_user_id,seller_id,nickname,status,access_token_ciphertext,refresh_token_ciphertext,
+ access_token_expires_at,last_checked_at,marketplaces,marketplaces_status,marketplaces_checked_at)
+ VALUES($1::uuid,$2,$3,'connected',$4,$5,now()+($6::bigint*interval '1 second'),now(),$7::jsonb,$8,
+ CASE WHEN $8='verified' THEN now() ELSE NULL END)
  ON CONFLICT(seller_id) DO UPDATE SET nickname=EXCLUDED.nickname,status='connected',
  access_token_ciphertext=EXCLUDED.access_token_ciphertext,refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,
  access_token_expires_at=EXCLUDED.access_token_expires_at,last_checked_at=now(),updated_at=now(),
+ marketplaces=EXCLUDED.marketplaces,marketplaces_status=EXCLUDED.marketplaces_status,
+ marketplaces_checked_at=EXCLUDED.marketplaces_checked_at,
  refresh_lock=NULL,refresh_lease_until=NULL
  WHERE app.meli_store_connections.owner_user_id=EXCLUDED.owner_user_id
- RETURNING id::text,seller_id,COALESCE(nickname,''),status,access_token_expires_at,updated_at`,
-		owner, sid, seller.Nickname, access, refresh, token.ExpiresIn).Scan(
-		&out.ID, &out.SellerID, &out.Nickname, &out.Status, &out.TokenExpiresAt, &out.UpdatedAt)
+ RETURNING id::text,seller_id,COALESCE(nickname,''),status,access_token_expires_at,
+ updated_at,marketplaces_status,marketplaces`,
+		owner, sid, seller.Nickname, access, refresh, token.ExpiresIn, string(marketplacesJSON), mappingStatus).Scan(
+		&out.ID, &out.SellerID, &out.Nickname, &out.Status,
+		&out.TokenExpiresAt, &out.UpdatedAt, &out.MarketsStatus, &marketplacesJSON)
+	if err == nil {
+		err = json.Unmarshal(marketplacesJSON, &out.Marketplaces)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Store{}, ErrSellerOwned
 	}
@@ -279,7 +303,8 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 }
 
 func (s *Service) List(ctx context.Context, owner string) ([]Store, error) {
-	rows, err := s.db.Query(ctx, `SELECT id::text,seller_id,COALESCE(nickname,''),status,access_token_expires_at,updated_at
+	rows, err := s.db.Query(ctx, `SELECT id::text,seller_id,COALESCE(nickname,''),status,access_token_expires_at,
+ updated_at,marketplaces_status,marketplaces
  FROM app.meli_store_connections WHERE owner_user_id=$1::uuid ORDER BY updated_at DESC,id`, owner)
 	if err != nil {
 		return nil, err
@@ -288,7 +313,12 @@ func (s *Service) List(ctx context.Context, owner string) ([]Store, error) {
 	stores := make([]Store, 0)
 	for rows.Next() {
 		var st Store
-		if err = rows.Scan(&st.ID, &st.SellerID, &st.Nickname, &st.Status, &st.TokenExpiresAt, &st.UpdatedAt); err != nil {
+		var marketJSON []byte
+		if err = rows.Scan(&st.ID, &st.SellerID, &st.Nickname, &st.Status,
+			&st.TokenExpiresAt, &st.UpdatedAt, &st.MarketsStatus, &marketJSON); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(marketJSON, &st.Marketplaces); err != nil {
 			return nil, err
 		}
 		if st.Status == "connected" && st.TokenExpiresAt != nil && !st.TokenExpiresAt.After(time.Now()) {
