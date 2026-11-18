@@ -210,9 +210,10 @@ backend/
 
 ### 6.5 CORS
 
-- Go API 精确允许：开发 `http://127.0.0.1:1420`、`http://localhost:1420`、`http://tauri.localhost`、`https://tauri.localhost`、`tauri://localhost`；生产 Tauri 自定义协议；插件 `chrome-extension://<固定扩展 ID>`。
+- 当前 `main` 的采集箱路由仅放行这些桌面来源：`http://127.0.0.1:1420`、`http://localhost:1420`、`http://tauri.localhost`、`https://tauri.localhost`、`tauri://localhost`。
+- 待合并的 PR #19 在同一路由增加 `chrome-extension://<id>`，其中 ID 必须恰好由 32 个 `a`–`p` 小写字母组成。该规则允许格式合法的扩展来源，无需预配置固定 ID。
 - 回显允许的 Origin 并设置 `Vary: Origin`；不使用 `*`，不允许 credentials。
-- 预检允许 `Authorization, Content-Type, Idempotency-Key, If-Match`。
+- 预检允许 `GET, POST, OPTIONS` 及 `Authorization, Content-Type` 请求头。
 - CORS 不是鉴权边界；插件跨域请求仍必须带令牌。
 - 桌面直连 Supabase Auth 时，Tauri CSP 的 `connect-src` 需单独放行 Supabase Auth 域名；Go 的 CORS 不负责这段。
 
@@ -367,8 +368,8 @@ SourceProduct（采集来源快照）
 
 ### 10.3 迁移
 
-- `migrations/` 下按序号命名，只增不改；执行记录写入 `app.schema_migrations`（version、checksum、applied_at）。
-- 执行迁移命令时获取 `pg_advisory_lock`，防止并发执行；每个文件在事务内执行，失败回滚并停止发布。API 启动本身不自动迁移。
+- 当前由显式迁移命令调用 `migrations.Apply`，执行内嵌的幂等 SQL `0001_source_collections.sql`，执行失败时返回错误。API 正常启动时不会自动迁移。
+- 后续计划按序执行只增不改的迁移文件，每个文件在事务内执行，并在 `app.schema_migrations` 登记 version、checksum、applied_at，通过 `pg_advisory_lock` 串行化迁移。
 - 采用 expand/contract：先加可空列/新表 → 发布兼容代码 → 回填 → 再加约束；保证上一版二进制在迁移后仍能运行，便于回滚。
 - 生产迁移前先备份；破坏性变更（删列/改类型）拆成两次发布。
 
