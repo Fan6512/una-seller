@@ -46,7 +46,7 @@
 
 ### OAuth、刊登和通知的阶段边界
 
-- **M0-ML-AUTH 提前独立实施基础 OAuth**（Issue #21 / Draft PR #23）：一次性 state、官方 Token 交换、卖家身份、店铺基础管理与加密保存。其代码/Mock PASS 不代表真实授权 PASS。自动刷新与服务器端业务门禁仍需后续切片；M1-D 负责真实只读同步和模板，不为授权预装 Redis。
+- **M0-ML-AUTH 提前实现完整 OAuth 代码基线**（Issue #21 / Draft PR #23）：一次性 state、官方 Token 交换、CBT 主账号 + 各站点子用户映射、加密保存、Token 轮换（singleflight + PG 短租约）及 Go 服务端账号/站点门禁；其代码/Mock 验收不代表真实授权 PASS。**先完成此 PR 的代码审查/CI，再一次性配置服务器并真实联调**。M1-D 仍负责既有商品只读同步和模板，M1-E 负责实际刊登，不为 OAuth 安装 Redis。
 - **M1-E 才做真实刊登**：先检查账号 `user_product_seller` 等能力，再适配当前 User Products 或尚支持的旧模型；不能直接套用旧 `/global/items` 创建链路；每目标站点分别追踪结果与错误。
 - **M3 有真实运营需求时才做 Webhook/订单/客服**：通知入库后异步处理可以用 PostgreSQL + Go worker，实现前重新核实官方 topics、超时、鉴权和接口范围；M0 不建订单/消息表或通用队列。
 
