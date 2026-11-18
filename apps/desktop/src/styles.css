@@ -600,3 +600,27 @@ button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visibl
   .list-pane, .detail-pane { border-radius: 16px; }
   .product-detail { padding: 20px; }
 }
+
+/* Issue #21: lightweight store management view. */
+.stores-page { max-width: 1020px; margin: 0 auto; }
+.store-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.store-actions a { color: var(--ui-accent); overflow-wrap: anywhere; font-size: 13px; }
+.store-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+.store-card, .store-empty, .store-link-panel {
+  border: 1px solid var(--ui-outline); border-radius: 16px; padding: 22px;
+  background: var(--ui-surface); color: var(--ui-text);
+}
+.store-card-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.store-card-top p, .store-note, .store-link-panel p { color: var(--ui-muted); font-size: 12px; line-height: 1.6; }
+.store-status { font-size: 11px; border-radius: 20px; padding: 5px 9px; white-space: normal; }
+.store-connected { color: #206b4a; background: #e1f4e9; }
+.store-attention { color: #995b22; background: #fff0de; }
+.store-feedback { margin: 12px 0; color: var(--ui-text); }
+.store-error { color: #aa3232; }
+.store-link-panel { margin: 0 0 18px; display: grid; gap: 10px; }
+.store-link-panel input {
+  width: 100%; min-width: 0; border: 1px solid var(--ui-outline); border-radius: 8px;
+  padding: 10px; color: var(--ui-text); background: var(--ui-elevated);
+}
+.store-card .store-actions { margin-top: 16px; }
+@media (max-width: 700px) { .stores-page .page-heading { align-items: flex-start; flex-direction: column; gap: 12px; } }
