@@ -10,7 +10,7 @@
 3. [Domain v2.1：最小平台数据与写入契约](architecture/DOMAIN_AND_EXECUTION.md)
 4. [CI 与运行环境 v1：GitHub Actions、开发/部署分工与验收边界](architecture/CI_AND_RUNTIME.md)
 5. [Windows/macOS 双平台规范](architecture/CROSS_PLATFORM.md)
-6. [M0 基础设施与部署验收说明](architecture/DEPLOYMENT_M0.md)：既有 Ubuntu/Nginx + Supabase，部署尚未验收。
+6. [M0 基础设施与部署验收说明](architecture/DEPLOYMENT_M0.md)：早期准备资料；云端当前状态以 PR #18 的现场验收记录为准。
 7. [M0-02B 云端 Go API 操作说明](architecture/CLOUD_GO_API_DEPLOY.md)：独立 systemd/Nginx 配置、部署步骤与真实环境验收门禁。
 8. [后端设计（Go 单体）](architecture/BACKEND-DESIGN.md)：目录结构、分层规则、API 契约、身份与数据模型演进、任务与部署。
 9. [ADR-0004：简单优先、不做付费/商业化](decisions/0004-simplicity-first.md) · [ADR-0001：M0-03 Go 实施选择](decisions/0001-language-and-modular-monolith.md) · [ADR-0005：M0 基础设施选型](decisions/0005-m0-infrastructure.md) · [全部 ADR](decisions/README.md)
@@ -24,7 +24,7 @@
 - [ERP 后端与 Windows/macOS 桌面客户端 MVP](architecture/ERP-MVP.md)：Tauri 2 桌面客户端、单一后端 API、PostgreSQL、本地开发与后续云端部署。
 - [浏览器商品采集插件 MVP](product/BROWSER-COLLECTION-PLUGIN-MVP.md)：Chrome/Edge 插件、Amazon 与 Mercado Libre 卡片一键人工采集、商品详情/五点描述/多规格变体。
 
-当前进度：**M0-00 基础 CI、Go 1.26 与 Issue #6 / PR-A 商品采集 Go + PostgreSQL 17 后端已合并**；Supabase `una-seller` 已执行 PR-A 的 `m0_03_source_collections` 迁移和 `restrict_auto_rls_event_trigger_execution` 权限收口（2026-11-16），四表 RLS 开启且空表；合成 SQL 事务验证已回滚，**Go API 云库连通与公网部署未验收**。后续实施 **PR-B 桌面采集箱 → PR-C 浏览器扩展**；Win/mac 原生构建与实机验收独立登记。产品库、AI 文案/图片、店铺模板和刊登记录为后续 M1 阶段，规划不等于已交付。
+当前进度（截至 2026-11-18）：**M0-00 基础 CI、Go 1.26、商品采集 Go + PostgreSQL 后端与 Supabase Auth 已合并**；PR #18 云端 HTTPS、Auth、数据库读回、Windows 登录据现场执行报告 PASS。PR #19 浏览器采集插件仍为 Draft，用户已确认 Amazon 商品真实入库和 Windows 采集箱读回，v0.1.3 新版搜索卡片、高清图片/去重、视频过滤尚待实机回归。PR #20 桌面缓存与历史图片展示去重仍为 Draft，切换速度等待 Windows 验收。macOS 实机未验收；产品库、AI 文案/图片、店铺授权及刊登记录为后续阶段。历史部署说明的“待部署”是旧状态，不代表当前未上线。
 
 ## 历史规划与竞品资料
 
