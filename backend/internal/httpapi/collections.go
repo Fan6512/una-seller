@@ -30,7 +30,7 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 	s := storeAPI{auth: api, service: storeService}
 	mux.HandleFunc("/api/v1/stores", s.stores)
 	mux.HandleFunc("/api/v1/stores/oauth/start", s.start)
-	mux.HandleFunc("/api/v1/stores/", s.disconnect)
+	mux.HandleFunc("/api/v1/stores/", s.storeAction)
 	mux.HandleFunc(meli.CallbackPath, s.callback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") {
