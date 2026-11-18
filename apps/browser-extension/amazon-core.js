@@ -44,7 +44,7 @@
       const ext = match[2].toLowerCase();
       const original = url.origin + "/images/I/" + base + "." + ext;
       const transformed = base !== match[1];
-      return { key: base.toLowerCase(), original, raw: url.origin + url.pathname, transformed };
+      return { key: base, original, raw: url.origin + url.pathname, transformed };
     } catch { return null; }
   }
   function collectImages(doc) {
@@ -78,7 +78,46 @@
     const hero = doc.querySelector("#landingImage") || doc.querySelector("#imgTagWrapperId img") ||
       doc.querySelector("#mainImageContainer img[data-a-dynamic-image]");
     const videoMarker = 'video, [data-video], [data-action*="video" i], [class*="videoThumbnail" i], [class*="videoBlockIngress" i], [class*="playIcon" i]';
-    if (hero && !hero.closest?.(videoMarker)) addDynamic(hero, true);
+    if (hero && !hero.closest?.(videoMarker)) {
+      // The initial ImageBlockATF gallery is available before thumbnail nodes are populated.
+      const heroKey = imageInfo(hero.getAttribute("src"))?.key;
+      if (heroKey) {
+        for (const script of doc.querySelectorAll("#imageBlock_feature_div script")) {
+          const source = script.textContent || "";
+          if (source.length > 128 * 1024 || !source.includes('register("ImageBlockATF"')) continue;
+          const match = source.match(/'colorImages'\s*:\s*\{\s*'initial'\s*:\s*A\.\$\.parseJSON\('((?:\\.|[^'\\])*)'\)/);
+          if (!match) continue;
+          let gallery;
+          try { gallery = JSON.parse(match[1].replace(/\\(['\\])/g, "$1")); } catch { continue; }
+          if (!Array.isArray(gallery) || gallery[0]?.variant !== "MAIN" ||
+              imageInfo(gallery[0].large)?.key !== heroKey) continue;
+
+          for (const photo of gallery.slice(0, 30)) {
+            if (typeof photo?.variant !== "string" || !/^(MAIN|PT\d{2})$/.test(photo.variant) ||
+                photo.video || photo.videoUrl ||
+                photo.videoId || photo.isVideo || /video/i.test(photo.mediaType || "")) continue;
+            const key = imageInfo(photo.large)?.key;
+            if (!key || (photo.variant === "MAIN" && key !== heroKey)) continue;
+            add(photo.large, 0);
+            for (const [url, dims] of Object.entries(photo.main || {})) {
+              if (imageInfo(url)?.key !== key || !Array.isArray(dims)) continue;
+              const area = dims[0] * dims[1];
+              if (Number.isFinite(area)) add(url, area);
+            }
+            if (imageInfo(photo.hiRes)?.key === key) add(photo.hiRes, 20000000);
+          }
+          if (selected[0] && imageInfo(selected[0].url)?.key === heroKey && selected.length > 1) {
+            const hiRes = hero.getAttribute("data-old-hires") || hero.getAttribute("data-image-hires");
+            if (imageInfo(hiRes)?.key === heroKey) add(hiRes, 20000000);
+            return selected.map((item, n) => ({ url: item.url, type: n === 0 ? "main" : "additional" }));
+          }
+          selected.length = 0;
+          index.clear();
+          break;
+        }
+      }
+      addDynamic(hero, true);
+    }
     // Thumbnails are only identifiers for photos. Never keep low-res thumbnail URLs.
     for (const item of doc.querySelectorAll("#altImages li, #imageBlockThumbs li")) {
       if (/video|play|movie/i.test(String(item.className || "")) ||
@@ -119,6 +158,7 @@
     const images = collectImages(doc);
     if (images.length) product.images = images;
     else missing.push("images");
+    if (images.length === 1) missing.push("additional_images");
 
     const bullets = [...doc.querySelectorAll("#feature-bullets li .a-list-item, .product-facts-title + ul li")]
       .map(textOf).filter(v => v && !/^(?:See more|About this item)$/i.test(v)).slice(0, 50);

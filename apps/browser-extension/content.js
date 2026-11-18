@@ -21,7 +21,7 @@
   }
   function missingText(product) {
     const labels = {
-      price: "价格", images: "图片", bullet_points: "卖点",
+      price: "价格", images: "图片", additional_images: "附图", bullet_points: "卖点",
       description: "详细描述", variants_not_exhaustive: "完整规格"
     };
     const missing = (product?.missing_fields || []).map(x => labels[x]).filter(Boolean);

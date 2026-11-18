@@ -45,7 +45,7 @@ test("only permitted Amazon image domains",()=>{
   assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/video-poster.jpg"), null);
   assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/ABC._SS40_PKdp-play-icon-overlay__.jpg"), null);
   assert.equal(core.imageInfo("https://evil.example/images/I/61ABC._AC_SL1500_.jpg"),null);
-  assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/61ABC._AC_SL200_.jpg").key, "61abc");
+  assert.equal(core.imageInfo("https://m.media-amazon.com/images/I/61ABC._AC_SL200_.jpg").key, "61ABC");
 });
 test("blocked and missing product information never pretend complete",()=>{
   const blocked={title:"Robot Check",querySelector:()=>null};
@@ -60,4 +60,32 @@ test("search controls mount inside the matched card, never as siblings of its he
   const content=fs.readFileSync(require("node:path").join(__dirname,"../content.js"),"utf8");
   assert.match(content,/mount\.appendChild\(createControl\(url\)\)/);
   assert.doesNotMatch(content,/insertAdjacentElement\(["']afterend/);
+});
+
+test("reads only the active ImageBlockATF gallery when the DOM has no thumbnails", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "image-block-atf.fixture.txt"), "utf8");
+  const url = "https://www.amazon.com/dp/B0ABC12345?th=1&psc=1";
+  const heroURL = "https://m.media-amazon.com/images/I/MainA._AC_SY395_.jpg";
+  const page = (src, script = source) => ({
+    querySelector: selector => selector === "#landingImage" ? fakeImage({src}) :
+      selector === "#productTitle" ? {textContent: "Synthetic product"} : null,
+    querySelectorAll: selector => selector === "#imageBlock_feature_div script" ? [{textContent: script}] : []
+  });
+
+  const product = core.parseProduct(page(heroURL), url);
+  assert.equal(product.source_url, "https://www.amazon.com/dp/B0ABC12345");
+  assert.deepEqual(product.images, [
+    {url: "https://m.media-amazon.com/images/I/MainA._AC_SY695_.jpg", type: "main"},
+    {url: "https://m.media-amazon.com/images/I/PhotoB._AC_SL1500_.jpg", type: "additional"}
+  ]);
+  assert.ok(!product.missing_fields.includes("additional_images"));
+
+  for (const doc of [page(heroURL, ""), page(heroURL.replace("MainA", "mainA"))]) {
+    const partial = core.parseProduct(doc, url);
+    assert.equal(partial.images.length, 1);
+    assert.ok(partial.missing_fields.includes("additional_images"));
+    assert.equal(partial.collection_status, "partial");
+  }
 });
