@@ -5,7 +5,9 @@ const AUTH = "https://rwktwfxzfkzglxwaulcm.supabase.co";
 const API = "https://mkd.186512.xyz";
 const PUBLISHABLE_KEY = "sb_publishable_KUDh1isf3-EknWx-rviV0A_w3lm-u0z";
 const AMAZON = new Set(["amazon.com", "www.amazon.com"]);
-const sessionStorageReady = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+const sessionStorageReady = Promise.resolve()
+  .then(() => chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }))
+  .then(() => true, () => false);
 let refreshInFlight = null;
 
 function amazonProductURL(raw) {
@@ -24,12 +26,10 @@ function fromPopup(sender) {
   return typeof sender.url === "string" && sender.url === chrome.runtime.getURL("popup.html");
 }
 async function loadSession() {
-  await sessionStorageReady;
   const data = await chrome.storage.local.get("unaSession");
   return data.unaSession || null;
 }
 async function saveSession(s) {
-  await sessionStorageReady;
   await chrome.storage.local.set({ unaSession: s });
 }
 async function tokenRequest(type, data) {
@@ -117,6 +117,7 @@ async function saveCollection(collection, sender) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (!msg || typeof msg !== "object") throw new Error("无效请求");
+    if (!await sessionStorageReady) throw new Error("无法保护扩展会话存储，请更新 Chrome 后重试");
     switch (msg.type) {
       case "SESSION_STATUS": {
         if (!fromPopup(sender)) throw new Error("操作不允许");
@@ -133,7 +134,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       case "SIGN_OUT": {
         if (!fromPopup(sender)) throw new Error("操作不允许");
-        await sessionStorageReady;
         await chrome.storage.local.remove("unaSession");
         return { ok: true };
       }

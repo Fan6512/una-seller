@@ -8,7 +8,12 @@ test("reject unrelated hosts and normalize Amazon ASIN", () => {
   assert.equal(core.canonicalAmazonURL("https://amazon.co.uk/dp/B0ABC12345"), null);
 });
 test("parse exact prices, not price ranges", () => {
-  assert.equal(core.parsePrice("$1,299.00"), "1299.00");
+  assert.equal(core.parsePrice("$18.59"), "18.59");
+  assert.equal(core.parsePrice("$18"), "18.00");
+  assert.equal(core.parsePrice("$1,234.56"), "1234.56");
+  for (const raw of ["$1,23", "$18.590", "$18.", "$.59", "$1,234.5", "$18–20", "USD $18.59", "$18.59abc"]) {
+    assert.equal(core.parsePrice(raw), null, raw);
+  }
   assert.equal(core.parsePrice("$9.50 - $15.00"), null);
 });
 function fakeImage(attrs = {}) {
@@ -62,19 +67,19 @@ test("search controls mount inside the matched card, never as siblings of its he
   assert.doesNotMatch(content,/insertAdjacentElement\(["']afterend/);
 });
 
-test("reads only the active ImageBlockATF gallery when the DOM has no thumbnails", () => {
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const source = fs.readFileSync(path.join(__dirname, "image-block-atf.fixture.txt"), "utf8");
-  const url = "https://www.amazon.com/dp/B0ABC12345?th=1&psc=1";
-  const heroURL = "https://m.media-amazon.com/images/I/MainA._AC_SY395_.jpg";
-  const page = (src, script = source) => ({
-    querySelector: selector => selector === "#landingImage" ? fakeImage({src}) :
-      selector === "#productTitle" ? {textContent: "Synthetic product"} : null,
-    querySelectorAll: selector => selector === "#imageBlock_feature_div script" ? [{textContent: script}] : []
-  });
+const fs = require("node:fs");
+const path = require("node:path");
+const source = fs.readFileSync(path.join(__dirname, "image-block-atf.fixture.txt"), "utf8");
+const url = "https://www.amazon.com/dp/B0ABC12345?th=1&psc=1";
+const heroURL = "https://m.media-amazon.com/images/I/MainA._AC_SY395_.jpg";
+const page = (heroAttributes, script = source) => ({
+  querySelector: selector => selector === "#landingImage" ? fakeImage(heroAttributes) :
+    selector === "#productTitle" ? {textContent: "Synthetic product"} : null,
+  querySelectorAll: selector => selector === "#imageBlock_feature_div script" ? [{textContent: script}] : []
+});
 
-  const product = core.parseProduct(page(heroURL), url);
+test("reads only the active ImageBlockATF gallery when the DOM has no thumbnails", () => {
+  const product = core.parseProduct(page({src: heroURL}), url);
   assert.equal(product.source_url, "https://www.amazon.com/dp/B0ABC12345");
   assert.deepEqual(product.images, [
     {url: "https://m.media-amazon.com/images/I/MainA._AC_SY695_.jpg", type: "main"},
@@ -82,13 +87,69 @@ test("reads only the active ImageBlockATF gallery when the DOM has no thumbnails
   ]);
   assert.ok(!product.missing_fields.includes("additional_images"));
 
-  const wrongMedia = core.parseProduct(page(heroURL, source.replace('"physicalIdForMedia":"PhotoB"', '"physicalIdForMedia":"WrongColor"')), url);
+  const wrongMedia = core.parseProduct(page({src: heroURL}, source.replace('"physicalIdForMedia":"PhotoB"', '"physicalIdForMedia":"WrongColor"')), url);
   assert.equal(wrongMedia.images[1].url, "https://m.media-amazon.com/images/I/PhotoB._AC_SY200_.jpg");
 
-  for (const doc of [page(heroURL, ""), page(heroURL.replace("MainA", "mainA"))]) {
-    const partial = core.parseProduct(doc, url);
-    assert.equal(partial.images.length, 1);
-    assert.ok(partial.missing_fields.includes("additional_images"));
-    assert.equal(partial.collection_status, "partial");
+  const partial = core.parseProduct(page({src: heroURL}, ""), url);
+  assert.equal(partial.images.length, 1);
+  assert.ok(partial.missing_fields.includes("additional_images"));
+});
+
+test("uses the same hero element's hires or dynamic image for a placeholder src", () => {
+  const src = "data:image/gif;base64,R0lGODlh";
+  for (const attrs of [
+    {"data-old-hires": heroURL},
+    {"data-image-hires": heroURL},
+    {"data-a-dynamic-image": JSON.stringify({
+      [heroURL]: [395,395],
+      [heroURL.replace("395", "695")]: [695,695]
+    })}
+  ]) {
+    const product = core.parseProduct(page({src, ...attrs}), url);
+    assert.deepEqual(product.images.map(image => image.type), ["main", "additional"]);
+    assert.ok(!product.missing_fields.includes("additional_images"));
+  }
+});
+
+test("rejects the gallery when the lazy hero identity is different or ambiguous", () => {
+  const src = "data:image/gif;base64,R0lGODlh";
+  const otherHero = heroURL.replace("MainA", "mainA");
+  const product = core.parseProduct(page({src, "data-old-hires": otherHero}), url);
+  assert.deepEqual(product.images, [{url: otherHero, type: "main"}]);
+  assert.ok(product.missing_fields.includes("additional_images"));
+  assert.equal(product.collection_status, "partial");
+
+  const ambiguous = core.parseProduct(page({src, "data-a-dynamic-image": JSON.stringify({
+    [heroURL]: [395,395], [otherHero]: [395,395]
+  })}), url);
+  assert.equal(ambiguous.images, undefined);
+  assert.ok(ambiguous.missing_fields.includes("images"));
+});
+
+test("storage isolation failure blocks session operations and network requests", async () => {
+  const vm = require("node:vm");
+  const worker = fs.readFileSync(path.join(__dirname, "../background.js"), "utf8");
+  const popup = {url: "chrome-extension://fixture/popup.html"};
+  const amazon = {tab: {}, url};
+  for (const setAccessLevel of [undefined, async () => { throw Error("unavailable"); }]) {
+    let listener;
+    const calls = [];
+    const chrome = {
+      storage: {local: {
+        setAccessLevel,
+        get: () => calls.push("get"),
+        set: () => calls.push("set"),
+        remove: () => calls.push("remove")
+      }},
+      runtime: {onMessage: {addListener: fn => { listener = fn; }}}
+    };
+    vm.runInNewContext(worker, {chrome, fetch: () => calls.push("fetch")});
+    for (const [type, sender] of [["SESSION_STATUS", popup], ["SIGN_IN", popup], ["SIGN_OUT", popup],
+      ["FETCH_AMAZON_HTML", amazon], ["SAVE_COLLECTION", amazon]]) {
+      const response = await new Promise(resolve => listener({type, url}, sender, resolve));
+      assert.equal(response.ok, false);
+      assert.match(response.error, /无法保护扩展会话存储/);
+    }
+    assert.deepEqual(calls, []);
   }
 });

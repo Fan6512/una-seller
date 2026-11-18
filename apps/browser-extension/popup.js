@@ -12,6 +12,7 @@ function showSession(email) {
 async function restore() {
   const res = await message({ type: "SESSION_STATUS" });
   showSession(res.ok ? res.email : "");
+  if (!res.ok) $("message").textContent = res.error || "无法读取会话状态";
 }
 $("login").addEventListener("submit", async event => {
   event.preventDefault();
