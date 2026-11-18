@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS app.meli_store_connections (
         access_token_expires_at IS NOT NULL
     ))
 );
+-- Also upgrade a database that applied the early Draft #23 table before these
+-- CBT hierarchy fields were added. CREATE TABLE IF NOT EXISTS alone would skip them.
+ALTER TABLE app.meli_store_connections
+    ADD COLUMN IF NOT EXISTS marketplaces jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(marketplaces) = 'array'),
+    ADD COLUMN IF NOT EXISTS marketplaces_status text NOT NULL DEFAULT 'unverified'
+        CHECK (marketplaces_status IN ('verified', 'unverified')),
+    ADD COLUMN IF NOT EXISTS marketplaces_checked_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS meli_store_owner_idx
     ON app.meli_store_connections(owner_user_id, updated_at DESC, id);
 
