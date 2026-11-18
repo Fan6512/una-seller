@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 )
 
 const CallbackPath = "/api/v1/mercadolibre/oauth/callback"
@@ -42,6 +43,7 @@ type Service struct {
 	client       *http.Client
 	authorizeURL string
 	apiURL       string
+	refreshGroup singleflight.Group
 }
 
 type Store struct {
