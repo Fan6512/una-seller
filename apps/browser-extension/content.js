@@ -27,6 +27,16 @@
     const missing = (product?.missing_fields || []).map(x => labels[x]).filter(Boolean);
     return missing.length ? "缺少：" + missing.join("、") : "部分字段未获取";
   }
+  function partialMessage(product, action) {
+    const missing = product?.missing_fields || [];
+    // A partial update with no new images does not overwrite earlier saved images.
+    if (action === "updated" && missing.includes("images") && !Object.hasOwn(product, "images")) {
+      const other = missing.filter(field => field !== "images");
+      return "本次未确认主图，之前保存的图片未被覆盖（如有）" +
+        (other.length ? "；" + missingText({ missing_fields: other }) : "");
+    }
+    return (action === "updated" ? "已更新采集箱记录，" : "已保存到采集箱，") + missingText(product);
+  }
   function createControl(url) {
     const wrapper = document.createElement("div");
     wrapper.className = "una-collector-wrapper";
@@ -66,7 +76,7 @@
           update("已提交，请到采集箱确认是否保存", "warning");
         } else if (result.status === "partial") {
           button.textContent = "部分成功";
-          update((result.action === "updated" ? "已更新采集箱记录，" : "已保存到采集箱，") + missingText(product), "warning");
+          update(partialMessage(product, result.action), "warning");
         } else if (result.action === "updated") {
           button.textContent = "已更新";
           update("已更新采集箱记录", "success");
