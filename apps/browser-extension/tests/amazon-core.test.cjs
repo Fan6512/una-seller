@@ -126,6 +126,26 @@ test("rejects the gallery when the lazy hero identity is different or ambiguous"
   assert.ok(ambiguous.missing_fields.includes("images"));
 });
 
+test("omits images when a thumbnail is present but the hero identity is ambiguous", () => {
+  const doc = page({
+    src: "data:image/gif;base64,R0lGODlh",
+    "data-a-dynamic-image": JSON.stringify({
+      [heroURL]: [395,395],
+      [heroURL.replace("MainA", "OtherHero")]: [395,395]
+    })
+  });
+  const query = doc.querySelectorAll;
+  const thumb = fakeImage({src: "https://m.media-amazon.com/images/I/Thumbnail._AC_US40_.jpg"});
+  doc.querySelectorAll = selector => selector === "#altImages li, #imageBlockThumbs li"
+    ? [{className: "imageThumbnail", querySelector: name => name === "img" ? thumb : null}]
+    : query(selector);
+
+  const product = core.parseProduct(doc, url);
+  assert.equal(Object.hasOwn(product, "images"), false);
+  assert.ok(product.missing_fields.includes("images"));
+  assert.equal(product.collection_status, "partial");
+});
+
 test("storage isolation failure blocks session operations and network requests", async () => {
   const vm = require("node:vm");
   const worker = fs.readFileSync(path.join(__dirname, "../background.js"), "utf8");

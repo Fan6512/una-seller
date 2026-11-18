@@ -54,8 +54,10 @@
       const candidate = { url, score, main };
       const oldIndex = index.get(info.key);
       if (oldIndex !== undefined) {
-        // Prefer the highest-res candidate, but preserve one image slot per photo.
-        if (candidate.score > selected[oldIndex].score) selected[oldIndex] = { ...candidate, main: selected[oldIndex].main || main };
+        // Preserve a verified main flag regardless of which rendition wins.
+        const previous = selected[oldIndex];
+        if (candidate.score > previous.score) selected[oldIndex] = { ...candidate, main: previous.main || main };
+        else previous.main ||= main;
       } else if (selected.length < 30) {
         index.set(info.key, selected.length);
         selected.push(candidate);
@@ -108,19 +110,20 @@
                 photo.videoId || photo.isVideo || /video/i.test(photo.mediaType || "")) continue;
             // Some pages use an unsupported CDN path for large; main still has sized source URLs.
             const key = imageInfo(photo.large)?.key || photo.physicalIdForMedia;
-            if (!key || (photo.variant === "MAIN" && key !== heroKey)) continue;
-            add(photo.large, 0);
+            const main = photo.variant === "MAIN" && key === heroKey;
+            if (!key || (photo.variant === "MAIN" && !main)) continue;
+            add(photo.large, 0, main);
             for (const [url, dims] of Object.entries(photo.main || {})) {
               if (imageInfo(url)?.key !== key || !Array.isArray(dims)) continue;
               const area = dims[0] * dims[1];
-              if (Number.isFinite(area)) add(url, area);
+              if (Number.isFinite(area)) add(url, area, main);
             }
-            if (imageInfo(photo.hiRes)?.key === key) add(photo.hiRes, 20000000);
+            if (imageInfo(photo.hiRes)?.key === key) add(photo.hiRes, 20000000, main);
           }
-          if (selected[0] && imageInfo(selected[0].url)?.key === heroKey && selected.length > 1) {
+          if (selected[0]?.main && selected.length > 1 && selected.filter(item => item.main).length === 1) {
             const hiRes = hero.getAttribute("data-old-hires") || hero.getAttribute("data-image-hires");
-            if (imageInfo(hiRes)?.key === heroKey) add(hiRes, 20000000);
-            return selected.map((item, n) => ({ url: item.url, type: n === 0 ? "main" : "additional" }));
+            if (imageInfo(hiRes)?.key === heroKey) add(hiRes, 20000000, true);
+            return selected.map(item => ({ url: item.url, type: item.main ? "main" : "additional" }));
           }
           selected.length = 0;
           index.clear();
@@ -144,7 +147,8 @@
         addDynamic(image, false);
       }
     }
-    return selected.map((item, n) => ({ url: item.url, type: n === 0 ? "main" : "additional" }));
+    if (selected.filter(item => item.main).length !== 1) return [];
+    return selected.map(item => ({ url: item.url, type: item.main ? "main" : "additional" }));
   }
   function parseProduct(doc, rawURL) {
     const sourceURL = canonicalAmazonURL(rawURL);
