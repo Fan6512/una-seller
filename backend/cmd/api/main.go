@@ -66,12 +66,19 @@ func main() {
 	var meliService *meli.Service
 	id, secret, redirect, key := os.Getenv("MELI_CLIENT_ID"), os.Getenv("MELI_CLIENT_SECRET"), os.Getenv("MELI_REDIRECT_URI"), os.Getenv("MELI_TOKEN_ENCRYPTION_KEY")
 	if strings.TrimSpace(id+secret+redirect+key) != "" {
-		if store == nil { log.Fatal("Mercado Libre OAuth needs configured database and Supabase Auth") }
+		if store == nil {
+			log.Fatal("Mercado Libre OAuth needs configured database and Supabase Auth")
+		}
 		meliService, err = meli.NewService(store.DB, meli.Config{
-			ClientID: id, ClientSecret: secret, RedirectURI: redirect,
-			TokenEncryptionKey: key, PKCE: os.Getenv("MELI_PKCE_ENABLED") == "1",
+			ClientID:           id,
+			ClientSecret:       secret,
+			RedirectURI:        redirect,
+			TokenEncryptionKey: key,
+			PKCE:               os.Getenv("MELI_PKCE_ENABLED") == "1",
 		})
-		if err != nil { log.Fatalf("invalid Mercado Libre OAuth config: %v", err) }
+		if err != nil {
+			log.Fatalf("invalid Mercado Libre OAuth config: %v", err)
+		}
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
 	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCollections(store, verifier, meliService), ReadHeaderTimeout: 5 * time.Second}
