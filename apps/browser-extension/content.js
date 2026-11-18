@@ -74,7 +74,7 @@
         if (result.status === "unverified") {
           button.textContent = "待核对";
           update("已提交，请到采集箱确认是否保存", "warning");
-        } else if (result.status === "partial") {
+        } else if (result.status === "partial" || product.collection_status === "partial") {
           button.textContent = "部分成功";
           update(partialMessage(product, result.action), "warning");
         } else if (result.action === "updated") {
