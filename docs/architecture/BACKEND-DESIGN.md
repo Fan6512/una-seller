@@ -3,13 +3,13 @@
 > 2026-11-18 · 设计基线 · 面向现有 `backend/` 与 M0→M3 路线
 > 关联：[Foundation](FOUNDATION.md) · [Delivery](DELIVERY.md) · [Domain](DOMAIN_AND_EXECUTION.md) · [ERP-MVP](ERP-MVP.md) · [M0 部署](DEPLOYMENT_M0.md) · [ADR-0006 身份边界](../decisions/0006-auth-identity-boundary.md) · [云端 Go API 部署](CLOUD_GO_API_DEPLOY.md)
 > 本文是目标结构与落地顺序，**不是已完成功能清单**。
-> 修订：2026-11-18；本 PR 代码对照基线为 `main` 的 `6b42689`，现场状态以 PR #18、#19 的执行报告及用户反馈为据；规划不等于交付。
+> 修订：2026-11-18（PR #22）；代码对照基线为 `main` 的 `6b42689`，现场状态以 PR #18、#19 的执行报告及用户反馈为据；规划不等于交付。
 
 ## 代码现状（先读）
 
 | 位置 | 实际状态 |
 | --- | --- |
-| 本 PR 对照基线 `main` `6b42689` | `/healthz`；`/api/v1/collections` 与明细接口（pgx v5、私有 `app` schema、`0001` 迁移、显式 `api migrate`）；Supabase Auth 校验（`/auth/v1/user`）已接入采集路由；`Field[T]`、`migrations.Apply` 均已在代码中。仅监听 `127.0.0.1:8787`。 |
+| 代码基线 `main` `6b42689` | `/healthz`；`/api/v1/collections` 与明细接口（pgx v5、私有 `app` schema、`0001` 迁移、显式 `api migrate`）；Supabase Auth 校验（`/auth/v1/user`）已接入采集路由；`Field[T]`、`migrations.Apply` 均已在代码中。仅监听 `127.0.0.1:8787`。 |
 | 云端部署 | PR #18 已合并；据现场执行报告，HTTPS、Supabase Auth、云端 PostgreSQL 读回、Windows 登录验收通过。用户也确认 Amazon 采集真实入库及桌面读回。PR #19 新版搜索按钮/图片、PR #20 桌面性能仍待实机回归；早期部署说明保留历史状态，不代表当前未上线。 |
 | 尚未落地 | 订单、刊登、AI 文案/图片、对象存储与异步任务（第 8–9 章）。独立插件配对令牌属未来候选，未决策、未实施。 |
 
@@ -97,7 +97,7 @@ backend/
     audit/                     # M1-D 起
   migrations/
     0001_source_collections.sql
-    0002_extension_credentials.sql
+    0002_extension_credentials.sql   # 未来候选；配对方案获批再建，非当前迁移序列
     ...
     migrate.go                 # 版本表 + advisory lock + 顺序执行
 ```
@@ -189,7 +189,7 @@ backend/
 - 本期不做 JWKS/本地验签；实测 `/auth/v1/user` 延迟或限流成为瓶颈后，再单独评估签名模式、JWKS 轮换与有界缓存。
 - 不在 Go 建 `users.email`、`password_hash`、`sessions`；`app.users` 只保留 Supabase user UUID 与创建时间，首次写入时 `INSERT ... ON CONFLICT DO NOTHING`。
 - 用户创建、禁用、密码重置都在 Supabase Dashboard 完成；Go 不提供 `create-admin`/`reset-password` 子命令，也不建邮件服务。
-- 公开注册：PR #18 曾登记 `disable_signup=false` 为待处理项；本 PR 无新证据证明已关闭。应由有权限的执行者另行核对运行配置并限制不必要的公开注册，不虚报 PASS，也不因本次文档修订重做现场部署。
+- 公开注册：PR #18 曾登记 `disable_signup=false` 为待处理项；本次修订未取得新证据证明已关闭。应由有权限的执行者另行核对运行配置并限制不必要的公开注册，不虚报 PASS，也不因本次文档修订重做现场部署。
 
 ### 6.2 浏览器插件身份现状与未来候选
 
@@ -250,7 +250,7 @@ SourceProduct（采集来源快照）
 
 | 阶段 | 新增表 | 说明 |
 | --- | --- | --- |
-| 当前 M0（本 PR 代码基线） | `users`、`source_products`、`source_product_images`、`source_product_variants` | 已合并主线；`app` 私有 schema |
+| 当前 M0（`main` `6b42689`） | `users`、`source_products`、`source_product_images`、`source_product_variants` | 已合并主线；`app` 私有 schema |
 | 未来候选（另行 ADR/PR） | `extension_pairing_codes`、`extension_tokens` | 有真实插件独立配对/吊销需求才建表；当前复用 Supabase Auth |
 | M1-A | `collection_working_drafts`、`own_products`、`own_product_variants`、`own_product_images`、`own_product_localizations` | 工作稿每来源一份；自有商品可多份 |
 | M1-B | `ai_runs`、`jobs` | 生成审计与用量；异步生成从这时开始用任务表 |
