@@ -165,8 +165,9 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
       });
     } catch (e) {
       if (active.current === controller) {
-        if (controller.signal.aborted) setNotice("已停止，可从服务端保存的位置继续。");
-        else setError(message(e));
+        if (controller.signal.aborted || (e instanceof Error && e.name === "AbortError")) {
+          setNotice("已停止。刷新后可从服务端保存的位置继续。");
+        } else setError(message(e));
       }
     } finally {
       finishSync();
@@ -203,10 +204,11 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
       {progress.partial > 0 && " " + progress.partial + " 条来自平台部分响应。"}
     </p>}
     {page?.scan_required && <p role="status">已达到常规分页上限，继续读取需要扫描模式。</p>}
-    <p className="published-sync-time">已保存同步位置 {page?.next_offset ?? "已结束"} · 最近成功 {page?.synced_at ? new Date(page.synced_at).toLocaleString() : "暂无"}</p>
+    <p className="published-sync-time">已保存同步位置 {reading || !page ? "待确认" : page.next_offset ?? "已结束"} · 最近成功 {page?.synced_at ? new Date(page.synced_at).toLocaleString() : "暂无"}</p>
     </div>
     {error && <p role="alert">{error}</p>}
-    {readError && <p role="alert">{readError}</p>}
+    {readError && <p role="alert">{readError} <button type="button" disabled={busy || reading}
+      onClick={() => { setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
     {reading && <p role="status">正在读取已保存商品…</p>}
     {!reading && page?.items.length === 0 && <p>此范围暂无已保存商品。</p>}
     {!!page?.items.length && <PublishedListingView

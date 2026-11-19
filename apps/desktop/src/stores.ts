@@ -32,7 +32,8 @@ export function listingErrorMessage(code: string, platformStatus?: number): stri
     case "listing_cursor_changed": return "同步位置已更新，请按最新位置继续";
     case "listing_busy": return "此店铺已有同步在执行，请稍后继续";
     case "listing_rate_limited": return "美客多限制请求频率，请稍后继续";
-    case "listing_timeout": return "美客多读取超时，可从已保存位置继续";
+    case "listing_timeout": return "商品请求超时，请刷新后以服务端同步位置为准";
+    case "listing_commit_unknown": return "同步提交结果待确认，请刷新后以服务端同步位置为准";
     case "listing_transport": return "美客多网络请求中断，可从已保存位置继续";
     case "listing_identity_mismatch": return "刊登归属与授权范围不一致，需要人工核实";
     case "listing_review_changed": return "待核实商品或位置已变化，请重新核实后继续";
@@ -43,19 +44,32 @@ export function listingErrorMessage(code: string, platformStatus?: number): stri
 }
 
 export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false, body?: string): Promise<T> {
-  const request = (token: string) => fetch(apiBase + path, {
-    method,
-    signal,
-    cache: "no-store",
-    headers: body === undefined ? { Authorization: "Bearer " + token } : {
-      Authorization: "Bearer " + token, "Content-Type": "application/json",
-    },
-    body,
-  });
-  let response = await request(await getAccessToken());
+  const unreadable = () => new Error(method === "POST"
+    ? "未收到可读取的同步响应，请刷新后以服务端同步位置为准"
+    : "无法读取服务端商品和同步位置，请重试读取");
+  const request = async (refresh = false) => {
+    try {
+      const token = await getAccessToken(refresh);
+      signal?.throwIfAborted();
+      return await fetch(apiBase + path, {
+        method,
+        signal,
+        cache: "no-store",
+        headers: body === undefined ? { Authorization: "Bearer " + token } : {
+          Authorization: "Bearer " + token, "Content-Type": "application/json",
+        },
+        body,
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (listing && error instanceof TypeError) throw unreadable();
+      throw error;
+    }
+  };
+  let response = await request();
   if (response.status === 401) {
     signal?.throwIfAborted();
-    response = await request(await getAccessToken(true));
+    response = await request(true);
     if (response.status === 401) {
       rejectSession();
       throw new Error("登录已过期，请重新登录");
@@ -63,7 +77,11 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   }
   if (!response.ok) {
     if (listing) {
-      const detail = await response.json().catch(() => null) as { code?: string; platform_status?: number; skipped?: number } | null;
+      const detail = await response.json().catch((error: unknown) => {
+        signal?.throwIfAborted();
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        return null;
+      }) as { code?: string; platform_status?: number; skipped?: number } | null;
       const reason = detail?.code ? listingErrorMessage(detail.code, detail.platform_status)
         : "商品请求失败（HTTP " + response.status + "）";
       throw new Error(detail?.skipped ? reason + "，该批已跳过 " + detail.skipped + " 条" : reason);
@@ -74,7 +92,13 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
     if (response.status === 409) throw new Error("Token 续签结果不确定，需要重新授权");
     throw new Error("店铺操作失败（HTTP " + response.status + "）");
   }
-  return await response.json() as T;
+  try {
+    return await response.json() as T;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (listing && !(error instanceof Error && error.name === "AbortError")) throw unreadable();
+    throw error;
+  }
 }
 
 export async function listStores(signal?: AbortSignal) {

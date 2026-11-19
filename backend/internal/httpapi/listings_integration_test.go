@@ -1,26 +1,62 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 	"github.com/Fan6512/una-seller/backend/migrations"
+	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type listingTestTransport func(*http.Request) (*http.Response, error)
 
 func (f listingTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Drop the server's COMMIT acknowledgment only, after PostgreSQL has executed it.
+type listingLostCommitConn struct {
+	net.Conn
+	commit, ack []byte
+	waiting     atomic.Bool
+	ackDropped  *atomic.Bool
+}
+
+func (c *listingLostCommitConn) Write(data []byte) (int, error) {
+	if bytes.Equal(data, c.commit) {
+		c.waiting.Store(true)
+	}
+	return c.Conn.Write(data)
+}
+
+func (c *listingLostCommitConn) Read(data []byte) (int, error) {
+	if !c.waiting.Swap(false) {
+		return c.Conn.Read(data)
+	}
+	ack := make([]byte, len(c.ack))
+	if _, err := io.ReadFull(c.Conn, ack); err != nil {
+		return 0, err
+	}
+	if !bytes.Equal(ack, c.ack) {
+		return 0, fmt.Errorf("expected a PostgreSQL COMMIT acknowledgment")
+	}
+	c.ackDropped.Store(true)
+	return 0, io.ErrUnexpectedEOF
+}
 
 func TestPublishedListingHandler(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -67,6 +103,7 @@ func TestPublishedListingHandler(t *testing.T) {
 	}
 
 	detailCode := 200
+	searchTimeout, invalidSearch := false, false
 	detailBody := `{"id":"CBT1","seller_id":678901,"site_id":"CBT","price":0,"status":"active"}`
 	ids, total := `"CBT1"`, 1
 	originalTransport := http.DefaultTransport
@@ -77,11 +114,17 @@ func TestPublishedListingHandler(t *testing.T) {
 		code, body := 200, ""
 		switch r.URL.Path {
 		case "/marketplace/users/" + seller + "/items/search":
+			if searchTimeout {
+				return nil, context.DeadlineExceeded
+			}
 			if r.URL.Query().Get("orders") != "start_time_desc" {
 				t.Error("published search did not use the fixed documented sort")
 			}
 			body = fmt.Sprintf(`{"seller_id":678901,"results":[%s],"paging":{"total":%d,"offset":%s,"limit":%s}}`,
 				ids, total, r.URL.Query().Get("offset"), r.URL.Query().Get("limit"))
+			if invalidSearch {
+				body = `{"seller_id":678901,"results":[],"paging":{}}`
+			}
 		case "/marketplace/items/CBT1":
 			code = detailCode
 			body = detailBody
@@ -228,6 +271,9 @@ func TestPublishedListingHandler(t *testing.T) {
 	if cancelResponse.Code != http.StatusRequestTimeout || !strings.Contains(cancelResponse.Body.String(), "listing_canceled") {
 		t.Fatalf("cancellation returned HTTP %d", cancelResponse.Code)
 	}
+	if after := call("GET", "", http.StatusOK, ""); !reflect.DeepEqual(after, settled) {
+		t.Fatal("cancellation changed persisted listing state")
+	}
 
 	req := httptest.NewRequest("GET", path, nil)
 	out := httptest.NewRecorder()
@@ -235,4 +281,72 @@ func TestPublishedListingHandler(t *testing.T) {
 	if out.Code != 401 {
 		t.Fatalf("unauthenticated status %d", out.Code)
 	}
+
+	detailBody = `{"id":"CBT1","seller_id":678901,"site_id":"CBT","price":0,"status":"active"}`
+	ids, total = `"CBT1"`, 3
+	call("POST", "?restart=1", http.StatusOK, "")
+	saved := call("GET", "", http.StatusOK, "")
+	if saved["next_offset"] != float64(1) {
+		t.Fatal("expected a nonzero cursor before testing a failed restart")
+	}
+	searchTimeout = true
+	call("POST", "?offset=0&restart=1", http.StatusGatewayTimeout, "listing_timeout")
+	searchTimeout = false
+	if after := call("GET", "", http.StatusOK, ""); !reflect.DeepEqual(after, saved) {
+		t.Fatal("search timeout on restart changed persisted listing state")
+	}
+	invalidSearch = true
+	call("POST", "?offset=0&restart=1", http.StatusBadGateway, "listing_invalid_response")
+	invalidSearch = false
+	if after := call("GET", "", http.StatusOK, ""); !reflect.DeepEqual(after, saved) {
+		t.Fatal("invalid search response on restart changed persisted listing state")
+	}
+
+	faultConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := (&pgproto3.Query{String: "commit"}).Encode(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack, err := (&pgproto3.CommandComplete{CommandTag: []byte("COMMIT")}).Encode(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The test pool talks only to the disposable CI database.
+	var ackDropped atomic.Bool
+	dial := faultConfig.ConnConfig.DialFunc
+	faultConfig.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dial(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return &listingLostCommitConn{Conn: conn, commit: commit, ack: ack, ackDropped: &ackDropped}, nil
+	}
+	faultDB, err := pgxpool.NewWithConfig(ctx, faultConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer faultDB.Close()
+	faultService, err := meli.NewService(faultDB, meli.Config{ClientID: "synthetic", ClientSecret: "synthetic",
+		RedirectURI: "https://example.invalid" + meli.CallbackPath, TokenEncryptionKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthyHandler := handler
+	handler = HandlerWithCollections(collectionStore, stubVerifier{id: owner}, faultService)
+	ids = `"CBT2"`
+	unknown := call("POST", "?offset=1", http.StatusBadGateway, "listing_commit_unknown")
+	handler = healthyHandler
+	if !ackDropped.Load() {
+		t.Fatal("the PostgreSQL COMMIT acknowledgment was not observed and dropped")
+	}
+	if unknown["retryable"] != false {
+		t.Fatal("an unknown commit was advertised as retryable")
+	}
+	if after := call("GET", "", http.StatusOK, ""); after["next_offset"] != float64(2) || len(after["items"].([]any)) != 2 {
+		t.Fatal("a committed batch did not advance the persisted cursor after losing its acknowledgment")
+	}
+	call("POST", "?offset=1", http.StatusConflict, "listing_cursor_changed")
 }
