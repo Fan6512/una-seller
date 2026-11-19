@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Fan6512/una-seller/backend/internal/meli"
@@ -66,6 +67,13 @@ func (a storeAPI) start(w http.ResponseWriter, r *http.Request) {
 // storeAction is a reusable ownership/status gate for store-scoped operations.
 // The platform Access Token never leaves Go, including on a successful check.
 func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
+	if store, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/published-listings"); ok && !strings.Contains(store, "/") {
+		owner, ok := a.requireOwner(w, r)
+		if ok {
+			a.publishedListings(w, r, owner, store)
+		}
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -156,4 +164,61 @@ func (a storeAPI) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("<!doctype html><html lang='zh'><meta charset='utf-8'><title>授权成功</title><h2>美客多店铺授权成功</h2><p>可以关闭此页面，返回 Una Seller 点击刷新店铺。</p></html>"))
+}
+
+func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owner, store string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	query := r.URL.Query()
+	scope := meli.ListingScope{Site: query.Get("site"), Logistic: query.Get("logistic_type")}
+	if scope.Site == "" {
+		scope.Site = "CBT"
+	}
+	offset := 0
+	if query.Has("offset") {
+		var err error
+		offset, err = strconv.Atoi(query.Get("offset"))
+		if err != nil || offset < 0 || offset > 100000 || (r.Method == http.MethodPost && offset >= 1000) {
+			writeError(w, http.StatusBadRequest, "invalid listing offset")
+			return
+		}
+	}
+	var data any
+	var err error
+	if r.Method == http.MethodGet {
+		data, err = a.service.ListPublished(r.Context(), owner, store, scope, offset)
+	} else {
+		data, err = a.service.SyncPublished(r.Context(), owner, store, scope, offset)
+	}
+	if err == nil {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, data)
+		return
+	}
+	var remote meli.ListingPlatformError
+	switch {
+	case errors.Is(err, meli.ErrStoreNotFound):
+		writeError(w, http.StatusNotFound, "store not found")
+	case errors.Is(err, meli.ErrSiteNotAuthorized):
+		writeError(w, http.StatusForbidden, "marketplace site is not verified")
+	case errors.Is(err, meli.ErrReauthorizationRequired):
+		writeError(w, http.StatusForbidden, "store needs reauthorization")
+	case errors.Is(err, meli.ErrListingTokenExpired):
+		writeError(w, http.StatusConflict, "store token expired; check connection in store management")
+	case errors.Is(err, meli.ErrRefreshUnknown):
+		writeError(w, http.StatusConflict, "store token refresh outcome unknown")
+	case errors.Is(err, meli.ErrListingBusy):
+		writeError(w, http.StatusConflict, "listing sync already running")
+	case errors.As(err, &remote):
+		if remote == http.StatusTooManyRequests {
+			writeError(w, http.StatusTooManyRequests, "Mercado Libre rate limited listing sync")
+		} else {
+			writeError(w, http.StatusBadGateway, remote.Error())
+		}
+	default:
+		writeError(w, http.StatusBadGateway, "published listings unavailable")
+	}
 }

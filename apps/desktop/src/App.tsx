@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import StoresPage from "./StoresPage";
+import PublishedListingsPage from "./PublishedListingsPage";
 import {
   apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
   type CollectionDetail, type CollectionSummary,
@@ -213,7 +214,7 @@ function LoadError({ detail, onRetry, isDetail = false }: { detail: string; onRe
 }
 
 function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () => void }) {
-  const [section, setSection] = useState<"collections" | "stores">("collections");
+  const [section, setSection] = useState<"collections" | "stores" | "published">("collections");
   const [service, setService] = useState<ServiceStatus>("checking");
   const [serviceError, setServiceError] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
@@ -365,8 +366,11 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
       <header className="topbar">
         <div className="brand"><span className="brand-mark" aria-hidden="true">U</span><span className="brand-name">Una Seller</span></div>
         <span className="topbar-divider" aria-hidden="true" />
-        <span className="topbar-label">{section === "stores" ? "店铺管理" : "商品工作台"}</span>
-        <button type="button" className="logout-action" onClick={() => setSection(section === "stores" ? "collections" : "stores")}>{section === "stores" ? "返回采集箱" : "店铺管理"}</button>
+        <nav aria-label="商品工作台">
+          <button type="button" className="logout-action" aria-pressed={section === "collections"} onClick={() => setSection("collections")}>采集箱</button>
+          <button type="button" className="logout-action" aria-pressed={section === "stores"} onClick={() => setSection("stores")}>店铺管理</button>
+          <button type="button" className="logout-action" aria-pressed={section === "published"} onClick={() => setSection("published")}>已刊登商品</button>
+        </nav>
         <div className="topbar-spacer" />
         <span className={"connection-indicator " + connectionStatus} role="status">
           <span className="connection-dot" aria-hidden="true" />
@@ -377,7 +381,7 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
       </header>
 
       <main className="main-content">
-        {section === "stores" ? <StoresPage /> : <>
+        {section === "stores" ? <StoresPage /> : section === "published" ? <PublishedListingsPage /> : <>
         <div className="page-heading">
           <div><h1>采集箱</h1><p>查看已保存的商品资料</p></div>
           <button type="button" className="refresh-button" onClick={reload} disabled={listLoading} aria-label="刷新商品列表"><Icon name="refresh" size={17} /> 刷新</button>
