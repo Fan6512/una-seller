@@ -389,7 +389,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
       <main className="main-content">
         {settings && <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />}
         {section === "stores" ? <div hidden={settings}><StoresPage /></div>
-          : section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} /></div>
+          : section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : !settings && <>
         <div className="page-heading">
           <div><h1>采集箱</h1><p>查看已保存的商品资料</p></div>

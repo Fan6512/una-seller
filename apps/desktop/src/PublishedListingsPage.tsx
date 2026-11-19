@@ -33,7 +33,9 @@ function specs(attributes?: Attribute[]) {
   return attributes?.filter((a) => a.value_name != null).map((a) => (a.name || a.id) + " " + a.value_name).join(" · ");
 }
 
-export default function PublishedListingsPage({ beginSync }: { beginSync: BeginSync }) {
+export default function PublishedListingsPage({ beginSync, installingUpdate }: {
+  beginSync: BeginSync; installingUpdate: boolean;
+}) {
   const [stores, setStores] = useState<StoreConnection[]>();
   const [storeId, setStoreId] = useState("");
   const [scope, setScope] = useState("CBT");
@@ -67,12 +69,15 @@ export default function PublishedListingsPage({ beginSync }: { beginSync: BeginS
           return <option key={value} value={value}>{market.site_id} · {market.logistic_type}</option>;
         })}
       </select></label>
-      <ListingScope key={store.id + ":" + scope} store={store.id} scope={scope} beginSync={beginSync} />
+      <ListingScope key={store.id + ":" + scope} store={store.id} scope={scope}
+        beginSync={beginSync} installingUpdate={installingUpdate} />
     </>}
   </>;
 }
 
-function ListingScope({ store, scope, beginSync }: { store: string; scope: string; beginSync: BeginSync }) {
+function ListingScope({ store, scope, beginSync, installingUpdate }: {
+  store: string; scope: string; beginSync: BeginSync; installingUpdate: boolean;
+}) {
   const [offset, setOffset] = useState(0);
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState<Page>();
@@ -172,13 +177,14 @@ function ListingScope({ store, scope, beginSync }: { store: string; scope: strin
   return <>
     <p className="page-actions">
       <button className="primary-action" type="button" onClick={() => void sync(false)}
-        disabled={busy || reading || page?.next_offset == null}>{review ? "重新核实并继续" : page?.next_offset ? "继续同步" : "同步商品"}</button>
+        disabled={installingUpdate || busy || reading || page?.next_offset == null}>{review ? "重新核实并继续" : page?.next_offset ? "继续同步" : "同步商品"}</button>
       <button type="button" onClick={() => active.current?.abort()} disabled={!busy}>停止</button>
-      <button type="button" onClick={() => void sync(true)} disabled={busy || reading || !page}>从头同步</button>
+      <button type="button" onClick={() => void sync(true)} disabled={installingUpdate || busy || reading || !page}>从头同步</button>
     </p>
+    {installingUpdate && <p role="status">正在启动更新安装，重启后可同步商品。</p>}
     {review && <p role="status">
       待核实 · {review.listing_id ? "刊登 " + review.listing_id + " · " : ""}位置 {review.offset + 1} · {reviewReasons[review.reason] ?? review.reason}{" "}
-      {review.skippable && review.listing_id && <button type="button" disabled={busy || reading} onClick={() => {
+      {review.skippable && review.listing_id && <button type="button" disabled={installingUpdate || busy || reading} onClick={() => {
         if (window.confirm("若刊登 " + review.listing_id + " 复核后仍有格式异常，将记录跳过并继续。确认吗？")) {
           void sync(false, review);
         }

@@ -48,7 +48,7 @@ export function useDesktopUpdates(activity: Activity) {
   }, [checkForUpdate]);
 
   async function download() {
-    if (!update || running.current) return;
+    if (!update || phase !== "idle" || running.current) return;
     running.current = true;
     setError("");
     setProgress({ received: 0, total: 0 });
@@ -104,7 +104,7 @@ export default function DesktopUpdates({ updates, syncCount, onLater }: {
       <h2>客户端更新</h2>
       {version && <p>当前版本 {version}</p>}
       <p className="page-actions">
-        <button type="button" disabled={busy || (!version && !error)} onClick={() => void checkForUpdate(update)}>检查更新</button>
+        <button type="button" disabled={busy || phase === "ready" || (!version && !error)} onClick={() => void checkForUpdate(update)}>检查更新</button>
       </p>
       {phase === "checking" && <p role="status">正在检查更新…</p>}
       {!version && !busy && !error && <p>此版本未启用在线更新。</p>}
