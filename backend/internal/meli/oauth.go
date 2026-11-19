@@ -36,7 +36,7 @@ type Config struct {
 	PKCE               bool
 	TokenEncryptionKey string
 	// HTTPClient is optional. A nil value uses the standard restricted client.
-	HTTPClient         *http.Client
+	HTTPClient *http.Client
 }
 
 type Service struct {
