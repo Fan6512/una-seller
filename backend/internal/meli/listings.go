@@ -21,6 +21,7 @@ const ListingBatchSize = 5
 
 var (
 	ErrListingAuthorizationChanged = errors.New("listing authorization snapshot changed")
+	ErrListingReviewChanged        = errors.New("listing review changed or cannot be skipped")
 	ErrListingCursor               = errors.New("listing cursor changed or completed")
 	ErrListingIdentity             = errors.New("marketplace listing identity mismatch")
 	ErrListingTransport            = errors.New("marketplace listing transport failed")
@@ -42,7 +43,20 @@ type ListingScope struct {
 	Logistic string
 }
 
+type ListingReview struct {
+	ListingID string `json:"listing_id,omitempty"`
+	Offset    int    `json:"offset"`
+	Reason    string `json:"reason"`
+	Skippable bool   `json:"skippable"`
+}
+
+type listingCursor struct {
+	Offset int
+	Review ListingReview
+}
+
 type ListingPage struct {
+	Review       *ListingReview    `json:"review,omitempty"`
 	Items        []json.RawMessage `json:"items"`
 	HasMore      bool              `json:"has_more"`
 	SyncedAt     *time.Time        `json:"synced_at"`
@@ -51,14 +65,16 @@ type ListingPage struct {
 }
 
 type ListingSync struct {
-	Saved        int                  `json:"saved"`
-	Processed    int                  `json:"processed"`
-	Skipped      int                  `json:"skipped"`
-	NeedsReview  int                  `json:"needs_review"`
-	Partial      int                  `json:"partial"`
-	NextOffset   *int                 `json:"next_offset"`
-	ScanRequired bool                 `json:"scan_required"`
-	Interruption *ListingInterruption `json:"interruption,omitempty"`
+	Review        *ListingReview       `json:"review,omitempty"`
+	ConfirmedSkip *ListingReview       `json:"confirmed_skip,omitempty"`
+	Saved         int                  `json:"saved"`
+	Processed     int                  `json:"processed"`
+	Skipped       int                  `json:"skipped"`
+	NeedsReview   int                  `json:"needs_review"`
+	Partial       int                  `json:"partial"`
+	NextOffset    *int                 `json:"next_offset"`
+	ScanRequired  bool                 `json:"scan_required"`
+	Interruption  *ListingInterruption `json:"interruption,omitempty"`
 }
 
 func (s *Service) listingScope(ctx context.Context, owner, store string, scope ListingScope) (tokenSnapshot, string, error) {
@@ -95,11 +111,12 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
 	}
 	page := ListingPage{Items: []json.RawMessage{}}
 	// Recheck the connection in the same SQL statement that reads its private rows.
-	rows, err := s.db.Query(ctx, `SELECT sync.synced_at, CASE WHEN sync.store_id IS NULL THEN 0 ELSE sync.next_offset END, COALESCE(sync.scan_required,false), item.details
+	rows, err := s.db.Query(ctx, `SELECT sync.synced_at, CASE WHEN sync.store_id IS NULL THEN 0 ELSE sync.next_offset END, COALESCE(sync.scan_required,false), sync.review, item.details
       FROM app.meli_store_connections c
       LEFT JOIN app.meli_listing_syncs sync ON (sync.store_id,sync.site_id,sync.logistic_type,sync.seller_id)=(c.id,$3,$4,$9)
       LEFT JOIN LATERAL (
-        SELECT details,listing_id FROM app.meli_published_listings
+        SELECT details || jsonb_strip_nulls(jsonb_build_object('detail_unavailable_at',detail_unavailable_at)) AS details, listing_id
+        FROM app.meli_published_listings
         WHERE (store_id,site_id,logistic_type)=(c.id,$3,$4)
           AND details->>'seller_id'=$9
         ORDER BY listing_id OFFSET $5 LIMIT $6
@@ -114,7 +131,7 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
 	found := false
 	for rows.Next() {
 		var detail json.RawMessage
-		if err = rows.Scan(&page.SyncedAt, &page.NextOffset, &page.ScanRequired, &detail); err != nil {
+		if err = rows.Scan(&page.SyncedAt, &page.NextOffset, &page.ScanRequired, &page.Review, &detail); err != nil {
 			return ListingPage{}, err
 		}
 		found = true
@@ -137,10 +154,17 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
 
 func (s *Service) SyncPublished(ctx context.Context, owner, store string, scope ListingScope, expected *int, restart bool) (ListingSync, error) {
 	// Leave room in the proxy's 20-second budget for validation and the final commit.
-	return s.syncPublished(ctx, owner, store, scope, expected, restart, 10*time.Second)
+	return s.syncPublished(ctx, owner, store, scope, expected, restart, "", 10*time.Second)
 }
 
-func (s *Service) syncPublished(ctx context.Context, owner, store string, scope ListingScope, expected *int, restart bool, budget time.Duration) (ListingSync, error) {
+func (s *Service) SkipPublishedReview(ctx context.Context, owner, store string, scope ListingScope, offset int, id string) (ListingSync, error) {
+	if !listingID.MatchString(id) {
+		return ListingSync{}, ErrListingReviewChanged
+	}
+	return s.syncPublished(ctx, owner, store, scope, &offset, false, id, 10*time.Second)
+}
+
+func (s *Service) syncPublished(ctx context.Context, owner, store string, scope ListingScope, expected *int, restart bool, skipID string, budget time.Duration) (ListingSync, error) {
 	readCtx, endRead := context.WithTimeout(ctx, 2*time.Second)
 	defer endRead()
 	row, seller, err := s.listingScope(readCtx, owner, store, scope)
@@ -168,25 +192,45 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 	if err != nil {
 		return ListingSync{}, err
 	}
-	offset := cursor
+	offset := cursor.Offset
 	if restart {
 		offset = 0
 	}
 	if offset < 0 || (expected != nil && *expected != offset) {
 		return ListingSync{}, ErrListingCursor
 	}
+	if skipID != "" && (!cursor.Review.Skippable || cursor.Review.ListingID != skipID || cursor.Review.Offset != offset) {
+		return ListingSync{}, ErrListingReviewChanged
+	}
 	fetchCtx, endFetch := context.WithTimeout(ctx, budget)
-	result, details, err := s.fetchListingBatch(fetchCtx, auth.AccessToken, seller, scope, offset)
+	result, details, err := s.fetchListingBatch(fetchCtx, auth.AccessToken, seller, scope, offset, skipID)
 	endFetch()
 	if ctx.Err() != nil {
 		return ListingSync{}, ctx.Err()
 	}
 	if err != nil {
-		interruption := listingInterruption(err)
-		if !restart {
-			return ListingSync{}, interruption
+		if errors.Is(err, ErrListingReviewChanged) {
+			return ListingSync{}, err
 		}
+		interruption := listingInterruption(err)
 		result = ListingSync{NextOffset: &offset, Interruption: interruption}
+		switch interruption.Code {
+		case "listing_invalid_response", "listing_identity_mismatch":
+			reason := "search_response_invalid"
+			if interruption.Code == "listing_identity_mismatch" {
+				reason = "search_identity_mismatch"
+			}
+			result.Review = &ListingReview{Offset: offset, Reason: reason}
+			result.NeedsReview = 1
+		default:
+			if !restart {
+				return ListingSync{}, interruption
+			}
+		}
+	}
+	if result.Review == nil && result.Interruption != nil && !restart &&
+		cursor.Review.Reason != "" && result.NextOffset != nil && cursor.Review.Offset == *result.NextOffset {
+		result.Review = &cursor.Review
 	}
 	// The platform budget can expire while the original request is still live.
 	writeCtx, endWrite := context.WithTimeout(ctx, 3*time.Second)
@@ -202,21 +246,24 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 
 func readListingCursor(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
-}, store string, scope ListingScope, seller string) (int, error) {
-	var cursor int
-	err := db.QueryRow(ctx, `SELECT COALESCE((
-        SELECT COALESCE(next_offset,-1) FROM app.meli_listing_syncs
-        WHERE (store_id,site_id,logistic_type,seller_id)=($1::uuid,$2,$3,$4)),0)`,
-		store, scope.Site, scope.Logistic, seller).Scan(&cursor)
+}, store string, scope ListingScope, seller string) (listingCursor, error) {
+	var cursor listingCursor
+	err := db.QueryRow(ctx, `SELECT CASE WHEN state.store_id IS NULL THEN 0 ELSE COALESCE(state.next_offset,-1) END,
+        COALESCE(state.review,'{}'::jsonb)
+        FROM (SELECT 1) AS anchor
+        LEFT JOIN app.meli_listing_syncs state ON
+          (state.store_id,state.site_id,state.logistic_type,state.seller_id)=($1::uuid,$2,$3,$4)`,
+		store, scope.Site, scope.Logistic, seller).Scan(&cursor.Offset, &cursor.Review)
 	return cursor, err
 }
 
 type listingWrite struct {
-	detail  json.RawMessage
-	partial bool
+	detail        json.RawMessage
+	partial       bool
+	unavailableAt *time.Time
 }
 
-func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, scope ListingScope, offset int) (ListingSync, map[string]listingWrite, error) {
+func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, scope ListingScope, offset int, skipID string) (ListingSync, map[string]listingWrite, error) {
 	var search struct {
 		Seller json.Number `json:"seller_id"`
 		IDs    []string    `json:"results"`
@@ -227,7 +274,7 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 		} `json:"paging"`
 	}
 	limit := min(ListingBatchSize, 1000-offset)
-	query := url.Values{"offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(limit)}}
+	query := url.Values{"offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(limit)}, "orders": {"start_time_desc"}}
 	_, err := s.listingGET(ctx, token, "/marketplace/users/"+seller+"/items/search?"+query.Encode(), &search)
 	if err != nil {
 		return ListingSync{}, nil, err
@@ -239,6 +286,10 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 	if search.IDs == nil || p.Total == nil || *p.Total < 0 || p.Offset == nil || *p.Offset != offset ||
 		p.Limit == nil || *p.Limit != limit || len(search.IDs) > limit || (len(search.IDs) == 0 && offset < *p.Total) {
 		return ListingSync{}, nil, ErrListingResponse
+	}
+
+	if skipID != "" && (len(search.IDs) == 0 || search.IDs[0] != skipID) {
+		return ListingSync{}, nil, ErrListingReviewChanged
 	}
 
 	var result ListingSync
@@ -257,25 +308,30 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 		if result.Interruption != nil {
 			break
 		}
-		var item listingDetail
-		status, fetchErr := s.listingGET(ctx, token, "/marketplace/items/"+id+"?include_attributes=all", &item)
+		item, reason, fetchErr := s.fetchListingDetail(ctx, token, seller, scope, id)
 		if errors.Is(fetchErr, ListingPlatformError(http.StatusNotFound)) {
+			checkedAt := time.Now()
+			details[id] = listingWrite{unavailableAt: &checkedAt}
 			result.Skipped++
 			result.Processed++
 			continue
 		}
-		if fetchErr == nil && (item.ID != id || item.Site != scope.Site || item.Seller.String() != seller ||
-			(scope.Logistic != "" && item.Logistic != "" && item.Logistic != scope.Logistic)) {
-			fetchErr = ErrListingIdentity
-		}
 		if fetchErr != nil {
-			result.Interruption = listingInterruption(fetchErr)
-			if result.Interruption.Code == "listing_identity_mismatch" || result.Interruption.Code == "listing_invalid_response" {
+			if reason != "" {
+				review := &ListingReview{ListingID: id, Offset: offset + result.Processed,
+					Reason: reason, Skippable: reason == "detail_field_format"}
+				if skipID == id && result.Processed == 0 && review.Skippable {
+					result.ConfirmedSkip = review
+					result.Skipped++
+					result.Processed++
+					continue
+				}
+				result.Review = review
 				result.NeedsReview++
 			}
+			result.Interruption = listingInterruption(fetchErr)
 			break
 		}
-		item.Partial = status == http.StatusPartialContent
 		detail, err := json.Marshal(item)
 		if err != nil {
 			return ListingSync{}, nil, err
@@ -283,8 +339,10 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 		details[id] = listingWrite{detail: detail, partial: item.Partial}
 		result.Processed++
 	}
-	result.Saved = len(details)
 	for _, detail := range details {
+		if detail.unavailableAt == nil {
+			result.Saved++
+		}
 		if detail.partial {
 			result.Partial++
 		}
@@ -300,7 +358,7 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 	return result, details, nil
 }
 
-func (s *Service) saveListingBatch(ctx context.Context, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor int, result ListingSync, details map[string]listingWrite) error {
+func (s *Service) saveListingBatch(ctx context.Context, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor listingCursor, result ListingSync, details map[string]listingWrite) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -331,6 +389,15 @@ func (s *Service) saveListingBatch(ctx context.Context, owner, store string, sco
 		return ErrListingCursor
 	}
 	for id, item := range details {
+		if item.unavailableAt != nil {
+			_, err = tx.Exec(ctx, `UPDATE app.meli_published_listings SET detail_unavailable_at=$6
+              WHERE (store_id,site_id,logistic_type,listing_id)=($1::uuid,$2,$3,$4)
+                AND details->>'seller_id'=$5`, store, scope.Site, scope.Logistic, id, seller, item.unavailableAt)
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		detail := item.detail
 		if item.partial {
 			var previous json.RawMessage
@@ -350,18 +417,22 @@ func (s *Service) saveListingBatch(ctx context.Context, owner, store string, sco
 		_, err = tx.Exec(ctx, `INSERT INTO app.meli_published_listings
             (store_id,site_id,logistic_type,listing_id,details) VALUES ($1::uuid,$2,$3,$4,$5)
             ON CONFLICT (store_id,site_id,logistic_type,listing_id)
-            DO UPDATE SET details=EXCLUDED.details`, store, scope.Site, scope.Logistic, id, detail)
+            DO UPDATE SET details=EXCLUDED.details, detail_unavailable_at=NULL`, store, scope.Site, scope.Logistic, id, detail)
 		if err != nil {
 			return err
 		}
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO app.meli_listing_syncs AS state
-      (store_id,site_id,logistic_type,seller_id,synced_at,next_offset,scan_required)
-      VALUES ($1::uuid,$2,$3,$4,CASE WHEN $5 THEN now() END,$6,$7)
+      (store_id,site_id,logistic_type,seller_id,synced_at,next_offset,scan_required,review,last_skipped_review)
+      VALUES ($1::uuid,$2,$3,$4,CASE WHEN $5 THEN now() END,$6,$7,$8,
+        NULLIF($9::jsonb,'null'::jsonb) || jsonb_build_object('confirmed_at',now()))
       ON CONFLICT (store_id,site_id,logistic_type) DO UPDATE SET
         seller_id=EXCLUDED.seller_id, next_offset=EXCLUDED.next_offset, scan_required=EXCLUDED.scan_required,
+        review=EXCLUDED.review,
+        last_skipped_review=COALESCE(EXCLUDED.last_skipped_review,
+          CASE WHEN state.seller_id=EXCLUDED.seller_id THEN state.last_skipped_review END),
         synced_at=COALESCE(EXCLUDED.synced_at, CASE WHEN state.seller_id=EXCLUDED.seller_id THEN state.synced_at END)`,
-		store, scope.Site, scope.Logistic, seller, result.Saved > 0 || result.Interruption == nil, result.NextOffset, result.ScanRequired)
+		store, scope.Site, scope.Logistic, seller, result.Saved > 0 || result.Interruption == nil, result.NextOffset, result.ScanRequired, result.Review, result.ConfirmedSkip)
 	if err != nil {
 		return err
 	}
@@ -479,6 +550,52 @@ func listingEntryID(entry any) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func (s *Service) fetchListingDetail(ctx context.Context, token, seller string, scope ListingScope, id string) (listingDetail, string, error) {
+	var body json.RawMessage
+	status, err := s.listingGET(ctx, token, "/marketplace/items/"+id+"?include_attributes=all", &body)
+	if errors.Is(err, ErrListingResponse) {
+		return listingDetail{}, "detail_payload_unreadable", err
+	}
+	if err != nil {
+		return listingDetail{}, "", err
+	}
+	// Verify identity independently of the rest of the payload before classifying a skippable error.
+	var identity struct {
+		ID       string      `json:"id"`
+		Site     string      `json:"site_id"`
+		Seller   json.Number `json:"seller_id"`
+		Logistic string      `json:"user_logistic_type"`
+	}
+	if json.Unmarshal(body, &identity) != nil || identity.ID != id || identity.Site != scope.Site ||
+		identity.Seller.String() != seller || (scope.Logistic != "" && identity.Logistic != "" && identity.Logistic != scope.Logistic) {
+		return listingDetail{}, "detail_identity_mismatch", ErrListingIdentity
+	}
+	var item listingDetail
+	if json.Unmarshal(body, &item) != nil || !validDetailFieldShapes(item) {
+		return listingDetail{}, "detail_field_format", ErrListingResponse
+	}
+	item.Partial = status == http.StatusPartialContent
+	return item, "", nil
+}
+
+func validDetailFieldShapes(item listingDetail) bool {
+	fields := []struct {
+		raw   json.RawMessage
+		first string
+	}{
+		{item.Price, "-0123456789"}, {item.Stock, "-0123456789"},
+		{item.Currency, "\""}, {item.SKU, "\""}, {item.Pictures, "["},
+		{item.Attributes, "["}, {item.Variations, "["}, {item.Markets, "["},
+	}
+	for _, field := range fields {
+		value := bytes.TrimSpace(field.raw)
+		if len(value) > 0 && !bytes.Equal(value, []byte("null")) && !strings.ContainsRune(field.first, rune(value[0])) {
+			return false
+		}
+	}
+	return true
 }
 
 type listingDetail struct {

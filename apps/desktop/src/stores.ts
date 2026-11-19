@@ -33,17 +33,22 @@ export function listingErrorMessage(code: string, platformStatus?: number): stri
     case "listing_timeout": return "美客多读取超时，可从已保存位置继续";
     case "listing_transport": return "美客多网络请求中断，可从已保存位置继续";
     case "listing_identity_mismatch": return "刊登归属与授权范围不一致，需要人工核实";
+    case "listing_review_changed": return "待核实商品或位置已变化，请重新核实后继续";
+    case "listing_canceled": return "已停止读取，可从已保存位置继续";
     case "listing_invalid_response": return "美客多返回了无法识别的刊登数据，需要人工核实";
     default: return platformStatus ? "美客多商品请求失败（HTTP " + platformStatus + "）" : "商品请求失败";
   }
 }
 
-export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false): Promise<T> {
+export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false, body?: string): Promise<T> {
   const request = (token: string) => fetch(apiBase + path, {
     method,
     signal,
     cache: "no-store",
-    headers: { Authorization: "Bearer " + token },
+    headers: body === undefined ? { Authorization: "Bearer " + token } : {
+      Authorization: "Bearer " + token, "Content-Type": "application/json",
+    },
+    body,
   });
   let response = await request(await getAccessToken());
   if (response.status === 401) {

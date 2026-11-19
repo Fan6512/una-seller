@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -180,7 +183,8 @@ func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owne
 	}
 	offset := 0
 	var expected *int
-	restart := r.Method == http.MethodPost && query.Get("restart") == "1"
+	restartValue := query.Get("restart")
+	restart := r.Method == http.MethodPost && restartValue == "1"
 	if query.Has("offset") {
 		value, err := strconv.Atoi(query.Get("offset"))
 		if err != nil || value < 0 || value > 100000 || (r.Method == http.MethodPost && value >= 1000) {
@@ -189,9 +193,24 @@ func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owne
 		}
 		offset, expected = value, &value
 	}
-	if query.Has("restart") && (!restart || (expected != nil && offset != 0)) {
+	if restartValue != "" && restartValue != "0" && (!restart || (expected != nil && offset != 0)) {
 		writeListingError(w, http.StatusBadRequest, "listing_offset", "invalid listing restart", nil, meli.ListingSync{})
 		return
+	}
+	var skip struct {
+		ListingID string `json:"listing_id"`
+	}
+	skipRequested := query.Has("skip_invalid")
+	if skipRequested {
+		if r.Method != http.MethodPost || query.Get("skip_invalid") != "1" || restart || expected == nil {
+			writeListingError(w, http.StatusBadRequest, "listing_review_invalid", "invalid listing review confirmation", nil, meli.ListingSync{})
+			return
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1024))
+		if err != nil || json.Unmarshal(body, &skip) != nil || skip.ListingID == "" {
+			writeListingError(w, http.StatusBadRequest, "listing_review_invalid", "invalid listing review confirmation", nil, meli.ListingSync{})
+			return
+		}
 	}
 	var err error
 	var result meli.ListingSync
@@ -203,18 +222,28 @@ func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owne
 			return
 		}
 	} else {
-		result, err = a.service.SyncPublished(r.Context(), owner, store, scope, expected, restart)
+		if skipRequested {
+			result, err = a.service.SkipPublishedReview(r.Context(), owner, store, scope, offset, skip.ListingID)
+		} else {
+			result, err = a.service.SyncPublished(r.Context(), owner, store, scope, expected, restart)
+		}
 		if err == nil {
 			writeJSON(w, http.StatusOK, result)
 			return
 		}
 	}
-	if r.Context().Err() != nil {
-		return
+	if contextErr := r.Context().Err(); contextErr != nil {
+		err = contextErr
 	}
 	status, code, message := http.StatusBadGateway, "listing_unavailable", "published listings unavailable"
 	var interruption *meli.ListingInterruption
 	switch {
+	case errors.Is(err, context.Canceled):
+		status, code, message = http.StatusRequestTimeout, "listing_canceled", "listing request canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		status, code, message = http.StatusGatewayTimeout, "listing_timeout", "listing request timed out"
+	case errors.Is(err, meli.ErrListingReviewChanged):
+		status, code, message = http.StatusConflict, "listing_review_changed", "listing review changed or cannot be skipped"
 	case errors.Is(err, meli.ErrStoreNotFound):
 		status, code, message = http.StatusNotFound, "listing_store_missing", "store not found"
 	case errors.Is(err, meli.ErrSiteNotAuthorized):
@@ -254,6 +283,9 @@ func writeListingError(w http.ResponseWriter, status int, code, message string, 
 		response["processed"] = result.Processed
 		response["skipped"] = result.Skipped
 		response["needs_review"] = result.NeedsReview
+		if result.Review != nil {
+			response["review"] = result.Review
+		}
 	}
 	writeJSON(w, status, response)
 }

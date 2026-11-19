@@ -18,5 +18,11 @@ CREATE TABLE IF NOT EXISTS app.meli_listing_syncs (
     PRIMARY KEY (store_id, site_id, logistic_type)
 );
 
+ALTER TABLE app.meli_published_listings
+    ADD COLUMN IF NOT EXISTS detail_unavailable_at timestamptz;
+ALTER TABLE app.meli_listing_syncs
+    ADD COLUMN IF NOT EXISTS review jsonb,
+    ADD COLUMN IF NOT EXISTS last_skipped_review jsonb;
+
 ALTER TABLE app.meli_published_listings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.meli_listing_syncs ENABLE ROW LEVEL SECURITY;

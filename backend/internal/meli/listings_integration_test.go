@@ -217,7 +217,7 @@ func TestPublishedListingsTimeoutAndCancellation(t *testing.T) {
 			defer server.Close()
 			s.apiURL = server.URL
 			scope := ListingScope{Site: "CBT"}
-			result, err := s.syncPublished(ctx, owner, store, scope, nil, false, time.Second)
+			result, err := s.syncPublished(ctx, owner, store, scope, nil, false, "", time.Second)
 			if cancelRequest {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancellation: %v", err)
