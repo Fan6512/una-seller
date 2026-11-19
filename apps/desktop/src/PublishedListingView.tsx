@@ -37,8 +37,9 @@ function getFamily(item: Listing): { key: string; id?: string } {
 }
 
 function getSKU(item: Listing, variation?: Variation): string {
-  const attrs = variation?.attributes || item.attributes || [];
-  return variation?.seller_custom_field || attrs.find((a) => a.id === "SELLER_SKU")?.value_name
+  return variation?.seller_custom_field
+    || variation?.attributes?.find((a) => a.id === "SELLER_SKU")?.value_name
+    || item.attributes?.find((a) => a.id === "SELLER_SKU")?.value_name
     || item.seller_custom_field || "SKU 未返回";
 }
 
@@ -124,7 +125,7 @@ function Detail({ group, selected, site }: { group: Group; selected: Listing; si
     <header className="published-detail-header">
       <div><span className="published-eyebrow">{site} · 已刊登商品</span>
         <h2>{selected.family_name || selected.title || selected.id}</h2>
-        <p>Family ID：{group.familyId || "平台未返回"} · 当前可见 {group.members.length} 条刊登</p>
+        <p>{group.key.startsWith("siteless-family:") ? "Siteless Family ID" : "Family ID"}：{group.familyId || "平台未返回"} · 当前可见 {group.members.length} 条刊登</p>
       </div>
       <span className={"published-state " + (selected.status === "active" ? "is-active" : "")}>{statusName(selected.status)}</span>
     </header>
@@ -223,14 +224,15 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
         <ul className="published-item-list">
           {groups.map((group) => {
             const item = group.members[0];
+            const cover = thumb(item);
             return <li key={group.key}><button className={"published-item " + (group === active ? "selected" : "")}
               aria-pressed={group === active} onClick={() => onSelect(item.id)} type="button">
-              <span className="published-item-image">{thumb(item)
-                ? <img src={thumb(item)} alt="" loading="lazy" referrerPolicy="no-referrer" />
+              <span className="published-item-image">{cover
+                ? <img src={cover} alt="" loading="lazy" referrerPolicy="no-referrer" />
                 : <span>暂无图片</span>}</span>
               <span className="published-item-info">
                 <strong title={item.title || item.id}>{item.family_name || item.title || item.id}</strong>
-                <small>{group.familyId ? "Family " + group.familyId + " · " + group.members.length + " 条刊登"
+                <small>{group.familyId ? (group.key.startsWith("siteless-family:") ? "Siteless Family " : "Family ") + group.familyId + " · " + group.members.length + " 条刊登"
                   : "刊登 " + item.id}</small>
                 <span className="published-item-bottom"><em>{statusName(item.status)}</em><b>{priceName(item)}</b></span>
               </span>

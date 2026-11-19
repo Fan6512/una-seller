@@ -18,7 +18,7 @@ const pageSize = 20;
 type BeginSync = () => (() => void) | undefined;
 
 function message(error: unknown) {
-  if (error instanceof TypeError || (error instanceof Error && error.message === "Failed to fetch")) {
+  if (error instanceof Error && /Failed to fetch/i.test(error.message)) {
     return "网络请求未完成，已保存的商品不会丢失。可检查网络后继续同步。";
   }
   return error instanceof Error ? error.message : "无法读取已刊登商品";
