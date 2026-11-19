@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}
+  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}-${{ inputs.signed_smoke && 'signed-smoke' || 'default' }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:

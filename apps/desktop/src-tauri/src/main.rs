@@ -8,7 +8,13 @@ fn desktop_update_version(app: tauri::AppHandle) -> Option<String> {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            if desktop_update_version(app.handle().clone()).is_some() {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![desktop_update_version])
         .run(tauri::generate_context!())
         .expect("failed to start Una Seller");
