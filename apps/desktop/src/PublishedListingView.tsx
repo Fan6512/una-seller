@@ -73,9 +73,9 @@ function skuRows(items: Listing[]): SkuRow[] {
   });
 }
 
+const STATUS_LABELS: Record<string, string> = { active: "已发布", paused: "已暂停", closed: "已关闭", under_review: "审核中" };
 function statusName(status?: string): string {
-  const names: Record<string, string> = { active: "已发布", paused: "已暂停", closed: "已关闭", under_review: "审核中" };
-  return status ? names[status] || status : "状态未返回";
+  return status ? STATUS_LABELS[status] || status : "状态未返回";
 }
 
 function priceName(item: Listing): string {

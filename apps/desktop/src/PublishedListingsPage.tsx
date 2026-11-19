@@ -17,6 +17,8 @@ const emptyProgress: Progress = { processed: 0, saved: 0, skipped: 0, needs_revi
 const pageSize = 20;
 type BeginSync = () => (() => void) | undefined;
 
+const SITE_LABELS: Record<string, string> = { MLM: "墨西哥 MX", MLB: "巴西 BR", MLA: "阿根廷 AR", MLC: "智利 CL", MCO: "哥伦比亚 CO" };
+
 function message(error: unknown) {
   if (error instanceof Error && /Failed to fetch/i.test(error.message)) {
     return "网络请求未完成，已保存的商品不会丢失。可检查网络后继续同步。";
@@ -49,7 +51,6 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
     ? store.marketplaces.filter((market) => market.site_id && market.logistic_type) : [];
   const scopeValue = markets.some((market) => market.site_id + ":" + market.logistic_type === scope)
     ? scope : markets[0] ? markets[0].site_id + ":" + markets[0].logistic_type : "";
-  const siteLabels: Record<string, string> = { MLM: "墨西哥 MX", MLB: "巴西 BR", MLA: "阿根廷 AR", MLC: "智利 CL", MCO: "哥伦比亚 CO" };
   return <div className="published-page">
     <div className="page-heading">
       <div><h1>已刊登商品</h1><p>按站点管理已同步的商品与 SKU</p></div>
@@ -68,7 +69,7 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
           <select value={scopeValue} onChange={(event) => setScope(event.target.value)} disabled={markets.length === 0}>
             {markets.map((market) => {
               const value = market.site_id + ":" + market.logistic_type;
-              return <option key={value} value={value}>{siteLabels[market.site_id] || market.site_id} · {market.logistic_type}</option>;
+              return <option key={value} value={value}>{SITE_LABELS[market.site_id] || market.site_id} · {market.logistic_type}</option>;
             })}
           </select>
         </label>
