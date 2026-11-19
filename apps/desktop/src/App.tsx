@@ -3,6 +3,7 @@ import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import StoresPage from "./StoresPage";
 import PublishedListingsPage from "./PublishedListingsPage";
+import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import {
   apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
   type CollectionDetail, type CollectionSummary,
@@ -213,8 +214,12 @@ function LoadError({ detail, onRetry, isDetail = false }: { detail: string; onRe
   );
 }
 
-function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () => void }) {
+function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }: {
+  email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
+  beginSync: () => (() => void) | undefined; syncCount: number;
+}) {
   const [section, setSection] = useState<"collections" | "stores" | "published">("collections");
+  const [settings, setSettings] = useState(false);
   const [service, setService] = useState<ServiceStatus>("checking");
   const [serviceError, setServiceError] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
@@ -367,9 +372,10 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
         <div className="brand"><span className="brand-mark" aria-hidden="true">U</span><span className="brand-name">Una Seller</span></div>
         <span className="topbar-divider" aria-hidden="true" />
         <nav aria-label="商品工作台">
-          <button type="button" className="logout-action" aria-pressed={section === "collections"} onClick={() => setSection("collections")}>采集箱</button>
-          <button type="button" className="logout-action" aria-pressed={section === "stores"} onClick={() => setSection("stores")}>店铺管理</button>
-          <button type="button" className="logout-action" aria-pressed={section === "published"} onClick={() => setSection("published")}>已刊登商品</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { setSettings(false); setSection("collections"); }}>采集箱</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "stores"} onClick={() => { setSettings(false); setSection("stores"); }}>店铺管理</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { setSettings(false); setSection("published"); }}>已刊登商品</button>
+          <button type="button" className="logout-action" aria-pressed={settings} onClick={() => setSettings(true)}>{updates.update ? "设置 · 有更新" : "设置"}</button>
         </nav>
         <div className="topbar-spacer" />
         <span className={"connection-indicator " + connectionStatus} role="status">
@@ -381,7 +387,10 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
       </header>
 
       <main className="main-content">
-        {section === "stores" ? <StoresPage /> : section === "published" ? <PublishedListingsPage /> : <>
+        {settings && <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />}
+        {section === "stores" ? <div hidden={settings}><StoresPage /></div>
+          : section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+          : !settings && <>
         <div className="page-heading">
           <div><h1>采集箱</h1><p>查看已保存的商品资料</p></div>
           <button type="button" className="refresh-button" onClick={reload} disabled={listLoading} aria-label="刷新商品列表"><Icon name="refresh" size={17} /> 刷新</button>
@@ -456,6 +465,15 @@ function CollectionWorkspace({ email, onLogout }: { email: string; onLogout: () 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [restoring, setRestoring] = useState(true);
+  const activity = useRef({ syncs: 0, installing: false });
+  const [syncCount, setSyncCount] = useState(0);
+  const updates = useDesktopUpdates(activity);
+
+  function beginSync() {
+    if (activity.current.installing) return;
+    setSyncCount(++activity.current.syncs);
+    return () => setSyncCount(--activity.current.syncs);
+  }
 
   useEffect(() => {
     let active = true;
@@ -476,7 +494,8 @@ export default function App() {
     return <div className="login-page"><div className="loading-state" role="status"><span className="spinner" />正在恢复登录…</div></div>;
   }
   if (!session) return <Login onSignedIn={setSession} />;
-  return <CollectionWorkspace key={session.user.id} email={session.user.email} onLogout={() => {
+  return <CollectionWorkspace key={session.user.id} email={session.user.email}
+    updates={updates} beginSync={beginSync} syncCount={syncCount} onLogout={() => {
     setSession(null);
     void signOut();
   }} />;
