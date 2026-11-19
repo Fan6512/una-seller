@@ -20,6 +20,8 @@ export type StoreConnection = {
 
 export function listingErrorMessage(code: string, platformStatus?: number): string {
   switch (code) {
+    case "category_invalid": return "类目 ID 与当前站点不匹配";
+    case "category_unavailable": return "无法读取该类目的平台属性规则，请核对分类或稍后重试";
     case "listing_store_missing": return "店铺不存在或无权访问";
     case "listing_site_unverified": return "该站点尚未验证";
     case "listing_reauthorization": return "此店铺需要重新授权";

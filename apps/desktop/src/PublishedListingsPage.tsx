@@ -210,7 +210,7 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     {reading && <p role="status">正在读取已保存商品…</p>}
     {!reading && page?.items.length === 0 && <p>此范围暂无已保存商品。</p>}
     {!!page?.items.length && <PublishedListingView
-      items={page.items} selectedId={selectedId} onSelect={setSelectedId} site={site}
+      items={page.items} selectedId={selectedId} onSelect={setSelectedId} site={site} logistic={logistic} store={store}
     />}
     {(offset > 0 || page?.has_more) && <p className="page-actions">
       <button type="button" disabled={reading || offset === 0} onClick={() => setOffset(offset - pageSize)}>上一页</button>

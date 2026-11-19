@@ -1,0 +1,325 @@
+import { useEffect, useMemo, useState } from "react";
+import { storeRequest } from "./stores";
+import type { Listing } from "./PublishedListingView";
+
+type Choice = { id?: string | number; name?: string };
+type Rule = {
+  id: string; name: string; value_type?: string; value_max_length?: number;
+  tags?: Record<string, boolean>; values?: Choice[];
+  attribute_group_id?: string; attribute_group_name?: string; allowed_units?: unknown;
+};
+type RulesResponse = { category_id: string; attributes: Rule[]; path?: { id: string; name: string }[] };
+type Draft = {
+  category_id: string;
+  attributes: Record<string, string>;
+  title: string; price: string; quantity: string; description: string;
+};
+type Props = { listing: Listing; site: string; logistic: string; store: string; members: Listing[] };
+
+const defaultLabel = "未返回";
+// Read-only public category metadata; keep cache small and short-lived.
+const CATEGORY_RULE_TTL_MS = 3 * 60 * 1000;
+const CATEGORY_RULE_MAX_ENTRIES = 32;
+const categoryRulesCache = new Map<string, { payload: RulesResponse; expiresAt: number }>();
+function getCachedRules(key: string): RulesResponse | undefined {
+  const cached = categoryRulesCache.get(key);
+  if (!cached) return;
+  if (cached.expiresAt <= Date.now()) { categoryRulesCache.delete(key); return; }
+  return cached.payload;
+}
+function rememberRules(key: string, payload: RulesResponse): void {
+  categoryRulesCache.delete(key);
+  if (categoryRulesCache.size >= CATEGORY_RULE_MAX_ENTRIES) {
+    const oldestKey = categoryRulesCache.keys().next().value;
+    if (oldestKey !== undefined) categoryRulesCache.delete(oldestKey);
+  }
+  categoryRulesCache.set(key, { payload, expiresAt: Date.now() + CATEGORY_RULE_TTL_MS });
+}
+const unitField = /^(PACKAGE_(WEIGHT|HEIGHT|LENGTH|WIDTH)|WEIGHT|HEIGHT|LENGTH|WIDTH)$/;
+function initialDraft(item: Listing): Draft {
+  return {
+    category_id: item.category_id || "",
+    attributes: Object.fromEntries((item.attributes || []).filter((a) => a.id && a.value_name != null)
+      .map((a) => [a.id, String(a.value_name)])),
+    title: item.title || "",
+    price: item.price == null ? "" : String(item.price),
+    quantity: item.available_quantity == null ? "" : String(item.available_quantity),
+    description: item.description || "",
+  };
+}
+function keyFor(store: string, site: string, logistic: string, item: Listing): string {
+  return "una-seller:published-draft:v1:" + [store, site, logistic, item.id].join(":");
+}
+function loadDraft(key: string, item: Listing): Draft {
+  const base = initialDraft(item);
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return base;
+    const saved = JSON.parse(raw) as Partial<Draft>;
+    if (!saved || typeof saved !== "object" || typeof saved.category_id !== "string" ||
+        typeof saved.title !== "string" || typeof saved.price !== "string" ||
+        typeof saved.quantity !== "string" || typeof saved.description !== "string" ||
+        !saved.attributes || typeof saved.attributes !== "object" || Array.isArray(saved.attributes)) return base;
+    const attributes = Object.fromEntries(Object.entries(saved.attributes)
+      .filter(([id, value]) => /^[A-Z0-9_]{1,80}$/.test(id) && typeof value === "string"));
+    return { ...base, ...saved, attributes: { ...base.attributes, ...attributes } };
+  } catch { return base; }
+}
+function normalizedChoices(rule: Rule): Choice[] {
+  return (rule.values || []).filter((v) => v && v.name != null);
+}
+function ruleRequired(rule: Rule): boolean { return rule.tags?.required === true; }
+function currentValue(draft: Draft, rule: Rule): string { return draft.attributes[rule.id] || ""; }
+function isFixed(rule: Rule): boolean { return rule.tags?.fixed === true || rule.tags?.variation_attribute === true; }
+
+function Field({ label, value }: { label: string; value?: string | number | null }) {
+  return <div className="published-field"><span>{label}</span><strong>{value == null || value === "" ? defaultLabel : value}</strong></div>;
+}
+function AttributeInput({ rule, value, change }: { rule: Rule; value: string; change: (v: string) => void }) {
+  const choices = normalizedChoices(rule);
+  const locked = isFixed(rule) || rule.tags?.hidden === true;
+  if (choices.length > 0) {
+    return <select disabled={locked} value={value} onChange={(e) => change(e.target.value)}>
+      <option value="">请选择</option>
+      {choices.map((choice, i) => <option key={String(choice.id ?? i)} value={choice.name || ""}>{choice.name}</option>)}
+      {value && !choices.some((v) => v.name === value) && <option value={value}>{value}（原始值）</option>}
+    </select>;
+  }
+  return <input disabled={locked} type={rule.value_type === "number" ? "number" : "text"}
+    maxLength={rule.value_max_length && rule.value_max_length > 0 ? rule.value_max_length : undefined}
+    value={value} onChange={(e) => change(e.target.value)}
+    placeholder={rule.value_type === "number_unit" ? "数值与单位，例如 10 kg" : "按真实产品资料填写"}/>;
+}
+function classify(rule: Rule): string {
+  if (ruleRequired(rule)) return "必填";
+  if (rule.tags?.conditional_required) return "条件必填 · 待平台判断";
+  return "选填";
+}
+function AttributeGroup({ title, fields, draft, onChange }: {
+  title: string; fields: Rule[]; draft: Draft; onChange: (id: string, value: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? fields : fields.filter((a) =>
+    ruleRequired(a) || a.tags?.conditional_required || Boolean(currentValue(draft, a))).slice(0, 18);
+  return <div className="published-attr-group">
+    <div className="published-attr-heading"><strong>{title}</strong><small>{fields.length} 项属性</small></div>
+    <div className="published-edit-grid">
+      {visible.map((rule) => <label className="published-edit-field" key={rule.id}>
+        <span>{rule.name || rule.id}{ruleRequired(rule) && <b className="published-required"> *</b>}</span>
+        <AttributeInput rule={rule} value={currentValue(draft, rule)} change={(v) => onChange(rule.id, v)}/>
+        <small>{classify(rule)}{isFixed(rule) ? " · 固定或 SKU 级属性，不在此编辑" : ""}
+          {rule.value_max_length ? " · 最长 " + rule.value_max_length + " 字符" : ""}</small>
+      </label>)}
+    </div>
+    {expanded
+      ? <button type="button" className="published-inline-action"
+          onClick={() => setExpanded(false)}>收起选填属性</button>
+      : fields.length > visible.length && <button type="button" className="published-inline-action"
+          onClick={() => setExpanded(true)}>显示其余 {fields.length - visible.length} 项选填属性</button>}
+  </div>;
+}
+export default function PublishedListingEditor({ listing, site, logistic, store, members }: Props) {
+  const localKey = keyFor(store, site, logistic, listing);
+  const [draft, setDraft] = useState<Draft>(() => loadDraft(localKey, listing));
+  const [saved, setSaved] = useState("");
+  const [rules, setRules] = useState<Rule[] | null>(null);
+  const [categoryPath, setCategoryPath] = useState<string[]>([]);
+  const [rulesError, setRulesError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    setDraft(loadDraft(localKey, listing)); setSaved("");
+  }, [localKey]);
+  const category = draft.category_id.trim();
+  const [settledCategory, setSettledCategory] = useState(category);
+  const validCategory = new RegExp("^" + site + "[0-9]{1,15}$").test(category);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettledCategory(category), 500);
+    return () => clearTimeout(timer);
+  }, [category]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setRules(null); setCategoryPath([]); setRulesError(""); setLoading(false);
+    if (!validCategory || settledCategory !== category) return () => controller.abort();
+    const cacheKey = [store, site, logistic, category].join(":");
+    const applyRules = (response: RulesResponse) => {
+      setRules(response.attributes.filter((r) => r && /^[A-Z0-9_]+$/.test(r.id)));
+      setCategoryPath((response.path || []).filter((p) => p?.name).map((p) => p.name));
+    };
+    const cached = getCachedRules(cacheKey);
+    if (cached) {
+      applyRules(cached);
+      return () => controller.abort();
+    }
+    setLoading(true);
+    const path = "/api/v1/stores/" + encodeURIComponent(store) + "/category-attributes?" +
+      new URLSearchParams({ site, logistic_type: logistic, category_id: category }).toString();
+    storeRequest<RulesResponse>(path, "GET", controller.signal, true).then((response) => {
+      if (!controller.signal.aborted) {
+        if (response.category_id !== category || !Array.isArray(response.attributes)) {
+          setRulesError("类目属性响应与当前分类不一致。"); return;
+        }
+        rememberRules(cacheKey, response);
+        applyRules(response);
+      }
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setRulesError(error instanceof Error ? error.message : "无法读取在线类目属性");
+    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [store, site, logistic, category, settledCategory, version]);
+
+  const groups = useMemo(() => {
+    const values = (rules || []).filter((r) => !r.tags?.hidden || draft.attributes[r.id]);
+    const byGroup = new Map<string, Rule[]>();
+    for (const rule of values) {
+      const key = rule.attribute_group_name || "其他属性";
+      const group = byGroup.get(key);
+      if (group) group.push(rule); else byGroup.set(key, [rule]);
+    }
+    return [...byGroup].map(([name, list]) => ({ name, fields: list.sort((a,b) =>
+      Number(ruleRequired(b)) - Number(ruleRequired(a)) || a.name.localeCompare(b.name)) }));
+  }, [rules, draft.attributes]);
+
+  const missing = (rules || []).filter((r) => ruleRequired(r) &&
+    !isFixed(r) && !r.tags?.hidden && !currentValue(draft, r).trim()).map((r) => r.name || r.id);
+  const platformRequired = (rules || []).filter((r) => ruleRequired(r) &&
+    (isFixed(r) || r.tags?.hidden) && !currentValue(draft, r).trim()).map((r) => r.name || r.id);
+  const priceValid = draft.price === "" || (Number.isFinite(Number(draft.price)) && Number(draft.price) > 0);
+  const stockValid = draft.quantity === "" || (/^[0-9]+$/.test(draft.quantity) && Number.isSafeInteger(Number(draft.quantity)));
+  const attrs = listing.attributes || [];
+  const fallbackAttributes = attrs.filter((a) => a.value_name != null && a.id !== "SELLER_SKU" && !unitField.test(a.id));
+  const logistics = attrs.filter((a) => unitField.test(a.id) && a.value_name != null);
+
+  function update(field: keyof Omit<Draft, "attributes">, value: string) {
+    setDraft((old) => ({ ...old, [field]: value })); setSaved("");
+  }
+  function changeAttr(id: string, value: string) {
+    setDraft((old) => ({ ...old, attributes: { ...old.attributes, [id]: value } })); setSaved("");
+  }
+  function save() {
+    try {
+      localStorage.setItem(localKey, JSON.stringify(draft));
+      setSaved("草稿已保存在本机。不会修改 Mercado Libre 线上商品。");
+    } catch { setSaved("本地存储失败，请检查客户端存储空间。"); }
+  }
+  function reset() {
+    if (!window.confirm("清除当前刊登在本机的编辑草稿并恢复已同步资料？")) return;
+    try { localStorage.removeItem(localKey); } catch { /* still reset visible form */ }
+    setDraft(initialDraft(listing)); setSaved("已恢复本次同步数据。");
+  }
+  return <>
+    <section className="published-block">
+      <div className="published-block-head"><h3>商品分类</h3><span>仅编辑本地草稿</span></div>
+      <label className="published-edit-field">
+        <span>站点类目 ID</span>
+        <input value={draft.category_id} onChange={(e) => update("category_id", e.target.value.toUpperCase())}
+          placeholder={site + " 类目 ID"} aria-label="类目 ID"/>
+        <small>当前平台类目：{listing.category_id || "未返回"}；切换类目后自动在线加载对应属性，平台商品不会改变。</small>
+      </label>
+      {categoryPath.length > 0 && <p className="published-category-path">{categoryPath.join(" / ")}</p>}
+      {!validCategory && <p className="published-form-warning">请输入当前 {site} 站点有效的类目 ID 后加载规则。</p>}
+    </section>
+
+    <section className="published-block">
+      <div className="published-block-head"><h3>分类细项与属性</h3>
+        <span>{loading ? "正在加载 Mercado Libre 类目规则…" : settledCategory !== category ? "输入结束后加载…" : rules ? "官方规则已加载 · " + rules.length + " 项" : "等待规则"}</span>
+      </div>
+      {rulesError && <div role="alert" className="published-form-warning">
+        {rulesError}。无法验证必填属性，当前仅能保留本地草稿。
+        <button type="button" className="published-inline-action" onClick={() => setVersion((v) => v + 1)}>重新加载</button>
+      </div>}
+      {rules && <>
+        <p className="published-hint">红色 * 为官方硬性必填。条件必填需要平台结合商品信息进一步判定。
+          数值及单位属性目前仅保存在草稿中，后续提交平台前必须转换为对应的 number / unit 结构。</p>
+        {missing.length > 0 && <p role="status" className="published-form-warning">
+          目前缺少 {missing.length} 项可编辑必填：{missing.slice(0, 5).join("、")}{missing.length > 5 ? "等" : ""}。
+        </p>}
+        {platformRequired.length > 0 && <p role="status" className="published-form-warning">
+          另有 {platformRequired.length} 项平台固定或 SKU 级必填未返回值，
+          需在对应平台 / SKU 维护，不能在此表单直接修改。
+        </p>}
+        {groups.map((group) => <AttributeGroup key={group.name} title={group.name}
+          fields={group.fields} draft={draft} onChange={changeAttr}/>)}
+        {groups.length === 0 && <p className="published-hint">该类目未返回可编辑属性。</p>}
+      </>}
+      {!rules && !loading && fallbackAttributes.length > 0 && <div className="published-field-grid">
+        {fallbackAttributes.map((a) => <Field key={a.id} label={a.name || a.id} value={a.value_name}/>)}
+      </div>}
+    </section>
+
+    <section className="published-block">
+      <div className="published-block-head"><h3>重量与尺寸</h3><span>现有刊登属性</span></div>
+      {logistics.length ? <div className="published-field-grid">
+        {logistics.map((a) => <Field key={a.id} label={a.name || a.id} value={draft.attributes[a.id] || a.value_name}/>)}
+      </div> : <p className="published-hint">重量与尺寸未同步到该商品；待后续补充物流信息。</p>}
+      <p className="published-hint">包装重量和产品自身重量不同，不自动换算，也不编造缺失的值。</p>
+    </section>
+
+    <section className="published-block">
+      <div className="published-block-head"><h3>价格与库存</h3><span>{site} 当前站点 · 本地草稿</span></div>
+      <div className="published-edit-grid">
+        <label className="published-edit-field"><span>站点售价 {listing.currency_id || ""}</span>
+          <input type="number" min="0.01" step="0.01" value={draft.price} onChange={(e) => update("price", e.target.value)} />
+          {!priceValid && <small className="published-form-error">售价必须大于 0</small>}
+        </label>
+        <label className="published-edit-field"><span>可售库存</span>
+          <input type="number" min="0" step="1" value={draft.quantity} onChange={(e) => update("quantity", e.target.value)} />
+          {!stockValid && <small className="published-form-error">库存必须为非负整数</small>}
+        </label>
+      </div>
+      <div className="published-field-grid published-readonly-metrics">
+        <Field label="预期净回款" value="尚未接入平台回款数据"/>
+        <Field label="促销优惠" value="尚未接入平台促销数据"/>
+      </div>
+      {members.length > 1 && <details className="published-detail-expand">
+        <summary>查看本页同家族各款式（{members.length} 条）</summary>
+        <div className="published-family-prices">
+          {members.map((item) => <div key={item.id}><span>{item.seller_custom_field || item.id}</span>
+            <strong>{item.price ?? "—"} {item.currency_id || ""} · 库存 {item.available_quantity ?? "—"}</strong></div>)}
+        </div>
+      </details>}
+    </section>
+
+    <section className="published-block">
+      <div className="published-block-head"><h3>商品标题</h3><span>当前站点语言，不做自动翻译</span></div>
+      <textarea className="published-edit-textarea" rows={3} value={draft.title}
+        onChange={(e) => update("title", e.target.value)} maxLength={255}
+        placeholder="根据真实商品信息填写标题" />
+      <p className="published-hint">{draft.title.length} 字符。仅保存到本地草稿，不会更新线上刊登。</p>
+    </section>
+
+    <section className="published-block">
+      <div className="published-block-head"><h3>商品详情</h3><span>完整描述</span></div>
+      <textarea className="published-edit-textarea" rows={6} value={draft.description}
+        onChange={(e) => update("description", e.target.value)}
+        placeholder="尚未同步完整描述；可先录入草稿" />
+      <details className="published-detail-expand"><summary>平台标识与同步信息</summary>
+        <div className="published-field-grid">
+          <Field label="刊登 ID" value={listing.id}/>
+          <Field label="User Product" value={listing.user_product_id}/>
+          <Field label="Siteless User Product" value={listing.siteless_user_product_id}/>
+          <Field label="最近检查时间" value={listing.detail_unavailable_at
+            ? new Date(listing.detail_unavailable_at).toLocaleString() : "平台未返回异常"}/>
+          <Field label="全球关联" value={listing.cbt_item_id}/>
+          <Field label="部分响应" value={listing.partial ? "是" : "否"}/>
+        </div>
+      </details>
+    </section>
+    <div className="published-draft-toolbar">
+      <div><strong>商品编辑草稿</strong>
+        <p>只存储在当前电脑；不调用商品刊登或修改接口。</p>
+        <p>{rules ? missing.length ? "可编辑硬性必填缺失：" + missing.length + " 项。" : "当前可编辑硬性必填无缺失。"
+          : "平台类目规则未加载，无法判断是否符合发布要求。"}
+          {platformRequired.length ? " 另有 " + platformRequired.length + " 项平台 / SKU 级必填待处理。" : ""}
+          {" "}条件必填仍需服务端与平台进一步验证。</p>
+        {saved && <p role="status">{saved}</p>}
+      </div>
+      <div className="published-draft-actions">
+        <button type="button" onClick={reset} className="published-light-button">恢复同步值</button>
+        <button type="button" onClick={save} className="published-save-button">保存本机草稿</button>
+      </div>
+    </div>
+    {(!priceValid || !stockValid) && <p role="alert" className="published-form-warning">存在基础校验错误，请修正后再用于后续提交。</p>}
+  </>;
+}

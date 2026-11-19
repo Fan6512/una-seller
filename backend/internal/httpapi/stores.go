@@ -77,6 +77,13 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if store, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/category-attributes"); ok && store != "" && !strings.Contains(store, "/") {
+		owner, allowed := a.requireOwner(w, r)
+		if allowed {
+			a.categoryRules(w, r, owner, store)
+		}
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

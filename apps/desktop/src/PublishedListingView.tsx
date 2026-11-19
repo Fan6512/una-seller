@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import PublishedListingEditor from "./PublishedListingEditor";
 import "./publishedListings.css";
 
 export type Attribute = { id: string; name?: string; value_name?: string | null };
@@ -23,7 +24,7 @@ export type Listing = {
   description?: string;
 };
 type Group = { key: string; familyId?: string; members: Listing[] };
-type Props = { items: Listing[]; selectedId: string; onSelect: (id: string) => void; site: string };
+type Props = { items: Listing[]; selectedId: string; onSelect: (id: string) => void; site: string; logistic: string; store: string };
 type SkuRow = { key: string; sku: string; name: string; pictures: Picture[]; stock?: number | null; fromItem: Listing };
 
 function getFamily(item: Listing): { key: string; id?: string } {
@@ -87,10 +88,6 @@ function thumb(item: Listing): string | undefined {
   return pic?.secure_url || pic?.url;
 }
 
-function Field({ label, value }: { label: string; value?: string | number | null }) {
-  return <div className="published-field"><span>{label}</span><strong>{value === "" || value == null ? "未获取" : value}</strong></div>;
-}
-
 function pictureURL(picture: Picture): string | undefined {
   return picture.secure_url || picture.url;
 }
@@ -116,11 +113,7 @@ function SkuGallery({ members }: { members: Listing[] }) {
   </section>;
 }
 
-function Detail({ group, selected, site }: { group: Group; selected: Listing; site: string }) {
-  const logistics = (selected.attributes || []).filter((attr) =>
-    /^(PACKAGE_(WEIGHT|HEIGHT|LENGTH|WIDTH)|WEIGHT|HEIGHT|LENGTH|WIDTH)$/.test(attr.id) && attr.value_name != null);
-  const attributes = (selected.attributes || []).filter((attr) =>
-    !logistics.includes(attr) && attr.id !== "SELLER_SKU" && attr.value_name != null && attr.value_name !== "");
+function Detail({ group, selected, site, logistic, store }: { group: Group; selected: Listing; site: string; logistic: string; store: string }) {
   return <article className="published-detail-card">
     <header className="published-detail-header">
       <div><span className="published-eyebrow">{site} · 已刊登商品</span>
@@ -131,62 +124,11 @@ function Detail({ group, selected, site }: { group: Group; selected: Listing; si
     </header>
     {selected.detail_unavailable_at && <p className="published-warning">平台当前无法取得详情，下方展示上次保存的信息。</p>}
     <SkuGallery members={group.members}/>
-    <section className="published-block">
-      <div className="published-block-head"><h3>商品分类</h3></div>
-      <div className="published-category"><strong>{selected.category_id || "类目未返回"}</strong>
-        <span>完整分类路径尚未获取，暂显示平台类目 ID</span></div>
-    </section>
-    <section className="published-block">
-      <div className="published-block-head"><h3>分类细项与属性</h3><span>按当前刊登返回的真实属性显示</span></div>
-      {attributes.length ? <div className="published-field-grid">
-        {attributes.map((a, i) => <Field key={a.id + i} label={a.name || a.id} value={a.value_name} />)}
-      </div> : <p className="published-hint">平台暂未返回可展示的分类属性。</p>}
-      <p className="published-hint">当前为只读展示。必填／选填规则和编辑控件将在接入类目属性接口后提供。</p>
-    </section>
-    <section className="published-block">
-      <div className="published-block-head"><h3>重量与尺寸</h3></div>
-      {logistics.length ? <div className="published-field-grid">
-        {logistics.map((a, i) => <Field key={a.id + i} label={a.name || a.id} value={a.value_name}/>)}
-      </div> : <p className="published-hint">重量和尺寸尚未同步到此刊登的属性中。</p>}
-    </section>
-    <section className="published-block">
-      <div className="published-block-head"><h3>价格与库存</h3></div>
-      <div className="published-price-grid">
-        <Field label="站点售价" value={priceName(selected)}/>
-        <Field label="可售库存" value={selected.available_quantity}/>
-        <Field label="预期净回款" value="待接入"/>
-        <Field label="优惠价格" value="待接入"/>
-      </div>
-      {group.members.length > 1 && <details className="published-detail-expand">
-        <summary>查看同家族各刊登价格（{group.members.length} 条）</summary>
-        <div className="published-family-prices">
-          {group.members.map((member) => <div key={member.id}><span>{getSKU(member)} · {member.id}</span>
-            <strong>{priceName(member)} · 库存 {member.available_quantity ?? "—"}</strong></div>)}
-        </div>
-      </details>}
-    </section>
-    <section className="published-block">
-      <div className="published-block-head"><h3>商品标题</h3></div>
-      <p className="published-title-text">{selected.title || "平台未返回标题"}</p>
-    </section>
-    <section className="published-block">
-      <div className="published-block-head"><h3>商品详情</h3></div>
-      <p className="published-description">{selected.description || "当前商品同步接口尚未获取完整描述，后续接入详情接口后显示。"}</p>
-      <details className="published-detail-expand"><summary>查看更多平台标识与状态</summary>
-        <div className="published-field-grid">
-          <Field label="刊登 ID" value={selected.id}/>
-          <Field label="User Product ID" value={selected.user_product_id}/>
-          <Field label="全球关联 ID" value={selected.cbt_item_id}/>
-          <Field label="Siteless User Product" value={selected.siteless_user_product_id}/>
-          <Field label="来源状态" value={selected.partial ? "部分字段" : "已保存"}/>
-          <Field label="检查时间" value={selected.detail_unavailable_at ? new Date(selected.detail_unavailable_at).toLocaleString() : "暂无异常"}/>
-        </div>
-      </details>
-    </section>
+    <PublishedListingEditor key={selected.id + ":" + site} listing={selected} site={site} logistic={logistic} store={store} members={group.members}/>
   </article>;
 }
 
-export default function PublishedListingView({ items, selectedId, onSelect, site }: Props) {
+export default function PublishedListingView({ items, selectedId, onSelect, site, logistic, store }: Props) {
   const [mode, setMode] = useState<"family" | "listing">("family");
   const [search, setSearch] = useState("");
   const groups = useMemo<Group[]>(() => {
@@ -242,7 +184,7 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
         {groups.length === 0 && <p className="published-empty">当前页没有匹配的商品。</p>}
       </aside>
       <div className="published-detail-wrap">{active && selected
-        ? <Detail key={active.key + ":" + selected.id} group={active} selected={selected} site={site}/>
+        ? <Detail key={active.key + ":" + selected.id} group={active} selected={selected} site={site} logistic={logistic} store={store}/>
         : <p className="published-empty">选择左侧商品查看详情。</p>}</div>
     </div>
   </div>;
