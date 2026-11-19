@@ -35,6 +35,8 @@ type Config struct {
 	RedirectURI        string
 	PKCE               bool
 	TokenEncryptionKey string
+	// HTTPClient is optional. A nil value uses the standard restricted client.
+	HTTPClient         *http.Client
 }
 
 type Service struct {
@@ -75,11 +77,15 @@ func NewService(db *pgxpool.Pool, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
 	return &Service{
 		db:           db,
 		cipher:       c,
 		cfg:          cfg,
-		client:       &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		client:       client,
 		authorizeURL: authorizeEndpoint,
 		apiURL:       apiEndpoint,
 	}, nil
