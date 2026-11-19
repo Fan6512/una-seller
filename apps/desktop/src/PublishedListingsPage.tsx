@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { listStores, storeRequest, type StoreConnection } from "./stores";
+import { useEffect, useRef, useState } from "react";
+import { listingErrorMessage, listStores, storeRequest, type StoreConnection } from "./stores";
+import { runListingBatches, type ListingBatch } from "./listingBatches";
 
 type Attribute = { id: string; name?: string; value_name?: string | null };
 type Listing = {
@@ -10,8 +11,9 @@ type Listing = {
   seller_custom_field?: string | null; attributes?: Attribute[];
   variations?: { attribute_combinations?: Attribute[]; attributes?: Attribute[]; seller_custom_field?: string | null; available_quantity?: number | null }[];
 };
-type Page = { items: Listing[]; has_more: boolean; synced_at: string | null };
-type Sync = { saved: number; failed: number; partial: number; next_offset: number | null; scan_required: boolean; platform_status?: number };
+type Page = { items: Listing[]; has_more: boolean; synced_at: string | null; next_offset: number | null; scan_required: boolean };
+type Progress = Pick<ListingBatch, "processed" | "saved" | "skipped" | "needs_review" | "partial">;
+const emptyProgress: Progress = { processed: 0, saved: 0, skipped: 0, needs_review: 0, partial: 0 };
 const pageSize = 20;
 
 function message(error: unknown) {
@@ -66,7 +68,9 @@ function ListingScope({ store, scope }: { store: string; scope: string }) {
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState<Page>();
   const [selectedId, setSelectedId] = useState("");
-  const [result, setResult] = useState<Sync>();
+  const [progress, setProgress] = useState<Progress>();
+  const [notice, setNotice] = useState("");
+  const active = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
@@ -94,33 +98,72 @@ function ListingScope({ store, scope }: { store: string; scope: string }) {
     return () => controller.abort();
   }, [path, offset, revision]);
 
-  async function sync(remoteOffset: number | null | undefined) {
+  useEffect(() => () => {
+    active.current?.abort();
+    active.current = null;
+  }, []);
+
+  async function sync(restart: boolean) {
+    if (active.current) return;
+    const remoteOffset = restart ? 0 : page?.next_offset;
     if (remoteOffset == null) return;
+    const controller = new AbortController();
+    active.current = controller;
     setBusy(true);
     setError("");
+    setNotice("");
+    setProgress(emptyProgress);
     try {
-      setResult(await storeRequest<Sync>(path + "&offset=" + remoteOffset, "POST", undefined, true));
-      setRevision((old) => old + 1);
+      await runListingBatches(remoteOffset, restart, controller.signal, (next, reset, signal) =>
+        storeRequest<ListingBatch>(path + "&offset=" + next + (reset ? "&restart=1" : ""), "POST", signal, true),
+      (batch) => {
+        setProgress((previous) => {
+          const total = previous ?? emptyProgress;
+          return {
+            saved: total.saved + batch.saved, processed: total.processed + batch.processed,
+            skipped: total.skipped + batch.skipped, needs_review: total.needs_review + batch.needs_review,
+            partial: total.partial + batch.partial,
+          };
+        });
+        if (batch.interruption) {
+          const interruption = batch.interruption;
+          setError(listingErrorMessage(interruption.code, interruption.platform_status));
+        } else if (batch.next_offset == null && !batch.scan_required) {
+          setNotice("此范围同步完成。");
+        } else {
+          setNotice("已保存进度，可继续下一轮。");
+        }
+      });
     } catch (e) {
-      setError(message(e));
+      if (active.current === controller) {
+        if (controller.signal.aborted) setNotice("已停止，可从服务端保存的位置继续。");
+        else setError(message(e));
+      }
     } finally {
-      setBusy(false);
+      if (active.current === controller) {
+        active.current = null;
+        setBusy(false);
+        setReading(true);
+        setRevision((old) => old + 1);
+      }
     }
   }
 
   const selected = page?.items.find((item) => item.id === selectedId);
   const image = selected?.pictures?.[0]?.secure_url ?? selected?.secure_thumbnail;
   return <>
-    <p>
-      <button className="primary-action" type="button" onClick={() => void sync(0)} disabled={busy}>同步商品</button>{" "}
-      {result?.next_offset != null && <button type="button" disabled={busy} onClick={() => void sync(result.next_offset)}>{result.failed ? "重试本批" : "同步下一批"}</button>}
+    <p className="page-actions">
+      <button className="primary-action" type="button" onClick={() => void sync(false)}
+        disabled={busy || reading || page?.next_offset == null}>{page?.next_offset ? "继续同步" : "同步商品"}</button>
+      <button type="button" onClick={() => active.current?.abort()} disabled={!busy}>停止</button>
+      <button type="button" onClick={() => void sync(true)} disabled={busy || reading || !page}>从头同步</button>
     </p>
-    {busy && <p role="status">正在同步此范围的一批商品…</p>}
-    {result && !busy && !error && <p role="status">本批保存 {result.saved} 条，失败或跳过 {result.failed} 条。
-      {result.partial > 0 && " " + result.partial + " 条来自平台部分响应。"}
-      {result.platform_status != null && " 美客多 HTTP " + result.platform_status + "。"}
-      {result.scan_required && " 平台要求使用扫描分页继续。"}
+    {progress && <p role="status">
+      {busy ? "同步中。" : notice} 本轮已处理 {progress.processed} 条，保存 {progress.saved} 条，跳过 {progress.skipped} 条。
+      {progress.needs_review > 0 && " " + progress.needs_review + " 条待人工核实。"}
+      {progress.partial > 0 && " " + progress.partial + " 条来自平台部分响应。"}
     </p>}
+    {page?.scan_required && <p role="status">已达到常规分页上限，继续读取需要扫描模式。</p>}
     <p>上次保存同步结果 {page?.synced_at ? new Date(page.synced_at).toLocaleString() : "暂无"}</p>
     {error && <p role="alert">{error}</p>}
     {readError && <p role="alert">{readError}</p>}

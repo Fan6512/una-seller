@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS app.meli_listing_syncs (
     store_id uuid NOT NULL REFERENCES app.meli_store_connections(id) ON DELETE CASCADE,
     site_id text NOT NULL,
     logistic_type text NOT NULL,
-    synced_at timestamptz NOT NULL,
+    seller_id text NOT NULL,
+    synced_at timestamptz,
+    next_offset integer CHECK (next_offset BETWEEN 0 AND 999),
+    scan_required boolean NOT NULL DEFAULT false,
     PRIMARY KEY (store_id, site_id, logistic_type)
 );
 

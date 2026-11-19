@@ -18,6 +18,26 @@ export type StoreConnection = {
   marketplaces: StoreMarketplace[];
 };
 
+export function listingErrorMessage(code: string, platformStatus?: number): string {
+  switch (code) {
+    case "listing_store_missing": return "店铺不存在或无权访问";
+    case "listing_site_unverified": return "该站点尚未验证";
+    case "listing_reauthorization": return "此店铺需要重新授权";
+    case "listing_platform_auth": return "美客多拒绝商品访问，请在店铺管理验证连接和权限";
+    case "listing_token_expired": return "店铺 Token 已过期，请在店铺管理验证连接";
+    case "listing_refresh_unknown": return "店铺 Token 续签状态待确认，请在店铺管理处理";
+    case "listing_auth_changed": return "店铺授权在同步期间变化，请验证连接后继续";
+    case "listing_cursor_changed": return "同步位置已更新，请按最新位置继续";
+    case "listing_busy": return "此店铺已有同步在执行，请稍后继续";
+    case "listing_rate_limited": return "美客多限制请求频率，请稍后继续";
+    case "listing_timeout": return "美客多读取超时，可从已保存位置继续";
+    case "listing_transport": return "美客多网络请求中断，可从已保存位置继续";
+    case "listing_identity_mismatch": return "刊登归属与授权范围不一致，需要人工核实";
+    case "listing_invalid_response": return "美客多返回了无法识别的刊登数据，需要人工核实";
+    default: return platformStatus ? "美客多商品请求失败（HTTP " + platformStatus + "）" : "商品请求失败";
+  }
+}
+
 export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false): Promise<T> {
   const request = (token: string) => fetch(apiBase + path, {
     method,
@@ -27,6 +47,7 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   });
   let response = await request(await getAccessToken());
   if (response.status === 401) {
+    signal?.throwIfAborted();
     response = await request(await getAccessToken(true));
     if (response.status === 401) {
       rejectSession();
@@ -35,19 +56,10 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   }
   if (!response.ok) {
     if (listing) {
-      const detail = await response.json().catch(() => null) as { error?: string } | null;
-      const known: Record<string, string> = {
-        "store not found": "店铺不存在或无权访问",
-        "marketplace site is not verified": "该站点尚未验证",
-        "store needs reauthorization": "此店铺需要重新授权",
-        "store token expired; check connection in store management": "店铺 Token 已过期，请在店铺管理验证连接",
-        "store token refresh outcome unknown": "店铺 Token 续签状态待确认",
-        "listing sync already running": "此店铺已有同步在执行",
-        "Mercado Libre rate limited listing sync": "美客多限制请求频率，请稍后重试",
-      };
-      const platform = detail?.error?.match(/^marketplace listing request returned HTTP (\d{3})$/);
-      if (platform) throw new Error("美客多拒绝商品请求（HTTP " + platform[1] + "）");
-      throw new Error((detail?.error && known[detail.error]) || "商品请求失败（HTTP " + response.status + "）");
+      const detail = await response.json().catch(() => null) as { code?: string; platform_status?: number; skipped?: number } | null;
+      const reason = detail?.code ? listingErrorMessage(detail.code, detail.platform_status)
+        : "商品请求失败（HTTP " + response.status + "）";
+      throw new Error(detail?.skipped ? reason + "，该批已跳过 " + detail.skipped + " 条" : reason);
     }
     if (response.status === 503) throw new Error("美客多授权尚未在服务器上配置或服务不可用");
     if (response.status === 404) throw new Error("店铺不存在或无权访问");

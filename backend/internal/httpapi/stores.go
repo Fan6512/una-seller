@@ -167,9 +167,10 @@ func (a storeAPI) callback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owner, store string) {
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeListingError(w, http.StatusMethodNotAllowed, "listing_method", "method not allowed", nil, meli.ListingSync{})
 		return
 	}
 	query := r.URL.Query()
@@ -178,47 +179,81 @@ func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owne
 		scope.Site = "CBT"
 	}
 	offset := 0
+	var expected *int
+	restart := r.Method == http.MethodPost && query.Get("restart") == "1"
 	if query.Has("offset") {
-		var err error
-		offset, err = strconv.Atoi(query.Get("offset"))
-		if err != nil || offset < 0 || offset > 100000 || (r.Method == http.MethodPost && offset >= 1000) {
-			writeError(w, http.StatusBadRequest, "invalid listing offset")
+		value, err := strconv.Atoi(query.Get("offset"))
+		if err != nil || value < 0 || value > 100000 || (r.Method == http.MethodPost && value >= 1000) {
+			writeListingError(w, http.StatusBadRequest, "listing_offset", "invalid listing offset", nil, meli.ListingSync{})
+			return
+		}
+		offset, expected = value, &value
+	}
+	if query.Has("restart") && (!restart || (expected != nil && offset != 0)) {
+		writeListingError(w, http.StatusBadRequest, "listing_offset", "invalid listing restart", nil, meli.ListingSync{})
+		return
+	}
+	var err error
+	var result meli.ListingSync
+	if r.Method == http.MethodGet {
+		var page meli.ListingPage
+		page, err = a.service.ListPublished(r.Context(), owner, store, scope, offset)
+		if err == nil {
+			writeJSON(w, http.StatusOK, page)
+			return
+		}
+	} else {
+		result, err = a.service.SyncPublished(r.Context(), owner, store, scope, expected, restart)
+		if err == nil {
+			writeJSON(w, http.StatusOK, result)
 			return
 		}
 	}
-	var data any
-	var err error
-	if r.Method == http.MethodGet {
-		data, err = a.service.ListPublished(r.Context(), owner, store, scope, offset)
-	} else {
-		data, err = a.service.SyncPublished(r.Context(), owner, store, scope, offset)
-	}
-	if err == nil {
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, data)
+	if r.Context().Err() != nil {
 		return
 	}
-	var remote meli.ListingPlatformError
+	status, code, message := http.StatusBadGateway, "listing_unavailable", "published listings unavailable"
+	var interruption *meli.ListingInterruption
 	switch {
 	case errors.Is(err, meli.ErrStoreNotFound):
-		writeError(w, http.StatusNotFound, "store not found")
+		status, code, message = http.StatusNotFound, "listing_store_missing", "store not found"
 	case errors.Is(err, meli.ErrSiteNotAuthorized):
-		writeError(w, http.StatusForbidden, "marketplace site is not verified")
+		status, code, message = http.StatusForbidden, "listing_site_unverified", "marketplace site is not verified"
 	case errors.Is(err, meli.ErrReauthorizationRequired):
-		writeError(w, http.StatusForbidden, "store needs reauthorization")
+		status, code, message = http.StatusForbidden, "listing_reauthorization", "store needs reauthorization"
 	case errors.Is(err, meli.ErrListingTokenExpired):
-		writeError(w, http.StatusConflict, "store token expired; check connection in store management")
+		status, code, message = http.StatusConflict, "listing_token_expired", "store token expired; check connection in store management"
 	case errors.Is(err, meli.ErrRefreshUnknown):
-		writeError(w, http.StatusConflict, "store token refresh outcome unknown")
+		status, code, message = http.StatusConflict, "listing_refresh_unknown", "store token refresh outcome unknown"
+	case errors.Is(err, meli.ErrListingAuthorizationChanged):
+		status, code, message = http.StatusConflict, "listing_auth_changed", "store authorization changed during sync"
+	case errors.Is(err, meli.ErrListingCursor):
+		status, code, message = http.StatusConflict, "listing_cursor_changed", "listing cursor changed or completed"
 	case errors.Is(err, meli.ErrListingBusy):
-		writeError(w, http.StatusConflict, "listing sync already running")
-	case errors.As(err, &remote):
-		if remote == http.StatusTooManyRequests {
-			writeError(w, http.StatusTooManyRequests, "Mercado Libre rate limited listing sync")
-		} else {
-			writeError(w, http.StatusBadGateway, remote.Error())
+		status, code, message = http.StatusConflict, "listing_busy", "listing sync already running"
+	case errors.As(err, &interruption):
+		code = interruption.Code
+		message = "Mercado Libre listing sync interrupted"
+		switch code {
+		case "listing_platform_auth":
+			status = http.StatusForbidden
+		case "listing_rate_limited":
+			status = http.StatusTooManyRequests
+		case "listing_timeout":
+			status = http.StatusGatewayTimeout
 		}
-	default:
-		writeError(w, http.StatusBadGateway, "published listings unavailable")
 	}
+	writeListingError(w, status, code, message, interruption, result)
+}
+
+func writeListingError(w http.ResponseWriter, status int, code, message string, interruption *meli.ListingInterruption, result meli.ListingSync) {
+	response := map[string]any{"error": message, "code": code}
+	if interruption != nil {
+		response["platform_status"] = interruption.PlatformStatus
+		response["retryable"] = interruption.Retryable
+		response["processed"] = result.Processed
+		response["skipped"] = result.Skipped
+		response["needs_review"] = result.NeedsReview
+	}
+	writeJSON(w, status, response)
 }

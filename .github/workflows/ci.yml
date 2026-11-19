@@ -110,6 +110,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify listing sync batch and resume behavior
+        run: node --experimental-strip-types --test tests/listingBatches.test.mjs
+
       - name: TypeScript check and Vite build
         run: npm run build
 

@@ -483,8 +483,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
 .login-error { color: #a94742; background: #fff6f4; border: 1px solid #f1d8d2; border-radius: 7px; padding: 10px; font-size: 12px; line-height: 1.6; margin: 3px 0 0; }
 .login-footer { text-align: center; margin: 24px 0 0; color: #a1aab7; font-size: 11px; }
 .account-email { max-width: 210px; color: #667487; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.topbar nav [aria-pressed="true"] { border-color: #bac9e1; color: #315eb4; }
 .logout-action { border: 1px solid #e1e6ed; border-radius: 7px; background: #fff; color: #546277; padding: 7px 11px; font-size: 11px; }
 .logout-action:hover { border-color: #bac9e1; color: #315eb4; }
+@media (max-width: 700px) {
+  .topbar nav { gap: 4px; }
+  .topbar nav .logout-action { padding-inline: 7px; white-space: nowrap; }
+}
 @media (max-width: 850px) {
   .account-email { max-width: 105px; }
   .login-card { padding: 30px 24px 22px; }
