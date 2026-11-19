@@ -25,13 +25,23 @@
 
 - `una-seller.exe`：Tauri Windows 桌面客户端。
 - `una-seller-api.exe`：独立的本地 Go API 程序；**它只在 Artifact 中，不包含在 NSIS `*-setup.exe` 安装包内**。
-- `Una Seller_0.1.0_x64-setup.exe`：仅安装桌面客户端，**安装后不会自动启动或附带 Go API**。单独安装后看到“连接异常”不代表桌面程序安装失败。
+- `Una Seller_<版本>_x64-setup.exe`：安装桌面客户端。Go API 单独运行。单独安装后看到“连接异常”不代表桌面程序安装失败。
 
 测试真实商品读取时，解压 Artifact 后，在首次创建的 `%LOCALAPPDATA%\\UnaSeller\\api-config.json` 中保存配置。在 `una-seller-api.exe` 所在目录的 PowerShell 中执行 `.\\una-seller-api.exe`，保持 API 运行，再打开 `una-seller.exe` 或已安装的客户端。**此后换新版 EXE 直接运行，不再逐次配置**；Go API 继续监听本机 `127.0.0.1:8787`。
 
 - 不要将数据库连接字符串/密码贴到 issue、PR、截图、公开 Actions 日志，也不要写入客户端环境变量；仅本机 Go API 进程需要数据库凭据。
 - **新 Supabase Auth 用户 ID 与旧本地 UUID 不同。** 以前手动创建的测试商品仍在数据库原用户下面，登录新账号后列表为空属于预期；未经授权不自动迁移或改写商品所属用户。
 - Windows 原生构建通过与 GUI 启动通过是两件事；macOS 状态另计。
+
+## Windows x64 正式更新
+
+1. 负责人首次发行前设置 `desktop-production` GitHub Environment。配置负责人审批、禁止管理员绕过审批，并将可部署的引用限定为 `desktop-v*` tag。用 tag ruleset 将这些 tag 的创建限制在发行负责人，并保护其更新和删除。
+2. 将负责人保管的 Tauri Updater 公钥内容配置为该环境的 `TAURI_UPDATER_PUBLIC_KEY` 变量。私钥内容存为同一环境的 `TAURI_SIGNING_PRIVATE_KEY` Secret，有密码时将密码存为 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` Secret。保留离线备份，并沿用同一密钥对供已安装客户端验证。
+3. 从 `main` 上批准的提交创建 `desktop-vMAJOR.MINOR.PATCH` tag。递增 `tauri.conf.json`、`Cargo.toml`、`package.json` 和 `package-lock.json` 的版本，使其与 tag 一致。负责人审批环境后，工作流签名 NSIS 包，用嵌入客户端的公钥验证包，再生成含更新说明的 `latest.json`，一起提交到 GitHub Release 草稿。
+4. 负责人核对草稿的版本、更新说明和三个资产（安装包、签名、`latest.json`），按版本递增顺序手动发布并设为 **Latest**。生产客户端从仓库的 `releases/latest/download/latest.json` 读取更新。保持 Latest 指向包含该清单的 Windows 桌面正式版。草稿失败后先检查草稿状态再重试。已发布版本的修复使用更高版本重新发行。
+5. 从 0.1.0 升级时，从首个正式 Release 下载 NSIS 安装包并覆盖安装一次。之后在 **设置 → 检查更新** 查看说明和下载进度，可稍后返回设置安装。下载暂存在本次应用进程内，退出后需重新下载。安装会关闭并重启桌面客户端，商品同步结束后才开放安装。
+
+正式验收使用两个递增且由同一受管密钥签名的版本。在 Windows x64 上覆盖安装第一个版本，确认现有登录可恢复、店铺可见和本地 API 配置可读。用第一个版本在应用内检查、下载第二个版本，先选择稍后安装，返回后安装并确认重启、版本和数据保留。另检查当前已是最新版、网络异常和签名错误时的反馈。PR 和手动 CI 产物用于原生构建检查，正式在线更新由负责人批准发行后开启。
 
 ## 数据与安全边界
 

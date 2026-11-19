@@ -23,6 +23,7 @@ const reviewReasons: Record<string, string> = {
 type Progress = Pick<ListingBatch, "processed" | "saved" | "skipped" | "needs_review" | "partial">;
 const emptyProgress: Progress = { processed: 0, saved: 0, skipped: 0, needs_review: 0, partial: 0 };
 const pageSize = 20;
+type BeginSync = () => (() => void) | undefined;
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : "无法读取已刊登商品";
@@ -32,7 +33,7 @@ function specs(attributes?: Attribute[]) {
   return attributes?.filter((a) => a.value_name != null).map((a) => (a.name || a.id) + " " + a.value_name).join(" · ");
 }
 
-export default function PublishedListingsPage() {
+export default function PublishedListingsPage({ beginSync }: { beginSync: BeginSync }) {
   const [stores, setStores] = useState<StoreConnection[]>();
   const [storeId, setStoreId] = useState("");
   const [scope, setScope] = useState("CBT");
@@ -66,12 +67,12 @@ export default function PublishedListingsPage() {
           return <option key={value} value={value}>{market.site_id} · {market.logistic_type}</option>;
         })}
       </select></label>
-      <ListingScope key={store.id + ":" + scope} store={store.id} scope={scope} />
+      <ListingScope key={store.id + ":" + scope} store={store.id} scope={scope} beginSync={beginSync} />
     </>}
   </>;
 }
 
-function ListingScope({ store, scope }: { store: string; scope: string }) {
+function ListingScope({ store, scope, beginSync }: { store: string; scope: string; beginSync: BeginSync }) {
   const [offset, setOffset] = useState(0);
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState<Page>();
@@ -115,6 +116,8 @@ function ListingScope({ store, scope }: { store: string; scope: string }) {
     if (active.current) return;
     const remoteOffset = skip?.offset ?? (restart ? 0 : page?.next_offset);
     if (remoteOffset == null) return;
+    const finishSync = beginSync();
+    if (!finishSync) return;
     const controller = new AbortController();
     active.current = controller;
     setBusy(true);
@@ -153,6 +156,7 @@ function ListingScope({ store, scope }: { store: string; scope: string }) {
         else setError(message(e));
       }
     } finally {
+      finishSync();
       if (active.current === controller) {
         active.current = null;
         setBusy(false);
