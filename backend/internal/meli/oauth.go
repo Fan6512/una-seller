@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -44,6 +45,7 @@ type Service struct {
 	authorizeURL string
 	apiURL       string
 	refreshGroup singleflight.Group
+	listingRuns  sync.Map
 }
 
 type Store struct {
