@@ -4,6 +4,7 @@ import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
 import StoresPage from "./StoresPage";
 import PublishedListingsPage from "./PublishedListingsPage";
+import OrdersPage from "./OrdersPage";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import {
   apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
@@ -219,7 +220,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
   beginSync: () => (() => void) | undefined; syncCount: number;
 }) {
-  const [section, setSection] = useState<"collections" | "stores" | "published">("collections");
+  const [section, setSection] = useState<"collections" | "stores" | "published" | "orders">("collections");
   const [settings, setSettings] = useState(false);
   const [service, setService] = useState<ServiceStatus>("checking");
   const [serviceError, setServiceError] = useState("");
@@ -376,6 +377,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { setSettings(false); setSection("collections"); }}>采集箱</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "stores"} onClick={() => { setSettings(false); setSection("stores"); }}>店铺管理</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { setSettings(false); setSection("published"); }}>已刊登商品</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { setSettings(false); setSection("orders"); }}>订单管理</button>
           <button type="button" className="logout-action" aria-pressed={settings} onClick={() => setSettings(true)}>{updates.update ? "设置 · 有更新" : "设置"}</button>
         </nav>
         <div className="topbar-spacer" />
@@ -392,6 +394,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         {diagnosticsEnabled && settings && <DevelopmentDiagnostics />}
         {section === "stores" ? <div hidden={settings}><StoresPage /></div>
           : section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+          : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : !settings && <>
         <div className="page-heading">
           <div><h1>采集箱</h1><p>查看已保存的商品资料</p></div>
