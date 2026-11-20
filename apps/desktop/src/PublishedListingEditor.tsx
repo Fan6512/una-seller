@@ -45,15 +45,31 @@ const categoryTranslations: Record<string, string> = {
 };
 const translatedCategory = (name: string) => categoryTranslations[name] || name;
 const charCount = (value: string) => Array.from(value).length;
-// Never infer measurements from absent data or silently mix package and product measurements.
+// Convert only explicit, unambiguous metric units; never invent missing units.
+function metricNumber(raw: string): { amount: number; unit: string } | undefined {
+  const match = /^(\d+(?:[.,]\d{1,2})?)\s*(kg|g|mm|cm|m)$/i.exec(raw.trim());
+  if (!match) return;
+  const amount = Number(match[1].replace(",", "."));
+  return Number.isFinite(amount) ? { amount, unit: match[2].toLowerCase() } : undefined;
+}
+const formatMetric = (n: number) => new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(n);
+function compactWeight(value?: string): string {
+  if (!value) return "未返回";
+  const parsed = metricNumber(value);
+  if (!parsed || (parsed.unit !== "g" && parsed.unit !== "kg")) return value;
+  return formatMetric(parsed.amount * (parsed.unit === "kg" ? 1000 : 1)) + " g";
+}
 function compactDimensions(values: (string | undefined)[]): string {
   if (values.every((v) => !v)) return "未返回";
-  const parts = values.map((v) => (v || "—").trim());
-  const parsed = parts.map((part) => /^([\d.,]+)\s*(mm|cm|m)$/i.exec(part));
-  if (parsed.every((p) => p && p[2].toLowerCase() === parsed[0]?.[2].toLowerCase())) {
-    return parsed.map((p) => p![1]).join(" × ") + " " + parsed[0]![2];
+  const parsed = values.map((v) => v && metricNumber(v));
+  if (parsed.every((p, i) => !values[i] || (p && ["mm", "cm", "m"].includes(p.unit)))) {
+    const length = parsed.map((p) => {
+      if (!p) return "—";
+      return formatMetric(p.amount * (p.unit === "m" ? 100 : p.unit === "mm" ? 0.1 : 1));
+    });
+    return length.join(" × ") + " cm";
   }
-  return parts.join(" × ");
+  return values.map((v) => v || "—").join(" × ");
 }
 function initialDraft(item: Listing): Draft {
   return {
@@ -318,13 +334,12 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
       </div>}
     </section>
 
-    <section className="published-block">
-      <div className="published-block-head"><h3>重量与尺寸</h3><span>现有刊登属性</span></div>
+    <section className="published-block published-metrics-block"
+      title={metricPrefix ? "平台包装重量与包装尺寸" : "平台商品重量与商品尺寸"}>
       <div className="published-metrics-inline">
-        <span>重量：<strong>{metric("WEIGHT") || "未返回"}</strong></span>
+        <span>重量：<strong>{compactWeight(metric("WEIGHT"))}</strong></span>
         <span>尺寸（长 × 宽 × 高）：<strong>{compactDimensions([metric("LENGTH"), metric("WIDTH"), metric("HEIGHT")])}</strong></span>
       </div>
-      <p className="published-hint">{metricPrefix ? "显示平台返回的包装重量与包装尺寸。" : "显示平台返回的商品重量与商品尺寸。"}未返回的数值或单位不推算。</p>
     </section>
 
     <section className="published-block">
