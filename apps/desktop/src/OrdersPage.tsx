@@ -5,6 +5,7 @@ import {
   OrderRequestError, resetOrderCursor, skipOrder, syncOrders,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope,
 } from "./orders";
+import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
 import "./orders.css";
 
 const PAGE_SIZE = 20;
@@ -59,6 +60,12 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
   const [notice, setNotice] = useState("");
   const [review, setReview] = useState<OrderReview | null>(null);
   const [progress, setProgress] = useState<OrderProgress | null>(null);
+  const [purchase, setPurchase] = useState<OrderPurchase | null>(null);
+  const [purchaseNumber, setPurchaseNumber] = useState("");
+  const [purchaseCost, setPurchaseCost] = useState("");
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [purchaseError, setPurchaseError] = useState("");
+  const [purchaseMessage, setPurchaseMessage] = useState("");
   const syncAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -131,6 +138,44 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     });
     return () => controller.abort();
   }, [scope?.storeId, scope?.site, scope?.logistic, selectedId, nonce]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setPurchase(null);
+    setPurchaseNumber("");
+    setPurchaseCost("");
+    setPurchaseError("");
+    setPurchaseMessage("");
+    if (!scope || !selectedId) return () => controller.abort();
+    void loadPurchase(scope, selectedId, controller.signal).then((value) => {
+      if (controller.signal.aborted) return;
+      setPurchase(value.purchase);
+      setPurchaseNumber(value.purchase?.purchase_order_id ?? "");
+      setPurchaseCost(value.purchase?.cost_cny ?? "");
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setPurchaseError(displayError(error));
+    });
+    return () => controller.abort();
+  }, [scope?.storeId, scope?.site, scope?.logistic, selectedId]);
+
+  const savePurchaseInfo = async () => {
+    if (!scope || !selectedId || purchaseBusy || !purchaseNumber) return;
+    const controller = new AbortController();
+    setPurchaseBusy(true);
+    setPurchaseError("");
+    setPurchaseMessage("");
+    try {
+      const result = await savePurchase(scope, selectedId, purchaseNumber.trim(), purchaseCost.trim(), controller.signal);
+      setPurchase(result);
+      setPurchaseNumber(result.purchase_order_id);
+      setPurchaseCost(result.cost_cny ?? "");
+      setPurchaseMessage("采购信息已保存到服务器；自动读取 1688 金额仍需浏览器插件接入。");
+    } catch (error) {
+      setPurchaseError(displayError(error));
+    } finally {
+      setPurchaseBusy(false);
+    }
+  };
 
   const visibleOrders = useMemo(() => {
     const needle = searchText.trim().toLowerCase();
@@ -394,11 +439,33 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
                 <p className="orders-muted">当前订单 API 不包含收件人地址、电话或面单，不能据此执行发货操作。</p>
               </section>
               <section className="orders-detail-block orders-purchase-block">
-                <div className="orders-detail-block-title"><h3>采购与发货处理</h3><span>规划接入</span></div>
-                <p>下一步关联 1688 采购单号，由浏览器插件从已登录的 1688 订单页获取实际采购金额；成本与利润必须以真实数据计算。</p>
-                <dl className="orders-detail-fields"><dt>1688 采购单号</dt><dd>尚未关联</dd>
-                  <dt>采购成本（CNY）</dt><dd>尚未获取</dd>
-                  <dt>发货/货代提交</dt><dd>尚未接入</dd></dl>
+                <div className="orders-detail-block-title"><h3>1688 采购关联</h3><span>{purchase ? "已关联" : "待关联"}</span></div>
+                <p>先保存实际 1688 采购单号。可以手动核实录入人民币成本；插件自动读取订单金额尚未接通，不会自动填充或虚构利润。</p>
+                <div className="orders-purchase-form">
+                  <label>1688 采购订单号
+                    <input type="text" inputMode="numeric" maxLength={40} placeholder="输入 1688 采购单号"
+                      value={purchaseNumber} onChange={(event) => setPurchaseNumber(event.target.value)}
+                      aria-label="1688 采购订单号" />
+                  </label>
+                  <label>采购总金额 CNY（可选）
+                    <input type="text" inputMode="decimal" maxLength={20} placeholder="例如 16.50，可稍后补录"
+                      value={purchaseCost} onChange={(event) => setPurchaseCost(event.target.value)}
+                      aria-label="人民币采购总金额" />
+                  </label>
+                  {purchaseError && <p className="orders-alert" role="alert">{purchaseError}</p>}
+                  {purchaseMessage && <p className="orders-purchase-success" role="status">{purchaseMessage}</p>}
+                  <div className="orders-purchase-actions">
+                    <button type="button" className="orders-main-button" disabled={purchaseBusy || !/^\d{8,40}$/.test(purchaseNumber)}
+                      onClick={() => void savePurchaseInfo()}>{purchaseBusy ? "保存中…" : "保存采购关联"}</button>
+                    <a href="https://www.1688.com/" target="_blank" rel="noopener noreferrer">打开 1688</a>
+                  </div>
+                  {purchase && <p className="orders-purchase-state">已保存采购单：{purchase.purchase_order_id}
+                    {purchase.cost_cny !== null ? " · 人民币 ¥" + purchase.cost_cny : " · 金额待获取"}</p>}
+                </div>
+                <div className="orders-purchase-followup">
+                  <strong>下一步：插件自动取价 → 货代提交 → 平台发货</strong>
+                  <span>现阶段只保存采购信息；正式发货接口、买家地址和货代面单尚未接入。</span>
+                </div>
                 <button type="button" disabled className="orders-shipping-disabled">提交发货（接口待接入）</button>
               </section>
             </>}
