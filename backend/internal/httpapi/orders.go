@@ -81,6 +81,10 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 		status = http.StatusBadGateway
 	case "order_rate_limited":
 		status = http.StatusTooManyRequests
+	case "order_timeout":
+		status = http.StatusGatewayTimeout
+	case "order_canceled":
+		status = http.StatusRequestTimeout
 	}
 	writeJSON(w, status, map[string]string{"error": code})
 }

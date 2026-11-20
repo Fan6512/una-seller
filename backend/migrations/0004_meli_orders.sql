@@ -36,5 +36,11 @@ CREATE TABLE IF NOT EXISTS app.meli_order_syncs (
     CHECK ((window_from IS NULL) = (window_to IS NULL))
 );
 
+-- Expand existing 0004 installations without discarding orders or cursors.
+ALTER TABLE app.meli_order_syncs
+    ADD COLUMN IF NOT EXISTS pending_order_ids text[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS pending_page_count integer NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS pending_has_more boolean NOT NULL DEFAULT false;
+
 ALTER TABLE app.meli_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.meli_order_syncs ENABLE ROW LEVEL SECURITY;
