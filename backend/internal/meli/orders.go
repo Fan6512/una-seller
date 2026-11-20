@@ -20,6 +20,7 @@ const OrderBatchSize = 3
 const orderPageSize = 20
 const orderDetailBatchSize = 3
 const orderRequestInterval = 100 * time.Millisecond
+
 // Official /marketplace/orders/search quota: 100 requests/minute.
 // Use 650ms between searches for headroom; details keep the 100ms pacing.
 const orderSearchRequestInterval = 650 * time.Millisecond
