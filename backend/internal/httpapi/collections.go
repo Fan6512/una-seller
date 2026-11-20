@@ -57,7 +57,8 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 				}
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 				switch origin {
-				case "http://tauri.localhost", "https://tauri.localhost", "tauri://localhost":
+				case "http://127.0.0.1:1420", "http://localhost:1420",
+					"http://tauri.localhost", "https://tauri.localhost", "tauri://localhost":
 					if r.Method != http.MethodOptions && timedStoreRoute(r.Method, r.URL.Path) {
 						w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
 						w = storeTimingResponse{w, time.Now()}

@@ -37,7 +37,7 @@ const hooks = registerHooks({
 const { cachedStores, listStores, checkStoreConnection, ensureStoreConnection, cachedListingPage, loadListingPage,
   disconnectStore, invalidateListingPages, storeRequest } = await import(storesURL);
 const { rejectSession } = await import(authURL);
-const { beginRequestDiagnostic, clearDiagnostics, diagnosticsJSON } = await import(diagnosticsURL);
+const { beginRequestDiagnostic, clearDiagnostics, diagnosticsJSON, recordCacheHit } = await import(diagnosticsURL);
 hooks.deregister();
 
 test("diagnostics retain only allowlisted fields and rotate within the current account", async (t) => {
@@ -285,8 +285,14 @@ test("pages are available during revalidation, isolated by scope, and invalidate
   await coldRead;
   const coldMs = performance.now() - coldStart;
   const warmStart = performance.now();
+  const countHits = () => JSON.parse(diagnosticsJSON())
+    .filter((event) => event.operation === "listings_get" && event.cache_hit).length;
+  const before = countHits();
   assert.deepEqual(cachedListingPage(mlm), page);
-  assert.equal(JSON.parse(diagnosticsJSON()).some((x) => x.operation === "listings_get" && x.cache_hit), true);
+  assert.deepEqual(cachedListingPage(mlm), page);
+  assert.equal(countHits(), before, "pure cache reads must not record during render");
+  recordCacheHit(mlm);
+  assert.equal(countHits(), before + 1);
   const warmMs = performance.now() - warmStart;
   t.diagnostic(`fixture cold data ${coldMs.toFixed(1)} ms, warm memory data ${warmMs.toFixed(2)} ms`);
   for (const other of [mlm.replace("MLM", "MLB"), mlm.replace("remote", "fulfillment"), mlm.replace("offset=0", "offset=20"), mlm.replace("store-1", "store-2")]) {

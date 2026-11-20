@@ -193,9 +193,7 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
 
 export function cachedStores() {
   const cached = storeSession().stores;
-  const items = cached && cached.expires > Date.now() ? cached.items : undefined;
-  if (items) beginRequestDiagnostic("/api/v1/stores", "GET")?.("response_body", undefined, undefined, true);
-  return items;
+  return cached && cached.expires > Date.now() ? cached.items : undefined;
 }
 
 export function watchStoreList(listener: (items: StoreConnection[]) => void) {
@@ -336,9 +334,7 @@ export async function ensureStoreConnection(id: string, signal?: AbortSignal) {
 
 export function cachedListingPage(path: string) {
   const entry = storeSession().pages.get(path);
-  const page = entry && entry.expires > Date.now() ? entry.page : undefined;
-  if (page) beginRequestDiagnostic(path, "GET")?.("response_body", undefined, undefined, true);
-  return page;
+  return entry && entry.expires > Date.now() ? entry.page : undefined;
 }
 
 export async function loadListingPage(path: string, signal: AbortSignal) {

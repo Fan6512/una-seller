@@ -80,6 +80,11 @@ export function beginRequestDiagnostic(path: string, method: "GET" | "POST") {
   };
 }
 
+// Emitted by page lifecycle effects, never during React render.
+export function recordCacheHit(path: string) {
+  beginRequestDiagnostic(path, "GET")?.("response_body", undefined, undefined, true);
+}
+
 function failureCode(code: unknown, response?: Response) {
   switch (code) {
     case "aborted":

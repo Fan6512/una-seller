@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { recordCacheHit } from "./DevelopmentDiagnostics";
 import { cachedStores, checkStoreConnection, disconnectStore, ensureStoreConnection, listStores, startStoreAuthorization, type StoreConnection } from "./stores";
 
 const statusText: Record<StoreConnection["status"], string> = {
@@ -18,6 +19,7 @@ export default function StoresPage() {
   const [notice, setNotice] = useState("");
   const lifecycle = useRef<AbortController>(null);
   const lastLoad = useRef(0);
+  const cacheReported = useRef(false);
 
   const reload = useCallback(async () => {
     const signal = lifecycle.current?.signal;
@@ -47,6 +49,10 @@ export default function StoresPage() {
   }, []);
 
   useEffect(() => {
+    if (!cacheReported.current && cachedStores()) {
+      cacheReported.current = true;
+      recordCacheHit("/api/v1/stores");
+    }
     const controller = new AbortController();
     lifecycle.current = controller;
     void reload();
