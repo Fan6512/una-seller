@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { recordCacheHit } from "./DevelopmentDiagnostics";
-import { cachedStores, checkStoreConnection, disconnectStore, ensureStoreConnection, listStores, startStoreAuthorization, type StoreConnection } from "./stores";
+import { cachedStores, checkStoreConnection, disconnectStore, ensureStoreConnection, listStores, startStoreAuthorization, readableStoreError, type StoreConnection } from "./stores";
 
 const statusText: Record<StoreConnection["status"], string> = {
   connected: "已连接",
@@ -38,11 +38,11 @@ export default function StoresPage() {
           const fresh = cachedStores();
           if (fresh) setItems(fresh);
           const failure = outcomes.find((outcome) => outcome.status === "rejected");
-          if (failure) setError(failure.reason instanceof Error ? failure.reason.message : "暂时无法自动续签");
+          if (failure) setError(readableStoreError(failure.reason, "暂时无法自动续签"));
         });
       }
     } catch (e) {
-      if (!signal?.aborted) setError(e instanceof Error ? e.message : "无法读取店铺");
+      if (!signal?.aborted) setError(readableStoreError(e, "无法读取店铺"));
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -76,7 +76,7 @@ export default function StoresPage() {
       setAuthorizationURL(url);
       setNotice("请在系统浏览器打开下方官方链接，完成卖家授权后返回此处刷新店铺。");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "无法开始授权");
+      setError(readableStoreError(e, "无法开始授权"));
     } finally {
       setBusy(false);
     }
@@ -101,7 +101,7 @@ export default function StoresPage() {
         ? "Token 有效；获准站点映射已核实，具体刊登能力仍需验证。"
         : "Token 有效；站点映射尚未核实，不允许直接刊登。");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "检查授权失败");
+      setError(readableStoreError(e, "检查授权失败"));
     } finally {
       const fresh = cachedStores();
       if (fresh) setItems(fresh);
@@ -119,7 +119,7 @@ export default function StoresPage() {
       setNotice("已断开本系统中的店铺连接。平台侧授权可在美客多开发者中心另行撤销。");
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "断开店铺失败");
+      setError(readableStoreError(e, "断开店铺失败"));
     } finally {
       setBusy(false);
     }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { authLifetime } from "./auth";
 import { recordCacheHit } from "./DevelopmentDiagnostics";
-import { cachedListingPage, cachedStores, ensureStoreConnection, invalidateListingPages, listingAccessDenied, listingErrorMessage, listStores, loadListingPage, storeRequest, watchStoreList, type ListingPage, type Review, type StoreConnection } from "./stores";
+import { cachedListingPage, cachedStores, ensureStoreConnection, invalidateListingPages, listingAccessDenied, listingErrorMessage, listStores, loadListingPage, storeRequest, watchStoreList, readableStoreError, type ListingPage, type Review, type StoreConnection } from "./stores";
 import { runListingBatches, type ListingBatch } from "./listingBatches";
 import PublishedListingView from "./PublishedListingView";
 
@@ -22,10 +22,13 @@ type BeginSync = () => (() => void) | undefined;
 const SITE_LABELS: Record<string, string> = { MLM: "墨西哥 MX", MLB: "巴西 BR", MLA: "阿根廷 AR", MLC: "智利 CL", MCO: "哥伦比亚 CO" };
 
 function message(error: unknown) {
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return "请求超时，请检查网络后重试。已保存的商品和同步位置不会丢失。";
+  }
   if (error instanceof Error && /Failed to fetch/i.test(error.message)) {
     return "网络请求未完成，已保存的商品不会丢失。可检查网络后继续同步。";
   }
-  return error instanceof Error ? error.message : "无法读取已刊登商品";
+  return readableStoreError(error, "无法读取已刊登商品");
 }
 
 export default function PublishedListingsPage({ beginSync, installingUpdate }: {
