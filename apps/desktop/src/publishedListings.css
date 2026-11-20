@@ -144,3 +144,16 @@
   .published-edit-grid { grid-template-columns:1fr; }
   .published-draft-toolbar { align-items:stretch; }
 }
+
+/* Compact shipment metrics, readable draft editors and in-field character counters. */
+.published-metrics-inline { display:flex; align-items:center; flex-wrap:wrap; gap:8px 26px;
+  color:var(--ui-text, #192638); font-size:13px; line-height:1.7; }
+.published-metrics-inline strong { font-weight:650; }
+.published-category-path { color:var(--ui-text, #192638); font-size:14px; font-weight:650;
+  overflow-wrap:anywhere; margin:0; }
+.published-counter-wrap { position:relative; min-width:0; }
+.published-counter-wrap .published-edit-textarea { font-size:15px; line-height:1.65;
+  padding:12px 14px 32px; min-height:96px; }
+.published-char-counter { position:absolute; right:26px; bottom:11px; z-index:1;
+  padding:2px 5px; border-radius:4px; background:#fff; color:var(--ui-muted, #657181);
+  font-size:11px; line-height:1.4; pointer-events:none; }
