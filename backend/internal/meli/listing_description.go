@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	ErrListingDescriptionMissing = errors.New("published listing was not found for this store and site")
+	ErrListingDescriptionMissing     = errors.New("published listing was not found for this store and site")
 	ErrListingDescriptionLinkMissing = errors.New("published listing lacks a usable global description id")
 )
 
@@ -70,8 +70,8 @@ func (s *Service) GetPublishedDescription(ctx context.Context, owner, store stri
 	}
 
 	var content struct {
-		Text string `json:"text"`
-		PlainText string `json:"plain_text"`
+		Text                string `json:"text"`
+		PlainText           string `json:"plain_text"`
 		TranslatedPlainText string `json:"translated_plain_text"`
 	}
 	if _, err := s.listingGET(readCtx, auth.AccessToken, path, &content); err != nil {
