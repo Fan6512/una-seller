@@ -20,6 +20,9 @@ const OrderBatchSize = 3
 const orderPageSize = 20
 const orderDetailBatchSize = 3
 const orderRequestInterval = 100 * time.Millisecond
+// Official /marketplace/orders/search quota: 100 requests/minute.
+// Use 650ms between searches for headroom; details keep the 100ms pacing.
+const orderSearchRequestInterval = 650 * time.Millisecond
 const orderDefaultCooldown = 5 * time.Second
 
 var (
@@ -107,7 +110,14 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 	if time.Now().Before(s.orderRetryUntil) {
 		return http.StatusTooManyRequests, &OrderRateLimitError{until: s.orderRetryUntil}
 	}
-	if delay := time.Until(s.orderNextRequest); delay > 0 {
+	// Both clocks are protected by orderRequests. Search calls have their
+	// own slower quota; detail reads must not inherit the search delay.
+	isSearch := path == "/marketplace/orders/search" || strings.HasPrefix(path, "/marketplace/orders/search?")
+	next := s.orderNextRequest
+	if isSearch && s.orderNextSearch.After(next) {
+		next = s.orderNextSearch
+	}
+	if delay := time.Until(next); delay > 0 {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		select {
@@ -119,7 +129,11 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	s.orderNextRequest = time.Now().Add(orderRequestInterval)
+	now := time.Now()
+	s.orderNextRequest = now.Add(orderRequestInterval)
+	if isSearch {
+		s.orderNextSearch = now.Add(orderSearchRequestInterval)
+	}
 	var response listingGETTiming
 	status, err := s.listingGET(ctx, token, path, target, &response)
 	if status == http.StatusTooManyRequests {

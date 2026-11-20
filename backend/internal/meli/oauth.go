@@ -50,6 +50,7 @@ type Service struct {
 	listingRuns      sync.Map
 	orderRequests    sync.Mutex
 	orderNextRequest time.Time
+	orderNextSearch  time.Time
 	orderRetryUntil  time.Time
 }
 

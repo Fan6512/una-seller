@@ -160,6 +160,67 @@ func TestOrderProviderPacing(t *testing.T) {
 	}
 }
 
+// The search endpoint has a separate 100/minute quota. Detail GETs remain
+// on the faster shared pacing and must not consume/reserve a search slot.
+func TestOrderSearchPacingRespectsQuota(t *testing.T) {
+	requests := make(chan time.Time, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests <- time.Now()
+		fmt.Fprint(w, "{}")
+	}))
+	defer server.Close()
+	s := Service{apiURL: server.URL, client: server.Client()}
+	var raw json.RawMessage
+
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search?seller.id=1", &raw); err != nil {
+		t.Fatal(err)
+	}
+	first := <-requests
+	nextSearch := s.orderNextSearch
+	if nextSearch.IsZero() {
+		t.Fatal("search did not reserve a quota slot")
+	}
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/101", &raw); err != nil {
+		t.Fatal(err)
+	}
+	detail := <-requests
+	if !s.orderNextSearch.Equal(nextSearch) {
+		t.Fatal("detail request consumed a search quota slot")
+	}
+	if detail.Sub(first) < orderRequestInterval-20*time.Millisecond {
+		t.Fatal("detail request bypassed general pacing")
+	}
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw); err != nil {
+		t.Fatal(err)
+	}
+	second := <-requests
+	if elapsed := second.Sub(first); elapsed < orderSearchRequestInterval-20*time.Millisecond {
+		t.Fatalf("search requests too close: %s, want at least %s", elapsed, orderSearchRequestInterval)
+	}
+}
+
+func TestOrderSearchCanceledWhileThrottledDoesNotSendRequest(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, "{}")
+	}))
+	defer server.Close()
+	s := Service{apiURL: server.URL, client: server.Client()}
+	var raw json.RawMessage
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.orderGET(ctx, "fixture", "/marketplace/orders/search", &raw); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled search returned %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("canceled search sent %d upstream requests", calls.Load())
+	}
+}
+
 func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
