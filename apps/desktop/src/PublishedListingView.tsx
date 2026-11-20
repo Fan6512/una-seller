@@ -25,7 +25,7 @@ export type Listing = {
 };
 type Group = { key: string; familyId?: string; members: Listing[] };
 type Props = { items: Listing[]; selectedId: string; onSelect: (id: string) => void; site: string; logistic: string; store: string };
-type SkuRow = { key: string; sku: string; name: string; pictures: Picture[]; stock?: number | null; fromItem: Listing };
+type SkuRow = { key: string; sku?: string; name: string; pictures: Picture[]; stock?: number | null; fromItem: Listing };
 
 function getFamily(item: Listing): { key: string; id?: string } {
   if (item.family_id != null && String(item.family_id) !== "") {
@@ -37,11 +37,20 @@ function getFamily(item: Listing): { key: string; id?: string } {
   return { key: "listing:" + item.id };
 }
 
-function getSKU(item: Listing, variation?: Variation): string {
-  return variation?.seller_custom_field
+function getSKU(item: Listing, variation?: Variation): string | undefined {
+  const sku = variation?.seller_custom_field
     || variation?.attributes?.find((a) => a.id === "SELLER_SKU")?.value_name
     || item.attributes?.find((a) => a.id === "SELLER_SKU")?.value_name
-    || item.seller_custom_field || "SKU 未返回";
+    || item.seller_custom_field || undefined;
+  // Some older platform payloads copy the entire title into the custom field.
+  return sku?.trim() && sku.trim() !== item.title?.trim() ? sku.trim() : undefined;
+}
+const optionField = /^(COLOR|MAIN_COLOR|SECONDARY_COLOR|SIZE|SIZE_GRID|MODEL|PATTERN|DESIGN)$/;
+function variantName(item: Listing, variation?: Variation): string | undefined {
+  const combination = variation?.attribute_combinations?.filter((a) => a.value_name);
+  if (combination?.length) return combination.map((a) => a.value_name).join(" / ");
+  const options = (variation?.attributes || item.attributes || []).filter((a) => optionField.test(a.id) && a.value_name);
+  if (options.length) return options.map((a) => a.value_name).join(" / ");
 }
 
 function safePictures(item: Listing, ids?: string[]): Picture[] {
@@ -61,14 +70,14 @@ function safePictures(item: Listing, ids?: string[]): Picture[] {
 function skuRows(items: Listing[]): SkuRow[] {
   return items.flatMap((item) => {
     if (!item.variations?.length) {
-      return [{ key: item.id, sku: getSKU(item), name: item.title || "未命名款式",
+      return [{ key: item.id, sku: getSKU(item),
+        name: variantName(item) || (items.length > 1 ? item.title?.trim() || item.id : "单规格"),
         pictures: safePictures(item), stock: item.available_quantity, fromItem: item }];
     }
     return item.variations.map((variant, index) => ({
       key: item.id + ":" + (variant.id ?? index),
       sku: getSKU(item, variant),
-      name: (variant.attribute_combinations || []).map((attr) => attr.value_name).filter(Boolean).join(" / ")
-        || "规格 " + (index + 1),
+      name: variantName(item, variant) || "款式 " + (index + 1),
       pictures: safePictures(item, variant.picture_ids), stock: variant.available_quantity, fromItem: item,
     }));
   });
@@ -95,14 +104,17 @@ function pictureURL(picture: Picture): string | undefined {
 function SkuGallery({ members }: { members: Listing[] }) {
   const rows = skuRows(members);
   return <section className="published-block">
-    <div className="published-block-head"><h3>SKU 图片</h3><span>{rows.length} 个 SKU / 款式</span></div>
+    <div className="published-block-head"><h3>款式与图片</h3><span>{rows.length} 个款式</span></div>
     <div className="published-sku-list">
       {rows.map((row) => <div className="published-sku-row" key={row.key}>
-        <div className="published-sku-meta"><strong>{row.name}</strong><span>{row.sku}</span>
+        <div className="published-sku-meta"><strong>{row.name}</strong>
+          {members.length > 1 && !row.fromItem.variations?.length && row.name !== row.fromItem.id &&
+            <small>刊登 {row.fromItem.id}</small>}
+          {row.sku && <span>商家 SKU：{row.sku}</span>}
           <small>库存 {row.stock ?? "未获取"}</small></div>
         <div className="published-photo-scroll">
           {row.pictures.length ? row.pictures.map((pic, index) => <div className="published-photo-item" key={row.key + ":" + index}>
-            <img src={pictureURL(pic)} alt={(row.name || row.sku) + " 图片 " + (index + 1)}
+            <img src={pictureURL(pic)} alt={row.name + " 图片 " + (index + 1)}
               referrerPolicy="no-referrer" loading="lazy" />
             <span>{index === 0 ? "主图" : "图片 " + (index + 1)}</span>
           </div>) : <div className="published-no-photo">平台未返回图片</div>}
