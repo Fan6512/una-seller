@@ -96,7 +96,7 @@ func (s *Service) GetPublishedDescription(ctx context.Context, owner, store stri
 		PlainText           string `json:"plain_text"`
 		TranslatedPlainText string `json:"translated_plain_text"`
 	}
-	if _, err := s.listingGET(readCtx, auth.AccessToken, path, &content); err != nil {
+	if _, err := s.listingGET(readCtx, auth.AccessToken, path, &content, nil); err != nil {
 		if errors.Is(err, ErrListingResponse) {
 			return "", errors.New("invalid marketplace description response")
 		}
