@@ -145,6 +145,19 @@
   padding: 3px 8px; font-size: 10px; white-space: nowrap; }
 .orders-purchase-block { background: #fbfcfd; }
 .orders-purchase-block p { margin: -3px 0 18px; color: #718092; font-size: 11px; line-height: 1.8; }
+.orders-purchase-form { display: grid; gap: 11px; }
+.orders-purchase-form label { display: grid; gap: 6px; font-size: 11px; font-weight: 600; color: #718196; }
+.orders-purchase-form input { width: 100%; min-width: 0; height: 38px; border: 1px solid #dce4eb;
+  border-radius: 7px; background: #fff; padding: 0 11px; color: #2f3e51; font-size: 12px; }
+.orders-purchase-form input:focus-visible { outline: 2px solid #89bdbb; outline-offset: 1px; }
+.orders-purchase-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.orders-purchase-actions a { color: #13747b; font-size: 11px; text-decoration: none; }
+.orders-purchase-actions a:hover { text-decoration: underline; }
+.orders-purchase-success, .orders-purchase-state { color: #23805b !important; font-size: 11px !important; margin: 0 !important; }
+.orders-purchase-followup { display: grid; gap: 7px; border: 1px dashed #d6dfe5;
+  border-radius: 7px; padding: 12px; margin-top: 15px; color: #738297; font-size: 11px; }
+.orders-purchase-followup strong { color: #4d6478; font-size: 11px; }
+.orders-purchase-followup span { line-height: 1.6; }
 .orders-shipping-disabled { margin-top: 18px; width: 100%; border: 0; border-radius: 7px; padding: 11px 16px;
   background: #e5eaef; color: #93a0af; font-size: 12px; }
 .orders-detail-loading { padding: 16px 19px; color: var(--order-muted); font-size: 12px; }
