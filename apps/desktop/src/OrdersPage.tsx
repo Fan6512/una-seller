@@ -463,8 +463,19 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
                     {purchase.cost_cny !== null ? " · 人民币 ¥" + purchase.cost_cny : " · 金额待获取"}</p>}
                 </div>
                 <div className="orders-purchase-followup">
-                  <strong>下一步：1688 买家授权 → 采购成本/国内物流 → 货代 → 美客多 Shipment 跟踪</strong>
-                  <span>1688 国内发货、货代转运、美客多海外派送须分别跟踪。现阶段仅保存采购信息，不会把采购包裹已签收误记为海外买家已签收。</span>
+                  <strong>采购代发货流程 · 两张订单关联</strong>
+                  <span>一张是美客多买家的销售订单，一张是向 1688 厂家采购的订单。中间由货代仓接收，再交接官方或指定承运商扫描发货。</span>
+                  <ol className="orders-fulfillment-steps" aria-label="采购至买家签收的履约流程">
+                    <li>
+                      <b>1688 厂家采购</b>
+                      <small>{purchase ? "采购单号已关联；付款与发货状态待同步" : "采购单号尚未关联"}</small>
+                    </li>
+                    <li><b>国内快递运输</b><small>厂家发货及国内物流状态待接入</small></li>
+                    <li><b>货代仓库签收</b><small>货代仓入库状态待接入</small></li>
+                    <li><b>官方物流扫描交接</b><small>交接扫描与国际运输状态待接入</small></li>
+                    <li><b>海外买家签收</b><small>美客多 Shipment 配送状态待接入</small></li>
+                  </ol>
+                  <span>货代仓签收、官方物流接收、买家签收是三个不同事件；当前没有实时状态数据时不显示为已完成。</span>
                 </div>
                 <button type="button" disabled className="orders-shipping-disabled">提交发货（接口待接入）</button>
               </section>
