@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { authLifetime } from "./auth";
 import { cachedStores, listStores, type StoreConnection } from "./stores";
 import {
-  getOrder, listOrders, orderDate, orderErrorLabel, orderMoney, orderStatusLabel,
+  getOrder, listOrders, orderDate, orderMoney, orderStatusLabel,
   OrderRequestError, resetOrderCursor, skipOrder, syncOrders,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope,
 } from "./orders";
