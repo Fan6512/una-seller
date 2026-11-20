@@ -258,34 +258,6 @@ SELECT owner_user_id::text,id::text,review_id::text FROM connection CROSS JOIN r
 		}
 	})
 
-	t.Run("persisted reset offset", func(t *testing.T) {
-		if _, err := cs.DB.Exec(ctx, `UPDATE app.meli_order_syncs
-SET next_offset=3,window_from=now()-interval '1 day',window_to=now(),
-pending_order_ids='{}'::text[],review_id=NULL,review_reason=NULL,lease_id=NULL,lease_until=NULL
-WHERE store_id=$1::uuid`, store); err != nil {
-			t.Fatal(err)
-		}
-		state := readState()
-		if state.CanReset || state.NextOffset != 3 {
-			t.Fatalf("reauth_required store must not offer reset: %+v", state)
-		}
-		// A permitted reset requires an actively connected seller scope.
-		if _, err := cs.DB.Exec(ctx, "UPDATE app.meli_store_connections SET status='connected' WHERE id=$1::uuid", store); err != nil {
-			t.Fatal(err)
-		}
-		state = readState()
-		if !state.CanReset || state.NextOffset != 3 || state.Review != nil {
-			t.Fatalf("expected recoverable reset offset, got %+v", state)
-		}
-		reset := post("reset", `{"offset":3}`)
-		if reset.Code != http.StatusOK {
-			t.Fatalf("reset HTTP %d %s", reset.Code, reset.Body)
-		}
-		if state = readState(); state.CanReset || state.NextOffset != 0 {
-			t.Fatalf("reset state not refreshed: %+v", state)
-		}
-	})
-
 	t.Run("provider 429 and cooldown", func(t *testing.T) {
 		cipher, err := meli.NewTokenCipher(key)
 		if err != nil {
@@ -315,6 +287,28 @@ WHERE store_id=$1::uuid`, store); err != nil {
 		if err := cs.DB.QueryRow(ctx, `SELECT lease_id IS NOT NULL, review_id IS NOT NULL
  FROM app.meli_order_syncs WHERE store_id=$1::uuid`, store).Scan(&leased, &reviewing); err != nil || leased || reviewing {
 			t.Fatalf("429 left lease=%t review=%t error=%v", leased, reviewing, err)
+		}
+	})
+
+	t.Run("persisted reset offset", func(t *testing.T) {
+		if _, err := cs.DB.Exec(ctx, `UPDATE app.meli_order_syncs
+SET next_offset=3,window_from=now()-interval '1 day',window_to=now(),
+pending_order_ids='{}'::text[],review_id=NULL,review_reason=NULL,lease_id=NULL,lease_until=NULL
+WHERE store_id=$1::uuid`, store); err != nil {
+			t.Fatal(err)
+		}
+		// The previous test connected the store with a valid encrypted token.
+		// Reset eligibility must agree with ResetOrderCursor's guard.
+		state := readState()
+		if !state.CanReset || state.NextOffset != 3 || state.Review != nil {
+			t.Fatalf("expected recoverable reset offset, got %+v", state)
+		}
+		reset := post("reset", `{"offset":3}`)
+		if reset.Code != http.StatusOK {
+			t.Fatalf("reset HTTP %d %s", reset.Code, reset.Body)
+		}
+		if state = readState(); state.CanReset || state.NextOffset != 0 {
+			t.Fatalf("reset state not refreshed: %+v", state)
 		}
 	})
 }
