@@ -13,7 +13,7 @@ func (a storeAPI) publishedDescription(w http.ResponseWriter, r *http.Request, o
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeListingError(w, http.StatusMethodNotAllowed, "listing_method", "method not allowed", nil, meli.ListingSync{})
 		return
 	}
 	q := r.URL.Query()
@@ -27,7 +27,7 @@ func (a storeAPI) publishedDescription(w http.ResponseWriter, r *http.Request, o
 		writeJSON(w, http.StatusOK, map[string]any{"description": desc})
 		return
 	}
-	status, code := http.StatusBadGateway, "description_unavailable"
+	status, code := http.StatusBadGateway, "listing_unavailable"
 	var platform meli.ListingPlatformError
 	switch {
 	case errors.Is(err, meli.ErrListingResponse):
@@ -44,6 +44,10 @@ func (a storeAPI) publishedDescription(w http.ResponseWriter, r *http.Request, o
 		status, code = http.StatusConflict, "listing_token_expired"
 	case errors.Is(err, meli.ErrRefreshUnknown):
 		status, code = http.StatusConflict, "listing_refresh_unknown"
+	case errors.Is(err, meli.ErrListingAuthorizationChanged):
+		status, code = http.StatusConflict, "listing_auth_changed"
+	case errors.Is(err, meli.ErrListingTransport):
+		code = "listing_transport"
 	case errors.Is(err, context.Canceled):
 		status, code = http.StatusRequestTimeout, "listing_canceled"
 	case errors.Is(err, context.DeadlineExceeded):

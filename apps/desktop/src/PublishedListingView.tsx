@@ -46,12 +46,11 @@ function getSKU(item: Listing, variation?: Variation): string | undefined {
   return sku?.trim() && sku.trim() !== item.title?.trim() ? sku.trim() : undefined;
 }
 const optionField = /^(COLOR|MAIN_COLOR|SECONDARY_COLOR|SIZE|SIZE_GRID|MODEL|PATTERN|DESIGN)$/;
-function variantName(item: Listing, variation?: Variation, index?: number): string {
+function variantName(item: Listing, variation?: Variation): string | undefined {
   const combination = variation?.attribute_combinations?.filter((a) => a.value_name);
   if (combination?.length) return combination.map((a) => a.value_name).join(" / ");
   const options = (variation?.attributes || item.attributes || []).filter((a) => optionField.test(a.id) && a.value_name);
   if (options.length) return options.map((a) => a.value_name).join(" / ");
-  return index == null ? "单规格" : "款式 " + (index + 1);
 }
 
 function safePictures(item: Listing, ids?: string[]): Picture[] {
@@ -71,13 +70,14 @@ function safePictures(item: Listing, ids?: string[]): Picture[] {
 function skuRows(items: Listing[]): SkuRow[] {
   return items.flatMap((item) => {
     if (!item.variations?.length) {
-      return [{ key: item.id, sku: getSKU(item), name: variantName(item),
+      return [{ key: item.id, sku: getSKU(item),
+        name: variantName(item) || (items.length > 1 ? item.title?.trim() || item.id : "单规格"),
         pictures: safePictures(item), stock: item.available_quantity, fromItem: item }];
     }
     return item.variations.map((variant, index) => ({
       key: item.id + ":" + (variant.id ?? index),
       sku: getSKU(item, variant),
-      name: variantName(item, variant, index),
+      name: variantName(item, variant) || "款式 " + (index + 1),
       pictures: safePictures(item, variant.picture_ids), stock: variant.available_quantity, fromItem: item,
     }));
   });
@@ -108,6 +108,8 @@ function SkuGallery({ members }: { members: Listing[] }) {
     <div className="published-sku-list">
       {rows.map((row) => <div className="published-sku-row" key={row.key}>
         <div className="published-sku-meta"><strong>{row.name}</strong>
+          {members.length > 1 && !row.fromItem.variations?.length && row.name !== row.fromItem.id &&
+            <small>刊登 {row.fromItem.id}</small>}
           {row.sku && <span>商家 SKU：{row.sku}</span>}
           <small>库存 {row.stock ?? "未获取"}</small></div>
         <div className="published-photo-scroll">
