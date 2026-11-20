@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -377,65 +379,122 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 }
 
 func (s *Service) saveListingBatch(ctx context.Context, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor listingCursor, result ListingSync, details map[string]listingWrite, trace *slog.Logger) error {
+	type timing struct {
+		stage, outcome, cause string
+		elapsedMS             int64
+		attrs                 []slog.Attr
+	}
+	timings := make([]timing, 0, 8+ListingBatchSize)
+	record := func(stage string, started time.Time, err error, attrs ...slog.Attr) {
+		timings = append(timings, timing{stage: stage, elapsedMS: time.Since(started).Milliseconds(), outcome: listingStageOutcome(err), attrs: attrs})
+	}
+	// Emit after rollback and connection release so logging cannot consume the transaction budget.
+	defer func() {
+		for _, step := range timings {
+			level := slog.LevelInfo
+			attrs := []slog.Attr{slog.String("stage", step.stage), slog.Int64("elapsed_ms", step.elapsedMS), slog.String("outcome", step.outcome)}
+			if step.cause != "" {
+				level = slog.LevelWarn
+				attrs = append(attrs, slog.String("cause", step.cause))
+			}
+			trace.LogAttrs(ctx, level, "listing sync stage", append(attrs, step.attrs...)...)
+		}
+	}()
+
+	before := s.db.Stat()
 	started := time.Now()
-	tx, err := s.db.Begin(ctx)
-	logListingStage(trace, "db_begin", started, err)
+	conn, err := s.db.Acquire(ctx)
+	elapsedMS := time.Since(started).Milliseconds()
+	after := s.db.Stat()
+	// Deltas describe the shared pool. Empty acquire counters include only successful waits.
+	timings = append(timings, timing{
+		stage: "db_acquire", elapsedMS: elapsedMS, outcome: listingStageOutcome(err),
+		attrs: []slog.Attr{
+			slog.Int("pool_total", int(after.TotalConns())),
+			slog.Int("pool_idle", int(after.IdleConns())),
+			slog.Int("pool_in_use", int(after.AcquiredConns())),
+			slog.Int64("pool_new_total", after.NewConnsCount()),
+			slog.Int64("pool_wait_total", after.EmptyAcquireCount()),
+			slog.Int64("pool_canceled_total", after.CanceledAcquireCount()),
+			slog.Int64("new_conns_delta", after.NewConnsCount()-before.NewConnsCount()),
+			slog.Int64("empty_acquires_delta", after.EmptyAcquireCount()-before.EmptyAcquireCount()),
+			slog.Int64("empty_acquire_wait_ms_delta", (after.EmptyAcquireWaitTime() - before.EmptyAcquireWaitTime()).Milliseconds()),
+			slog.Int64("canceled_acquires_delta", after.CanceledAcquireCount()-before.CanceledAcquireCount()),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	started = time.Now()
+	tx, err := conn.Begin(ctx)
+	record("db_begin", started, err)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) // pgx discards the connection if cancellation prevents rollback.
 
 	started = time.Now()
-	err = writeListingBatch(ctx, tx, owner, store, scope, seller, row, cursor, result, details)
-	logListingStage(trace, "db_write", started, err)
+	err = writeListingBatch(ctx, tx, owner, store, scope, seller, row, cursor, result, details, record)
+	record("db_write", started, err)
 	if err != nil {
 		return err
 	}
 	started = time.Now()
 	err = tx.Commit(ctx)
 	if err != nil && !errors.Is(err, pgx.ErrTxCommitRollback) {
+		step := timing{stage: "db_commit", elapsedMS: time.Since(started).Milliseconds(), cause: listingStageOutcome(err)}
 		if pgconn.SafeToRetry(err) {
-			trace.Warn("listing sync stage", "stage", "db_commit", "elapsed_ms", time.Since(started).Milliseconds(),
-				"outcome", "commit_not_sent", "cause", listingStageOutcome(err))
+			step.outcome = "commit_not_sent"
+			timings = append(timings, step)
 			return err
 		}
-		trace.Warn("listing sync stage", "stage", "db_commit", "elapsed_ms", time.Since(started).Milliseconds(),
-			"outcome", "commit_unknown", "cause", listingStageOutcome(err))
+		step.outcome = "commit_unknown"
+		timings = append(timings, step)
 		return &ListingInterruption{Code: "listing_commit_unknown"}
 	}
-	logListingStage(trace, "db_commit", started, err)
+	record("db_commit", started, err)
 	return err
 }
 
-func writeListingBatch(ctx context.Context, tx pgx.Tx, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor listingCursor, result ListingSync, details map[string]listingWrite) error {
+func writeListingBatch(ctx context.Context, tx pgx.Tx, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor listingCursor, result ListingSync, details map[string]listingWrite, record func(string, time.Time, error, ...slog.Attr)) error {
 	var valid bool
+	started := time.Now()
 	err := tx.QueryRow(ctx, `SELECT COALESCE(status='connected' AND seller_id=$3
         AND access_token_ciphertext=$4 AND marketplaces=$5::jsonb AND marketplaces_status=$6
         AND access_token_expires_at > clock_timestamp(),false)
         FROM app.meli_store_connections
         WHERE id=$1::uuid AND owner_user_id=$2::uuid FOR UPDATE`,
 		store, owner, row.sellerID, row.accessCipher, row.marketsJSON, row.marketsStatus).Scan(&valid)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrStoreNotFound
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		err = ErrStoreNotFound
+	case err == nil && !valid:
+		err = ErrListingAuthorizationChanged
 	}
+	record("db_authorization_lock", started, err)
 	if err != nil {
 		return err
 	}
-	if !valid {
-		return ErrListingAuthorizationChanged
-	}
+	started = time.Now()
 	current, err := readListingCursor(ctx, tx, store, scope, seller)
+	if err == nil && current != cursor {
+		err = ErrListingCursor
+	}
+	record("db_cursor_recheck", started, err)
 	if err != nil {
 		return err
 	}
-	if current != cursor {
-		return ErrListingCursor
-	}
-	for id, item := range details {
+	var batch pgx.Batch
+	for _, id := range slices.Sorted(maps.Keys(details)) {
+		item := details[id]
 		if item.unavailableAt != nil {
+			started = time.Now()
 			_, err = tx.Exec(ctx, `UPDATE app.meli_published_listings SET detail_unavailable_at=$6
               WHERE (store_id,site_id,logistic_type,listing_id)=($1::uuid,$2,$3,$4)
                 AND details->>'seller_id'=$5`, store, scope.Site, scope.Logistic, id, seller, item.unavailableAt)
+			record("db_mark_unavailable", started, err)
 			if err != nil {
 				return err
 			}
@@ -444,9 +503,15 @@ func writeListingBatch(ctx context.Context, tx pgx.Tx, owner, store string, scop
 		detail := item.detail
 		if item.partial {
 			var previous json.RawMessage
+			started = time.Now()
 			err = tx.QueryRow(ctx, `SELECT details FROM app.meli_published_listings
               WHERE (store_id,site_id,logistic_type,listing_id)=($1::uuid,$2,$3,$4)
                 AND details->>'seller_id'=$5`, store, scope.Site, scope.Logistic, id, seller).Scan(&previous)
+			timingErr := err
+			if errors.Is(err, pgx.ErrNoRows) {
+				timingErr = nil // A missing snapshot is expected for the first partial read.
+			}
+			record("db_partial_snapshot_read", started, timingErr)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
@@ -457,14 +522,28 @@ func writeListingBatch(ctx context.Context, tx pgx.Tx, owner, store string, scop
 				}
 			}
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO app.meli_published_listings
+		batch.Queue(`INSERT INTO app.meli_published_listings
             (store_id,site_id,logistic_type,listing_id,details) VALUES ($1::uuid,$2,$3,$4,$5)
             ON CONFLICT (store_id,site_id,logistic_type,listing_id)
             DO UPDATE SET details=EXCLUDED.details, detail_unavailable_at=NULL`, store, scope.Site, scope.Logistic, id, detail)
+	}
+	if batch.Len() > 0 {
+		started = time.Now()
+		results := tx.SendBatch(ctx, &batch)
+		for range batch.Len() {
+			if _, err = results.Exec(); err != nil {
+				break
+			}
+		}
+		if closeErr := results.Close(); err == nil {
+			err = closeErr
+		}
+		record("db_listing_upsert_batch", started, err, slog.Int("batch_statements", batch.Len()))
 		if err != nil {
 			return err
 		}
 	}
+	started = time.Now()
 	_, err = tx.Exec(ctx, `INSERT INTO app.meli_listing_syncs AS state
       (store_id,site_id,logistic_type,seller_id,synced_at,next_offset,scan_required,review,last_skipped_review)
       VALUES ($1::uuid,$2,$3,$4,CASE WHEN $5 THEN now() END,$6,$7,$8,
@@ -476,6 +555,7 @@ func writeListingBatch(ctx context.Context, tx pgx.Tx, owner, store string, scop
           CASE WHEN state.seller_id=EXCLUDED.seller_id THEN state.last_skipped_review END),
         synced_at=COALESCE(EXCLUDED.synced_at, CASE WHEN state.seller_id=EXCLUDED.seller_id THEN state.synced_at END)`,
 		store, scope.Site, scope.Logistic, seller, result.Saved > 0 || result.Interruption == nil, result.NextOffset, result.ScanRequired, result.Review, result.ConfirmedSkip)
+	record("db_cursor_upsert", started, err)
 	if err != nil {
 		return err
 	}
@@ -508,7 +588,9 @@ func listingStageOutcome(err error) string {
 		return "identity_mismatch"
 	case errors.As(err, &platform):
 		return "platform_http_error"
-	case errors.Is(err, ErrStoreNotFound), errors.Is(err, ErrSiteNotAuthorized), errors.Is(err, ErrListingAuthorizationChanged):
+	case errors.Is(err, ErrStoreNotFound):
+		return "store_not_found"
+	case errors.Is(err, ErrSiteNotAuthorized), errors.Is(err, ErrListingAuthorizationChanged):
 		return "authorization_rejected"
 	case errors.Is(err, ErrListingCursor):
 		return "cursor_changed"
