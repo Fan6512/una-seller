@@ -20,7 +20,7 @@ import (
 
 func TestListingWritePoolAcquireTimeout(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
-	acquireCtx, cancelAcquire := context.WithTimeout(context.Background(), 3*time.Second)
+	acquireCtx, cancelAcquire := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelAcquire()
 	for i := int32(0); i < db.Config().MaxConns; i++ {
 		conn, err := db.Acquire(acquireCtx)
@@ -38,6 +38,8 @@ func TestListingWritePoolAcquireTimeout(t *testing.T) {
 		t.Fatalf("expected connection acquisition timeout, got %v", err)
 	}
 	if line := logs.String(); !strings.Contains(line, "stage=db_acquire") || !strings.Contains(line, "outcome=timeout") ||
+		!strings.Contains(line, "new_conns_delta=0") || !strings.Contains(line, "empty_acquires_delta=0") ||
+		!strings.Contains(line, "empty_acquire_wait_ms_delta=0") || !strings.Contains(line, "canceled_acquires_delta=1") ||
 		strings.Contains(line, "stage=db_begin") || strings.Contains(line, owner) || strings.Contains(line, store) {
 		t.Fatalf("unexpected timing log: %s", line)
 	}

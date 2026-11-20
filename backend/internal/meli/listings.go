@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -399,13 +401,27 @@ func (s *Service) saveListingBatch(ctx context.Context, owner, store string, sco
 		}
 	}()
 
+	before := s.db.Stat()
 	started := time.Now()
 	conn, err := s.db.Acquire(ctx)
-	stats := s.db.Stat()
-	record("db_acquire", started, err,
-		slog.Int("pool_total", int(stats.TotalConns())), slog.Int("pool_idle", int(stats.IdleConns())),
-		slog.Int("pool_in_use", int(stats.AcquiredConns())), slog.Int64("pool_new_total", stats.NewConnsCount()),
-		slog.Int64("pool_wait_total", stats.EmptyAcquireCount()), slog.Int64("pool_canceled_total", stats.CanceledAcquireCount()))
+	elapsedMS := time.Since(started).Milliseconds()
+	after := s.db.Stat()
+	// Deltas describe the shared pool. Empty acquire counters include only successful waits.
+	timings = append(timings, timing{
+		stage: "db_acquire", elapsedMS: elapsedMS, outcome: listingStageOutcome(err),
+		attrs: []slog.Attr{
+			slog.Int("pool_total", int(after.TotalConns())),
+			slog.Int("pool_idle", int(after.IdleConns())),
+			slog.Int("pool_in_use", int(after.AcquiredConns())),
+			slog.Int64("pool_new_total", after.NewConnsCount()),
+			slog.Int64("pool_wait_total", after.EmptyAcquireCount()),
+			slog.Int64("pool_canceled_total", after.CanceledAcquireCount()),
+			slog.Int64("new_conns_delta", after.NewConnsCount()-before.NewConnsCount()),
+			slog.Int64("empty_acquires_delta", after.EmptyAcquireCount()-before.EmptyAcquireCount()),
+			slog.Int64("empty_acquire_wait_ms_delta", (after.EmptyAcquireWaitTime() - before.EmptyAcquireWaitTime()).Milliseconds()),
+			slog.Int64("canceled_acquires_delta", after.CanceledAcquireCount()-before.CanceledAcquireCount()),
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -471,7 +487,8 @@ func writeListingBatch(ctx context.Context, tx pgx.Tx, owner, store string, scop
 		return err
 	}
 	var batch pgx.Batch
-	for id, item := range details {
+	for _, id := range slices.Sorted(maps.Keys(details)) {
+		item := details[id]
 		if item.unavailableAt != nil {
 			started = time.Now()
 			_, err = tx.Exec(ctx, `UPDATE app.meli_published_listings SET detail_unavailable_at=$6
@@ -571,7 +588,9 @@ func listingStageOutcome(err error) string {
 		return "identity_mismatch"
 	case errors.As(err, &platform):
 		return "platform_http_error"
-	case errors.Is(err, ErrStoreNotFound), errors.Is(err, ErrSiteNotAuthorized), errors.Is(err, ErrListingAuthorizationChanged):
+	case errors.Is(err, ErrStoreNotFound):
+		return "store_not_found"
+	case errors.Is(err, ErrSiteNotAuthorized), errors.Is(err, ErrListingAuthorizationChanged):
 		return "authorization_rejected"
 	case errors.Is(err, ErrListingCursor):
 		return "cursor_changed"
