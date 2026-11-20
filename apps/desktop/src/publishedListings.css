@@ -157,3 +157,5 @@
 .published-char-counter { position:absolute; right:26px; bottom:11px; z-index:1;
   padding:2px 5px; border-radius:4px; background:#fff; color:var(--ui-muted, #657181);
   font-size:11px; line-height:1.4; pointer-events:none; }
+
+.published-metrics-block { padding:10px 15px; }
