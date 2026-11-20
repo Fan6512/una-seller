@@ -169,7 +169,7 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
       setPurchase(result);
       setPurchaseNumber(result.purchase_order_id);
       setPurchaseCost(result.cost_cny ?? "");
-      setPurchaseMessage("采购信息已保存到服务器；自动读取 1688 金额仍需浏览器插件接入。");
+      setPurchaseMessage("采购信息已保存。后续优先接入 1688 官方买家授权与订单金额查询。");
     } catch (error) {
       setPurchaseError(displayError(error));
     } finally {
@@ -371,7 +371,7 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
             <div className="orders-table-scroll">
               <table className="orders-table">
                 <thead><tr>
-                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>付款状态</th><th>物流</th><th>下单时间</th><th>操作</th>
+                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>付款状态</th><th>美客多 Shipment</th><th>下单时间</th><th>操作</th>
                 </tr></thead>
                 <tbody>
                   {loading && page.items.length === 0 && <tr><td colSpan={7} className="orders-table-empty">正在读取订单…</td></tr>}
@@ -390,7 +390,7 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
                     </td>
                     <td><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong></td>
                     <td><span className={"orders-status " + safeOrderStatus(order.status)}>{orderStatusLabel(order.status)}</span></td>
-                    <td>{order.shipment_id ? <span className="orders-tracking">{order.shipment_id}</span> : <span className="orders-muted">未返回运单号</span>}</td>
+                    <td>{order.shipment_id ? <span className="orders-tracking">{order.shipment_id}</span> : <span className="orders-muted">无 Shipment ID</span>}</td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
                     <td><button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>查看详情</button></td>
                   </tr>)}
@@ -434,13 +434,13 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
                   <dt>Pack ID</dt><dd>{detail.pack_id || "—"}</dd>
                   <dt>物流模式</dt><dd>{scope?.logistic ?? "—"}</dd>
-                  <dt>平台运单 ID</dt><dd>{detail.shipment_id || "未返回"}</dd>
+                  <dt>平台 Shipment ID</dt><dd>{detail.shipment_id || "未返回"}</dd>
                 </dl>
-                <p className="orders-muted">当前订单 API 不包含收件人地址、电话或面单，不能据此执行发货操作。</p>
+                <p className="orders-muted">此处的 Shipment ID 并非物流运单号；当前订单 API 不含追踪状态、收件人地址、电话或面单，不能据此认定订单已发货。</p>
               </section>
               <section className="orders-detail-block orders-purchase-block">
                 <div className="orders-detail-block-title"><h3>1688 采购关联</h3><span>{purchase ? "已关联" : "待关联"}</span></div>
-                <p>先保存实际 1688 采购单号。可以手动核实录入人民币成本；插件自动读取订单金额尚未接通，不会自动填充或虚构利润。</p>
+                <p>先保存实际 1688 采购单号与人民币成本。后续优先通过 1688 买家账号授权读取订单金额及采购物流；浏览器插件仅作授权接口不可用时的备选，不会虚构利润。</p>
                 <div className="orders-purchase-form">
                   <label>1688 采购订单号
                     <input type="text" inputMode="numeric" maxLength={40} placeholder="输入 1688 采购单号"
@@ -463,8 +463,8 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
                     {purchase.cost_cny !== null ? " · 人民币 ¥" + purchase.cost_cny : " · 金额待获取"}</p>}
                 </div>
                 <div className="orders-purchase-followup">
-                  <strong>下一步：插件自动取价 → 货代提交 → 平台发货</strong>
-                  <span>现阶段只保存采购信息；正式发货接口、买家地址和货代面单尚未接入。</span>
+                  <strong>下一步：1688 买家授权 → 采购成本/国内物流 → 货代 → 美客多 Shipment 跟踪</strong>
+                  <span>1688 国内发货、货代转运、美客多海外派送须分别跟踪。现阶段仅保存采购信息，不会把采购包裹已签收误记为海外买家已签收。</span>
                 </div>
                 <button type="button" disabled className="orders-shipping-disabled">提交发货（接口待接入）</button>
               </section>
