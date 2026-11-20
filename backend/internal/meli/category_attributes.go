@@ -54,7 +54,7 @@ func (s *Service) GetCategoryRules(ctx context.Context, owner, store string, sco
 	// Keep the full platform attribute schema so value lists, tags and units
 	// remain available to the category-driven editor without manual mapping.
 	var raw json.RawMessage
-	if _, err = s.listingGET(readCtx, auth.AccessToken, "/categories/"+category+"/attributes", &raw); err != nil {
+	if _, err = s.listingGET(readCtx, auth.AccessToken, "/categories/"+category+"/attributes", &raw, nil); err != nil {
 		return CategoryRules{}, err
 	}
 	if len(raw) < 2 || raw[0] != '[' {
@@ -67,7 +67,7 @@ func (s *Service) GetCategoryRules(ctx context.Context, owner, store string, sco
 		ID           string             `json:"id"`
 		PathFromRoot []CategoryPathNode `json:"path_from_root"`
 	}
-	if _, e := s.listingGET(readCtx, auth.AccessToken, "/categories/"+category, &info); e == nil &&
+	if _, e := s.listingGET(readCtx, auth.AccessToken, "/categories/"+category, &info, nil); e == nil &&
 		info.ID == category && len(info.PathFromRoot) > 0 {
 		result.Path = info.PathFromRoot
 	}

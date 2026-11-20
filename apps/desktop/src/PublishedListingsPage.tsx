@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { listingErrorMessage, listStores, storeRequest, type StoreConnection } from "./stores";
+import { authLifetime } from "./auth";
+import { cachedListingPage, cachedStores, ensureStoreConnection, invalidateListingPages, listingAccessDenied, listingErrorMessage, listStores, loadListingPage, storeRequest, watchStoreList, type ListingPage, type Review, type StoreConnection } from "./stores";
 import { runListingBatches, type ListingBatch } from "./listingBatches";
-import PublishedListingView, { type Listing } from "./PublishedListingView";
+import PublishedListingView from "./PublishedListingView";
 
-type Review = { listing_id?: string; offset: number; reason: string; skippable: boolean };
-type Page = { items: Listing[]; has_more: boolean; synced_at: string | null; next_offset: number | null; scan_required: boolean; review?: Review };
+const eligibleStores = (items: StoreConnection[]) =>
+  items.filter((store) => store.status === "connected" || store.status === "token_expired");
 const reviewReasons: Record<string, string> = {
   detail_field_format: "详情字段格式异常",
   detail_payload_unreadable: "详情响应无法解析，归属待核实",
@@ -29,24 +30,31 @@ function message(error: unknown) {
 export default function PublishedListingsPage({ beginSync, installingUpdate }: {
   beginSync: BeginSync; installingUpdate: boolean;
 }) {
-  const [stores, setStores] = useState<StoreConnection[]>();
+  const [stores, setStores] = useState(() => {
+    const cached = cachedStores();
+    return cached && eligibleStores(cached);
+  });
   const [storeId, setStoreId] = useState("");
   const [scope, setScope] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
     const controller = new AbortController();
-    listStores(controller.signal).then((items) => {
+    const unwatch = watchStoreList((items) => setStores(eligibleStores(items)));
+    listStores().then(async (items) => {
       if (controller.signal.aborted) return;
-      const eligible = items.filter((store) => store.status === "connected" || store.status === "token_expired");
-      setStores(eligible);
-      setStoreId(eligible[0]?.id ?? "");
+      const expired = items.filter((store) => store.status === "token_expired");
+      if (!expired.length) return;
+      const outcomes = await Promise.allSettled(expired.map((store) => ensureStoreConnection(store.id, controller.signal)));
+      if (controller.signal.aborted) return;
+      const failure = outcomes.find((outcome) => outcome.status === "rejected");
+      if (failure) setError(message(failure.reason));
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) setError(message(e));
     });
-    return () => controller.abort();
+    return () => { controller.abort(); unwatch(); };
   }, []);
 
-  const store = stores?.find((item) => item.id === storeId);
+  const store = stores?.find((item) => item.id === storeId) ?? stores?.[0];
   const markets = store?.marketplaces_status === "verified"
     ? store.marketplaces.filter((market) => market.site_id && market.logistic_type) : [];
   const scopeValue = markets.some((market) => market.site_id + ":" + market.logistic_type === scope)
@@ -61,7 +69,7 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
     {store && <>
       <div className="published-top-filters">
         <label>店铺
-          <select value={storeId} onChange={(event) => { setStoreId(event.target.value); setScope(""); }}>
+          <select value={store.id} onChange={(event) => { setStoreId(event.target.value); setScope(""); }}>
             {stores?.map((item) => <option key={item.id} value={item.id}>{item.nickname || item.seller_id}</option>)}
           </select>
         </label>
@@ -88,7 +96,6 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
 }) {
   const [offset, setOffset] = useState(0);
   const [revision, setRevision] = useState(0);
-  const [page, setPage] = useState<Page>();
   const [selectedId, setSelectedId] = useState("");
   const [progress, setProgress] = useState<Progress>();
   const [notice, setNotice] = useState("");
@@ -100,25 +107,31 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
   const [site, logistic = ""] = scope.split(":");
   const path = "/api/v1/stores/" + encodeURIComponent(store) + "/published-listings?" +
     new URLSearchParams({ site, logistic_type: logistic }).toString();
+  const pagePath = path + "&offset=" + offset;
+  const [loaded, setLoaded] = useState<{ path: string; page?: ListingPage }>();
+  const page = loaded?.path === pagePath ? loaded.page : cachedListingPage(pagePath);
 
   useEffect(() => {
     const controller = new AbortController();
     setReading(true);
     setReadError("");
-    storeRequest<Page>(path + "&offset=" + offset, "GET", controller.signal, true).then((next) => {
+    loadListingPage(pagePath, controller.signal).then((next) => {
       if (controller.signal.aborted) return;
-      setPage(next);
+      setLoaded({ path: pagePath, page: next });
       setSelectedId((old) => next.items.some((item) => item.id === old) ? old : next.items[0]?.id ?? "");
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) {
-        setPage(undefined);
+        if (listingAccessDenied(e)) {
+          invalidateListingPages(store);
+          setLoaded({ path: pagePath });
+        }
         setReadError(message(e));
       }
     }).finally(() => {
       if (!controller.signal.aborted) setReading(false);
     });
     return () => controller.abort();
-  }, [path, offset, revision]);
+  }, [pagePath, revision, store]);
 
   useEffect(() => () => {
     active.current?.abort();
@@ -132,13 +145,16 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     const finishSync = beginSync();
     if (!finishSync) return;
     const controller = new AbortController();
+    const lifetime = authLifetime();
     active.current = controller;
     setBusy(true);
     setError("");
     setNotice("");
     setProgress(emptyProgress);
     try {
-      await runListingBatches(remoteOffset, restart, controller.signal, (next, reset, signal) => {
+      await runListingBatches(remoteOffset, restart, controller.signal, async (next, reset, signal) => {
+        await ensureStoreConnection(store, signal);
+        signal.throwIfAborted();
         const confirmSkip = skip && next === skip.offset;
         return storeRequest<ListingBatch>(
           path + "&offset=" + next + (reset ? "&restart=1" : "") + (confirmSkip ? "&skip_invalid=1" : ""),
@@ -170,6 +186,7 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
         } else setError(message(e));
       }
     } finally {
+      invalidateListingPages(store, lifetime);
       finishSync();
       if (active.current === controller) {
         active.current = null;
@@ -185,14 +202,14 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     <div className="published-sync-bar">
     <p className="page-actions">
       <button className="primary-action" type="button" onClick={() => void sync(false)}
-        disabled={installingUpdate || busy || reading || page?.next_offset == null}>{review ? "重新核实并继续" : page?.next_offset ? "继续同步" : "同步商品"}</button>
+        disabled={installingUpdate || busy || reading || !!readError || page?.next_offset == null}>{review ? "重新核实并继续" : page?.next_offset ? "继续同步" : "同步商品"}</button>
       <button type="button" onClick={() => active.current?.abort()} disabled={!busy}>停止</button>
-      <button type="button" onClick={() => void sync(true)} disabled={installingUpdate || busy || reading || !page}>从头同步</button>
+      <button type="button" onClick={() => void sync(true)} disabled={installingUpdate || busy || reading || !!readError || !page}>从头同步</button>
     </p>
     {installingUpdate && <p role="status">正在启动更新安装，重启后可同步商品。</p>}
     {review && <p role="status">
       待核实 · {review.listing_id ? "刊登 " + review.listing_id + " · " : ""}位置 {review.offset + 1} · {reviewReasons[review.reason] ?? review.reason}{" "}
-      {review.skippable && review.listing_id && <button type="button" disabled={installingUpdate || busy || reading} onClick={() => {
+      {review.skippable && review.listing_id && <button type="button" disabled={installingUpdate || busy || reading || !!readError} onClick={() => {
         if (window.confirm("若刊登 " + review.listing_id + " 复核后仍有格式异常，将记录跳过并继续。确认吗？")) {
           void sync(false, review);
         }
@@ -204,12 +221,12 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
       {progress.partial > 0 && " " + progress.partial + " 条来自平台部分响应。"}
     </p>}
     {page?.scan_required && <p role="status">已达到常规分页上限，继续读取需要扫描模式。</p>}
-    <p className="published-sync-time">已保存同步位置 {reading || !page ? "待确认" : page.next_offset ?? "已结束"} · 最近成功 {page?.synced_at ? new Date(page.synced_at).toLocaleString() : "暂无"}</p>
+    <p className="published-sync-time">已保存同步位置 {reading || readError || !page ? "待确认" : page.next_offset ?? "已结束"} · 最近成功 {page?.synced_at ? new Date(page.synced_at).toLocaleString() : "暂无"}</p>
     </div>
     {error && <p role="alert">{error}</p>}
     {readError && <p role="alert">{readError} <button type="button" disabled={busy || reading}
       onClick={() => { setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
-    {reading && <p role="status">正在读取已保存商品…</p>}
+    {reading && <p role="status">{page ? "正在更新已保存商品…" : "正在读取已保存商品…"}</p>}
     {!reading && page?.items.length === 0 && <p>此范围暂无已保存商品。</p>}
     {!!page?.items.length && <PublishedListingView
       items={page.items} selectedId={selectedId} onSelect={setSelectedId} site={site} logistic={logistic} store={store}

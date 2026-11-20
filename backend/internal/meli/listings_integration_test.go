@@ -196,9 +196,49 @@ func TestPublishedListingGETPlatformErrors(t *testing.T) {
 			s := Service{apiURL: server.URL, client: server.Client()}
 			var item listingDetail
 			var remote ListingPlatformError
-			status, err := s.listingGET(context.Background(), "synthetic", "/detail", &item)
-			if status != code || !errors.As(err, &remote) || int(remote) != code {
+			var timing listingGETTiming
+			status, err := s.listingGET(context.Background(), "synthetic", "/detail", &item, &timing)
+			if status != code || !errors.As(err, &remote) || int(remote) != code || timing.failedPhase != "http_status" {
 				t.Fatalf("status=%d error=%v", status, err)
+			}
+		})
+	}
+}
+
+func TestPublishedListingGETTimeoutPhases(t *testing.T) {
+	for _, phase := range []string{"response_headers", "response_body"} {
+		t.Run(phase, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if phase == "response_body" {
+					fmt.Fprint(w, "{")
+					w.(http.Flusher).Flush()
+				}
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+			s := Service{apiURL: server.URL, client: server.Client()}
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			var logs bytes.Buffer
+			trace := slog.New(slog.NewJSONHandler(&logs, nil))
+			_, _, err := s.fetchListingBatch(ctx, "synthetic_secret", "123456", ListingScope{Site: "CBT"}, 0, "", trace)
+			if !errors.Is(err, context.DeadlineExceeded) || listingInterruption(err).Code != "listing_timeout" {
+				t.Fatalf("search returned %v", err)
+			}
+			var entry struct {
+				Stage           string `json:"stage"`
+				FailedPhase     string `json:"failed_phase"`
+				Outcome         string `json:"outcome"`
+				BudgetExhausted bool   `json:"platform_budget_exhausted"`
+			}
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil ||
+				entry.Stage != "platform_search_get" || entry.FailedPhase != phase || entry.Outcome != "timeout" || !entry.BudgetExhausted {
+				t.Fatalf("unexpected timeout trace %+v, decode error %v", entry, err)
+			}
+			for _, sensitive := range []string{"synthetic_secret", "123456", "/marketplace/users/"} {
+				if strings.Contains(logs.String(), sensitive) {
+					t.Fatal("timeout trace contains request data")
+				}
 			}
 		})
 	}
@@ -287,8 +327,8 @@ func TestPublishedListingsResume(t *testing.T) {
 }
 
 func TestPublishedListingsTimeoutAndCancellation(t *testing.T) {
-	for _, cancelRequest := range []bool{false, true} {
-		t.Run(fmt.Sprint(cancelRequest), func(t *testing.T) {
+	for _, scenario := range []string{"timeout", "cancel", "complete"} {
+		t.Run(scenario, func(t *testing.T) {
 			s, db, owner, store := setupRefreshTest(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -297,14 +337,20 @@ func TestPublishedListingsTimeoutAndCancellation(t *testing.T) {
                 SET access_token_expires_at=now()+interval '30 minutes' WHERE id=$1::uuid RETURNING seller_id`, store).Scan(&seller); err != nil {
 				t.Fatal(err)
 			}
+			var thirdRequested atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/marketplace/users/" + seller + "/items/search":
-					fmt.Fprintf(w, `{"seller_id":%q,"results":["CBT1","CBT2"],"paging":{"total":2,"offset":0,"limit":5}}`, seller)
-				case "/marketplace/items/CBT1":
-					fmt.Fprintf(w, `{"id":"CBT1","site_id":"CBT","seller_id":%q}`, seller)
-				case "/marketplace/items/CBT2":
-					if cancelRequest {
+					fmt.Fprintf(w, `{"seller_id":%q,"results":["CBT1","CBT2","CBT3","CBT4","CBT5"],"paging":{"total":5,"offset":0,"limit":5}}`, seller)
+				case "/marketplace/items/CBT1", "/marketplace/items/CBT2", "/marketplace/items/CBT4", "/marketplace/items/CBT5":
+					fmt.Fprintf(w, `{"id":%q,"site_id":"CBT","seller_id":%q}`, strings.TrimPrefix(r.URL.Path, "/marketplace/items/"), seller)
+				case "/marketplace/items/CBT3":
+					thirdRequested.Store(true)
+					if scenario == "complete" {
+						fmt.Fprintf(w, `{"id":"CBT3","site_id":"CBT","seller_id":%q}`, seller)
+						return
+					}
+					if scenario == "cancel" {
 						cancel()
 					}
 					<-r.Context().Done()
@@ -315,21 +361,35 @@ func TestPublishedListingsTimeoutAndCancellation(t *testing.T) {
 			defer server.Close()
 			s.apiURL = server.URL
 			scope := ListingScope{Site: "CBT"}
-			result, err := s.syncPublished(ctx, owner, store, scope, nil, false, "", time.Second)
-			if cancelRequest {
+			result, err := s.syncPublished(ctx, owner, store, scope, nil, false, "", 2500*time.Millisecond)
+			if !thirdRequested.Load() {
+				t.Fatal("third detail was not requested")
+			}
+			want := 2
+			switch scenario {
+			case "cancel":
+				want = 0
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancellation: %v", err)
 				}
-			} else if err != nil || result.Saved != 1 || result.Interruption == nil || result.Interruption.Code != "listing_timeout" {
-				t.Fatalf("timeout=%+v err=%v", result, err)
+			case "complete":
+				want = 5
+				if err != nil || result.Saved != want || result.Processed != want || result.NextOffset != nil || result.Interruption != nil {
+					t.Fatalf("complete=%+v err=%v", result, err)
+				}
+			case "timeout":
+				if err != nil || result.Saved != want || result.Processed != want || result.NextOffset == nil ||
+					*result.NextOffset != want || result.Interruption == nil || result.Interruption.Code != "listing_timeout" {
+					t.Fatalf("timeout=%+v err=%v", result, err)
+				}
 			}
 			page, err := s.ListPublished(context.Background(), owner, store, scope, 0)
-			want := 1
-			if cancelRequest {
-				want = 0
+			if err != nil || len(page.Items) != want {
+				t.Fatalf("read-back: %+v %v", page, err)
 			}
-			if err != nil || len(page.Items) != want || page.NextOffset == nil || *page.NextOffset != want {
-				t.Fatalf("after timeout/cancel: %+v %v", page, err)
+			if scenario == "complete" && page.NextOffset != nil ||
+				scenario != "complete" && (page.NextOffset == nil || *page.NextOffset != want) {
+				t.Fatalf("unexpected persisted cursor: %+v", page.NextOffset)
 			}
 		})
 	}

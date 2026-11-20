@@ -22,6 +22,17 @@ type TokenResponse = {
 
 let current: AuthSession | null | undefined;
 let refreshInFlight: Promise<AuthSession> | null = null;
+let sessionLifetime = new AbortController();
+
+export function authLifetime(): AbortSignal {
+  return sessionLifetime.signal;
+}
+
+function endSessionLifetime() {
+  sessionLifetime.abort();
+  sessionLifetime = new AbortController();
+  refreshInFlight = null;
+}
 
 function isSession(value: unknown): value is AuthSession {
   if (!value || typeof value !== "object") return false;
@@ -51,6 +62,7 @@ function storeSession(value: AuthSession) {
 
 function clearSession(notify = false) {
   if (diagnosticsEnabled) clearDiagnostics();
+  endSessionLifetime();
   current = null;
   localStorage.removeItem(storageKey);
   if (notify) window.dispatchEvent(new Event("una-seller:auth-lost"));
@@ -61,6 +73,7 @@ async function tokenRequest(grantType: "password" | "refresh_token", payload: ob
   try {
     response = await fetch(authBase + "/auth/v1/token?grant_type=" + grantType, {
       method: "POST",
+      signal: AbortSignal.timeout(8_000),
       headers: { "apikey": publishableKey, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       cache: "no-store",
@@ -87,6 +100,7 @@ async function tokenRequest(grantType: "password" | "refresh_token", payload: ob
 
 export async function signIn(email: string, password: string): Promise<AuthSession> {
   const next = await tokenRequest("password", { email: email.trim(), password });
+  endSessionLifetime();
   if (diagnosticsEnabled) clearDiagnostics();
   storeSession(next);
   return next;
@@ -99,22 +113,24 @@ export async function getAccessToken(forceRefresh = false, onPreflight?: (cached
     onPreflight?.(true);
     return session.access_token;
   }
+  const lifetime = authLifetime();
   if (!refreshInFlight) {
     refreshInFlight = tokenRequest("refresh_token", { refresh_token: session.refresh_token })
       .then((next) => {
         // Logout may have occurred while refreshing.
-        if (loadSession()?.refresh_token === session.refresh_token) storeSession(next);
+        if (next.user.id !== session.user.id) throw new Error("登录已过期，请重新登录");
+        if (!lifetime.aborted && loadSession()?.refresh_token === session.refresh_token) storeSession(next);
         return next;
-      }).finally(() => { refreshInFlight = null; });
+      }).finally(() => { if (!lifetime.aborted) refreshInFlight = null; });
   }
   try {
     await refreshInFlight;
-    if (!loadSession()) throw new Error("请先登录");
+    lifetime.throwIfAborted();
     onPreflight?.(false);
     return loadSession()!.access_token;
   } catch (error) {
     // Network failures are recoverable; only an explicit expired-session error logs out.
-    if (error instanceof Error && error.message === "登录已过期，请重新登录") clearSession(true);
+    if (!lifetime.aborted && error instanceof Error && error.message === "登录已过期，请重新登录") clearSession(true);
     throw error;
   }
 }

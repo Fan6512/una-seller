@@ -14,11 +14,17 @@ const { outputText } = ts.transpileModule(
 const diagnosticsURL = "data:text/javascript," + encodeURIComponent(outputText
   .replace('"react"', JSON.stringify(import.meta.resolve("react")))
   .replace('"react/jsx-runtime"', JSON.stringify(import.meta.resolve("react/jsx-runtime"))));
+const authURL = "data:text/javascript," + encodeURIComponent(`
+  let controller = new AbortController();
+  export const authLifetime = () => controller.signal;
+  export const getAccessToken = async (_refresh, report) => { report?.(true); return 'fixture'; };
+  export function rejectSession() { controller.abort(); controller = new AbortController(); }
+`);
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL === storesURL) {
       if (specifier === "./auth") {
-        return { url: "data:text/javascript,export const getAccessToken = async (_, report) => { report?.(true); return 'fixture'; }; export const rejectSession = () => {};", shortCircuit: true };
+        return { url: authURL, shortCircuit: true };
       }
       if (specifier === "./collections") {
         return { url: "data:text/javascript,export const apiBase = 'https://fixture.invalid';", shortCircuit: true };
@@ -28,7 +34,9 @@ const hooks = registerHooks({
     return nextResolve(specifier, context);
   },
 });
-const { storeRequest } = await import(storesURL);
+const { cachedStores, listStores, checkStoreConnection, ensureStoreConnection, cachedListingPage, loadListingPage,
+  disconnectStore, invalidateListingPages, storeRequest } = await import(storesURL);
+const { rejectSession } = await import(authURL);
 const { beginRequestDiagnostic, clearDiagnostics, diagnosticsJSON } = await import(diagnosticsURL);
 hooks.deregister();
 
@@ -156,4 +164,152 @@ test("listing timeouts, unknown commits, unreadable responses, and cancellation 
   await assert.rejects(storeRequest("/listings", "POST", undefined, true), { name: "AbortError" });
   await assert.rejects(storeRequest("/listings", "POST", AbortSignal.abort(), true), { name: "AbortError" });
   assert.equal(fetch.mock.callCount(), 4);
+});
+
+const store = { id: "store-1", status: "token_expired", token_expires_at: "2020-01-01T00:00:00Z" };
+const freshStore = () => ({ ...store, status: "connected", token_expires_at: new Date(Date.now() + 3600_000).toISOString() });
+const mlm = "/api/v1/stores/store-1/published-listings?site=MLM&logistic_type=remote&offset=0";
+
+test("store reads coalesce, then one detached renewal gates platform requests and rereads authorization", async (t) => {
+  rejectSession();
+  const calls = [];
+  let completeCheck;
+  const check = new Promise((resolve) => { completeCheck = resolve; });
+  t.mock.method(globalThis, "fetch", async (url, { method }) => {
+    const path = new URL(url).pathname;
+    calls.push([method, path]);
+    if (path.endsWith("connection-check")) return check;
+    if (path === "/api/v1/stores") return Response.json({ items: [calls.length === 1 ? store : freshStore()] });
+    return Response.json({ description: "fixture" });
+  });
+  const listing = listStores();
+  assert.equal(listStores(), listing);
+  assert.deepEqual(await listing, [store]);
+  const cancel = new AbortController();
+  const stopped = ensureStoreConnection(store.id, cancel.signal);
+  const sync = ensureStoreConnection(store.id).then(() => storeRequest(mlm, "POST", undefined, true));
+  const desc = ensureStoreConnection(store.id).then(() => storeRequest(mlm, "GET", undefined, true));
+  cancel.abort();
+  const aborted = assert.rejects(stopped, { name: "AbortError" });
+  await Promise.resolve();
+  assert.deepEqual(calls, [["GET", "/api/v1/stores"], ["POST", "/api/v1/stores/store-1/connection-check"]]);
+  completeCheck(Response.json({ status: "connected" }));
+  await Promise.all([sync, desc, aborted]);
+  assert.equal(cachedStores()[0].status, "connected");
+  assert.deepEqual(calls.slice(2).map(([method, path]) => [method, path.split("/").at(-1)]), [
+    ["GET", "stores"], ["POST", "published-listings"], ["GET", "published-listings"],
+  ]);
+});
+
+test("lost response is reconciled before a later retry or manual check", async (t) => {
+  for (const recovery of ["automatic", "manual", "already renewed", "timeout"]) {
+    rejectSession();
+    const calls = [];
+    let current = store;
+    const deadline = new AbortController();
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timer = t.mock.method(AbortSignal, "timeout", (ms) =>
+      recovery === "timeout" && ms === 25_000 ? deadline.signal : timeout(ms));
+    const fetch = t.mock.method(globalThis, "fetch", async (_url, { method, signal }) => {
+      calls.push(method);
+      if (method === "GET") return Response.json({ items: [current] });
+      if (calls.filter((call) => call === "POST").length === 1) {
+        if (recovery === "already renewed" || recovery === "timeout") current = freshStore();
+        if (recovery === "timeout") {
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            deadline.abort(new DOMException("deadline", "TimeoutError"));
+          });
+        }
+        throw new TypeError("Failed to fetch");
+      }
+      current = freshStore();
+      return Response.json({ status: "connected" });
+    });
+    await listStores();
+    if (recovery === "already renewed" || recovery === "timeout") {
+      await ensureStoreConnection(store.id);
+      assert.deepEqual(calls, ["GET", "POST", "GET"]);
+    } else {
+      await assert.rejects(ensureStoreConnection(store.id), /续签结果尚未确认/);
+      assert.deepEqual(calls, ["GET", "POST", "GET"]);
+      if (recovery === "manual") await checkStoreConnection(store.id);
+      else await ensureStoreConnection(store.id);
+      assert.deepEqual(calls, ["GET", "POST", "GET", "GET", "POST", "GET"]);
+    }
+    assert.equal(cachedStores()[0].status, "connected");
+    fetch.mock.restore();
+    timer.mock.restore();
+  }
+});
+
+test("terminal store states block automatic and manual rotation", async (t) => {
+  for (const [status, finalStatus, expected] of [
+    [409, "refresh_unknown", /续签状态待确认/],
+    [403, "reauth_required", /需要重新授权/],
+  ]) {
+    rejectSession();
+    let posts = 0;
+    const fetch = t.mock.method(globalThis, "fetch", async (_url, { method }) => {
+      if (method === "GET") return Response.json({ items: [{ ...store, status: posts ? finalStatus : store.status }] });
+      posts++;
+      return Response.json({}, { status });
+    });
+    await listStores();
+    await assert.rejects(ensureStoreConnection(store.id), expected);
+    await assert.rejects(ensureStoreConnection(store.id), expected);
+    await assert.rejects(checkStoreConnection(store.id), expected);
+    assert.equal(posts, 1);
+    assert.equal(cachedStores()[0].status, finalStatus);
+    fetch.mock.restore();
+  }
+});
+
+test("pages are available during revalidation, isolated by scope, and invalidated on sync, disconnect or session change", async (t) => {
+  rejectSession();
+  const page = { items: [{ id: "one" }] };
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  let delayed = false;
+  t.mock.method(globalThis, "fetch", async (_url, { method }) => {
+    if (method === "POST") return Response.json({ status: "disconnected" });
+    if (delayed) await pending;
+    return Response.json(page);
+  });
+  const signal = new AbortController().signal;
+  const coldStart = performance.now();
+  assert.equal(cachedListingPage(mlm), undefined);
+  delayed = true;
+  const coldRead = loadListingPage(mlm, signal);
+  setTimeout(release, 180);
+  await coldRead;
+  const coldMs = performance.now() - coldStart;
+  const warmStart = performance.now();
+  assert.deepEqual(cachedListingPage(mlm), page);
+  assert.equal(JSON.parse(diagnosticsJSON()).some((x) => x.operation === "listings_get" && x.cache_hit), true);
+  const warmMs = performance.now() - warmStart;
+  t.diagnostic(`fixture cold data ${coldMs.toFixed(1)} ms, warm memory data ${warmMs.toFixed(2)} ms`);
+  for (const other of [mlm.replace("MLM", "MLB"), mlm.replace("remote", "fulfillment"), mlm.replace("offset=0", "offset=20"), mlm.replace("store-1", "store-2")]) {
+    assert.equal(cachedListingPage(other), undefined);
+  }
+  const oldRead = loadListingPage(mlm, signal);
+  invalidateListingPages(store.id);
+  await oldRead;
+  assert.equal(cachedListingPage(mlm), undefined);
+  await loadListingPage(mlm, signal);
+  await disconnectStore(store.id);
+  assert.equal(cachedListingPage(mlm), undefined);
+  await loadListingPage(mlm, signal);
+  const previousUser = loadListingPage(mlm, signal);
+  rejectSession();
+  await assert.rejects(previousUser, { name: "AbortError" });
+  assert.equal(cachedListingPage(mlm), undefined);
+  assert.equal(cachedStores(), undefined);
+});
+
+test("an expired login does not replay a POST", async (t) => {
+  rejectSession();
+  const fetch = t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 401 }));
+  await assert.rejects(storeRequest(mlm, "POST", undefined, true), /确认状态后重新发起/);
+  assert.equal(fetch.mock.callCount(), 1);
 });
