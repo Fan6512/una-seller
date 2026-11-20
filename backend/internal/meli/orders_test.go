@@ -133,6 +133,18 @@ func TestOrderCancellationAndTimeoutAreDistinct(t *testing.T) {
 	}
 }
 
+func TestOrderLocalRequestContentionIsNotUpstreamRateLimit(t *testing.T) {
+	s := Service{}
+	s.orderRequests.Lock()
+	defer s.orderRequests.Unlock()
+	var raw json.RawMessage
+	status, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw)
+	if status != http.StatusConflict || !errors.Is(err, ErrOrderBusy) ||
+		OrderErrorCode(err) != "order_busy" {
+		t.Fatalf("local contention incorrectly reported as provider 429: status=%d err=%v", status, err)
+	}
+}
+
 func TestOrderProviderPacing(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

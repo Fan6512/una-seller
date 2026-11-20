@@ -54,7 +54,7 @@ const messages: Record<string, string> = {
   order_site_not_authorized: "当前站点或物流类型尚未通过店铺映射验证。",
   order_reauth_required: "店铺已断开或需要重新授权，历史缓存订单仍可在允许时查看。",
   order_refresh_unknown: "店铺授权续签结果待确认，请先到店铺管理检查。",
-  order_busy: "此店铺站点已有订单同步任务，请稍后刷新。",
+  order_busy: "订单服务正在处理其他请求，请稍后重试（非平台限流）。",
   order_auth_changed: "同步期间店铺授权或子卖家映射发生变化，未继续写入。",
   order_rate_limited: "美客多限制请求频率，请稍后继续同步。",
   order_timeout: "请求超时，已提交的订单和同步位置不会丢失。",

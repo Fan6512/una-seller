@@ -112,7 +112,8 @@ func (e *OrderRateLimitError) RetryAfter() string {
 // before another request can start, including concurrent syncs from other stores.
 func (s *Service) orderGET(ctx context.Context, token, path string, target any) (int, error) {
 	if !s.orderRequests.TryLock() {
-		return http.StatusTooManyRequests, &OrderRateLimitError{until: time.Now().Add(time.Second)}
+		// A concurrent local request is not an upstream 429.
+		return http.StatusConflict, ErrOrderBusy
 	}
 	defer s.orderRequests.Unlock()
 	if time.Now().Before(s.orderRetryUntil) {

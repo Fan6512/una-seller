@@ -258,7 +258,6 @@ SELECT owner_user_id::text,id::text,review_id::text FROM connection CROSS JOIN r
 		}
 	})
 
-
 	t.Run("persisted reset offset", func(t *testing.T) {
 		if _, err := cs.DB.Exec(ctx, `UPDATE app.meli_order_syncs
 SET next_offset=3,window_from=now()-interval '1 day',window_to=now(),
