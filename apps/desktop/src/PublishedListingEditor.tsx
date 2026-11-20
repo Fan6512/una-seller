@@ -36,6 +36,25 @@ function rememberRules(key: string, payload: RulesResponse): void {
   categoryRulesCache.set(key, { payload, expiresAt: Date.now() + CATEGORY_RULE_TTL_MS });
 }
 const unitField = /^(PACKAGE_(WEIGHT|HEIGHT|LENGTH|WIDTH)|WEIGHT|HEIGHT|LENGTH|WIDTH)$/;
+// Translate only verified category names. Unrecognized names remain in the official language.
+const categoryTranslations: Record<string, string> = {
+  "Beleza e Cuidado Pessoal": "美妆与个人护理",
+  "Maquiagem": "彩妆",
+  "Rosto": "面部",
+  "Primer Facial": "妆前乳",
+};
+const translatedCategory = (name: string) => categoryTranslations[name] || name;
+const charCount = (value: string) => Array.from(value).length;
+// Never infer measurements from absent data or silently mix package and product measurements.
+function compactDimensions(values: (string | undefined)[]): string {
+  if (values.every((v) => !v)) return "未返回";
+  const parts = values.map((v) => (v || "—").trim());
+  const parsed = parts.map((part) => /^([\d.,]+)\s*(mm|cm|m)$/i.exec(part));
+  if (parsed.every((p) => p && p[2].toLowerCase() === parsed[0]?.[2].toLowerCase())) {
+    return parsed.map((p) => p![1]).join(" × ") + " " + parsed[0]![2];
+  }
+  return parts.join(" × ");
+}
 function initialDraft(item: Listing): Draft {
   return {
     category_id: item.category_id || "",
@@ -170,7 +189,7 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   }, [store, site, logistic, category, settledCategory, version]);
 
   const groups = useMemo(() => {
-    const values = (rules || []).filter((r) => !r.tags?.hidden || draft.attributes[r.id]);
+    const values = (rules || []).filter((r) => !unitField.test(r.id) && (!r.tags?.hidden || draft.attributes[r.id]));
     const byGroup = new Map<string, Rule[]>();
     for (const rule of values) {
       const key = rule.attribute_group_name || "其他属性";
@@ -190,6 +209,12 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   const attrs = listing.attributes || [];
   const fallbackAttributes = attrs.filter((a) => a.value_name != null && a.id !== "SELLER_SKU" && !unitField.test(a.id));
   const logistics = attrs.filter((a) => unitField.test(a.id) && a.value_name != null);
+  const metricPrefix = logistics.some((a) => a.id.startsWith("PACKAGE_")) ? "PACKAGE_" : "";
+  const metric = (type: string): string | undefined => {
+    const id = metricPrefix + type;
+    const raw = attrs.find((a) => a.id === id)?.value_name;
+    return (draft.attributes[id] || raw || "").trim() || undefined;
+  };
 
   function update(field: keyof Omit<Draft, "attributes">, value: string) {
     setDraft((old) => ({ ...old, [field]: value })); setSaved("");
@@ -211,14 +236,19 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   return <>
     <section className="published-block">
       <div className="published-block-head"><h3>商品分类</h3><span>仅编辑本地草稿</span></div>
-      <label className="published-edit-field">
-        <span>站点类目 ID</span>
-        <input value={draft.category_id} onChange={(e) => update("category_id", e.target.value.toUpperCase())}
-          placeholder={site + " 类目 ID"} aria-label="类目 ID"/>
-        <small>当前平台类目：{listing.category_id || "未返回"}；切换类目后自动在线加载对应属性，平台商品不会改变。</small>
-      </label>
-      {categoryPath.length > 0 && <p className="published-category-path">{categoryPath.join(" / ")}</p>}
-      {!validCategory && <p className="published-form-warning">请输入当前 {site} 站点有效的类目 ID 后加载规则。</p>}
+      <p className="published-category-path" title={categoryPath.join(" / ") || undefined}>
+        {categoryPath.length ? categoryPath.map(translatedCategory).join(" / ") : loading ? "正在加载分类名称…" : "官方分类名称暂未返回"}
+      </p>
+      <details className="published-detail-expand">
+        <summary>调整类目（高级）</summary>
+        <label className="published-edit-field">
+          <span>站点类目 ID</span>
+          <input value={draft.category_id} onChange={(e) => update("category_id", e.target.value.toUpperCase())}
+            placeholder={site + " 类目 ID"} aria-label="类目 ID"/>
+          <small>仅修改本地草稿。更换类目后将重新加载官方属性，不改变平台商品。</small>
+        </label>
+      </details>
+      {!validCategory && <p className="published-form-warning">请输入当前站点的有效类目后加载规则。</p>
     </section>
 
     <section className="published-block">
@@ -250,10 +280,11 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
 
     <section className="published-block">
       <div className="published-block-head"><h3>重量与尺寸</h3><span>现有刊登属性</span></div>
-      {logistics.length ? <div className="published-field-grid">
-        {logistics.map((a) => <Field key={a.id} label={a.name || a.id} value={draft.attributes[a.id] || a.value_name}/>)}
-      </div> : <p className="published-hint">重量与尺寸未同步到该商品；待后续补充物流信息。</p>}
-      <p className="published-hint">包装重量和产品自身重量不同，不自动换算，也不编造缺失的值。</p>
+      <div className="published-metrics-inline">
+        <span>重量：<strong>{metric("WEIGHT") || "未返回"}</strong></span>
+        <span>尺寸（长 × 宽 × 高）：<strong>{compactDimensions([metric("LENGTH"), metric("WIDTH"), metric("HEIGHT")])}</strong></span>
+      </div>
+      <p className="published-hint">{metricPrefix ? "显示平台返回的包装重量与包装尺寸。" : "显示平台返回的商品重量与商品尺寸。"}未返回的数值或单位不推算。</p>
     </section>
 
     <section className="published-block">
@@ -283,17 +314,23 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
 
     <section className="published-block">
       <div className="published-block-head"><h3>商品标题</h3><span>当前站点语言，不做自动翻译</span></div>
-      <textarea className="published-edit-textarea" rows={3} value={draft.title}
-        onChange={(e) => update("title", e.target.value)} maxLength={255}
-        placeholder="根据真实商品信息填写标题" />
-      <p className="published-hint">{draft.title.length} 字符。仅保存到本地草稿，不会更新线上刊登。</p>
+      <div className="published-counter-wrap">
+        <textarea className="published-edit-textarea" rows={3} value={draft.title}
+          onChange={(e) => update("title", e.target.value)} maxLength={255}
+          placeholder="根据真实商品信息填写标题" />
+        <span className="published-char-counter">{charCount(draft.title)} 字符</span>
+      </div>
+      <p className="published-hint">计数包含空格、标点及符号。仅保存到本机，不会更新线上刊登。</p>
     </section>
 
     <section className="published-block">
       <div className="published-block-head"><h3>商品详情</h3><span>完整描述</span></div>
-      <textarea className="published-edit-textarea" rows={6} value={draft.description}
-        onChange={(e) => update("description", e.target.value)}
-        placeholder="尚未同步完整描述；可先录入草稿" />
+      <div className="published-counter-wrap">
+        <textarea className="published-edit-textarea" rows={6} value={draft.description}
+          onChange={(e) => update("description", e.target.value)}
+          placeholder="平台描述尚未读取；可先录入本地草稿" />
+        <span className="published-char-counter">{charCount(draft.description)} 字符</span>
+      </div>
       <details className="published-detail-expand"><summary>平台标识与同步信息</summary>
         <div className="published-field-grid">
           <Field label="刊登 ID" value={listing.id}/>
