@@ -20,6 +20,8 @@ export type StoreConnection = {
 
 export function listingErrorMessage(code: string, platformStatus?: number): string {
   switch (code) {
+    case "description_unavailable": return "平台暂未提供该商品的完整描述";
+    case "description_link_missing": return "这条商品缺少可读取描述的关联标识";
     case "category_invalid": return "类目 ID 与当前站点不匹配";
     case "category_unavailable": return "无法读取该类目的平台属性规则，请核对分类或稍后重试";
     case "listing_store_missing": return "店铺不存在或无权访问";
