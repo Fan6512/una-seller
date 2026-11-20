@@ -1,10 +1,12 @@
 package meli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,8 +14,102 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestListingWritePoolAcquireTimeout(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	acquireCtx, cancelAcquire := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelAcquire()
+	for i := int32(0); i < db.Config().MaxConns; i++ {
+		conn, err := db.Acquire(acquireCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Release()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var logs bytes.Buffer
+	trace := slog.New(slog.NewTextHandler(&logs, nil))
+	err := s.saveListingBatch(ctx, owner, store, ListingScope{Site: "CBT"}, "", tokenSnapshot{}, listingCursor{}, ListingSync{}, nil, trace)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected connection acquisition timeout, got %v", err)
+	}
+	if line := logs.String(); !strings.Contains(line, "stage=db_acquire") || !strings.Contains(line, "outcome=timeout") ||
+		strings.Contains(line, "stage=db_begin") || strings.Contains(line, owner) || strings.Contains(line, store) {
+		t.Fatalf("unexpected timing log: %s", line)
+	}
+}
+
+func TestPublishedListingsBatchAtomicity(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections
+		SET access_token_expires_at=now()+interval '30 minutes' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	scope := ListingScope{Site: "CBT"}
+	row, seller, err := s.listingScope(ctx, owner, store, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace := slog.New(slog.DiscardHandler)
+	details := make(map[string]listingWrite, ListingBatchSize)
+	for i := 1; i <= ListingBatchSize; i++ {
+		id := fmt.Sprintf("CBT%d", i)
+		details[id] = listingWrite{detail: json.RawMessage(fmt.Sprintf(`{"id":%q,"seller_id":%q}`, id, seller))}
+	}
+	next := ListingBatchSize
+	result := ListingSync{Saved: len(details), NextOffset: &next}
+	if err := s.saveListingBatch(ctx, owner, store, scope, seller, row, listingCursor{}, result, details, trace); err != nil {
+		t.Fatal(err)
+	}
+	assertState := func(wantCount, wantOffset int) {
+		t.Helper()
+		if inUse := db.Stat().AcquiredConns(); inUse != 0 {
+			t.Fatalf("connection still checked out: %d", inUse)
+		}
+		page, err := s.ListPublished(ctx, owner, store, scope, 0)
+		if err != nil || len(page.Items) != wantCount || page.NextOffset == nil || *page.NextOffset != wantOffset {
+			t.Fatalf("read-back: items=%d next=%v error=%v", len(page.Items), page.NextOffset, err)
+		}
+	}
+	assertState(ListingBatchSize, next)
+
+	following := map[string]listingWrite{"CBT6": {detail: json.RawMessage(fmt.Sprintf(`{"id":"CBT6","seller_id":%q}`, seller))}}
+	followResult := ListingSync{Saved: 1, NextOffset: new(next + 1)}
+	if err := s.saveListingBatch(ctx, owner, store, scope, seller, row, listingCursor{}, followResult, following, trace); !errors.Is(err, ErrListingCursor) {
+		t.Fatalf("expected stale cursor rejection, got %v", err)
+	}
+	assertState(ListingBatchSize, next)
+
+	cursor := listingCursor{Offset: next}
+	following["CBT7"] = listingWrite{} // SQL NULL violates details NOT NULL inside the Batch.
+	followResult = ListingSync{Saved: 2, NextOffset: new(next + 2)}
+	err = s.saveListingBatch(ctx, owner, store, scope, seller, row, cursor, followResult, following, trace)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23502" || pgErr.ColumnName != "details" {
+		t.Fatalf("expected Batch NOT NULL failure, got %v", err)
+	}
+	assertState(ListingBatchSize, next)
+
+	delete(following, "CBT7")
+	followResult = ListingSync{Saved: 1, NextOffset: new(1000)}
+	err = s.saveListingBatch(ctx, owner, store, scope, seller, row, cursor, followResult, following, trace)
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("expected cursor CHECK failure, got %v", err)
+	}
+	assertState(ListingBatchSize, next)
+
+	followResult.NextOffset = new(next + 1)
+	if err := s.saveListingBatch(ctx, owner, store, scope, seller, row, cursor, followResult, following, trace); err != nil {
+		t.Fatal(err)
+	}
+	assertState(next+1, next+1)
+}
 
 func TestPublishedListingsSync(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
