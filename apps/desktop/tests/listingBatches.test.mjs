@@ -17,7 +17,7 @@ const diagnosticsURL = "data:text/javascript," + encodeURIComponent(outputText
 const authURL = "data:text/javascript," + encodeURIComponent(`
   let controller = new AbortController();
   export const authLifetime = () => controller.signal;
-  export const getAccessToken = async (_refresh, report) => { report?.(true); return 'fixture'; };
+  export const getAccessToken = async (refresh, report) => { report?.(!refresh); return 'fixture'; };
   export function rejectSession() { controller.abort(); controller = new AbortController(); }
 `);
 const hooks = registerHooks({
@@ -48,11 +48,14 @@ test("diagnostics retain only allowlisted fields and rotate within the current a
   const path = "/api/v1/stores/fixture-secret/published-listings/fixture-secret/description?state=fixture-secret";
   await assert.rejects(storeRequest(path, "GET", undefined, true));
   let events = JSON.parse(diagnosticsJSON());
-  assert.deepEqual(events.map(({ operation, phase, cache_hit }) => [operation, phase, cache_hit]), [
-    ["description_get", "token_preflight", true],
-    ["description_get", "response_headers", false],
-    ["description_get", "failed", false],
+  assert.deepEqual(events.map(({ operation, phase, cache_hit, token_cached }) =>
+    [operation, phase, cache_hit, token_cached]), [
+    ["description_get", "token_preflight", undefined, true],
+    ["description_get", "response_headers", undefined, undefined],
+    ["description_get", "failed", undefined, undefined],
   ]);
+  assert.ok(events[0].request_id > 0);
+  assert.ok(events.every((event) => event.request_id === events[0].request_id));
   assert.equal(events[2].http_status, 409);
   assert.equal(events[2].error_code, "http_409");
   assert.equal(events[2].server_timing, "api;dur=1.2");
@@ -65,12 +68,62 @@ test("diagnostics retain only allowlisted fields and rotate within the current a
   const report = beginRequestDiagnostic("/api/v1/stores/example/published-listings", "POST");
   report("response_body", undefined, "listing_commit_unknown");
   assert.equal(JSON.parse(diagnosticsJSON())[0].error_code, "listing_commit_unknown");
+  report("failed", new Response(null, { status: 400 }), "listing_review_invalid");
+  report("failed", new Response(null, { status: 400 }), "listing_offset");
+  assert.deepEqual(JSON.parse(diagnosticsJSON()).slice(-2).map(({ error_code }) => error_code),
+    ["listing_review_invalid", "listing_offset"]);
   for (let i = 0; i < 200; i++) report("response_headers", new Response(null, { status: i < 199 ? 200 : 204 }));
   events = JSON.parse(diagnosticsJSON());
   assert.equal(events.length, 200);
   assert.equal(events[0].phase, "response_headers");
   assert.equal(events.at(-1).http_status, 204);
   clearDiagnostics();
+});
+
+test("GET 401 recovered by refresh does not count as failure", async (t) => {
+  rejectSession();
+  clearDiagnostics();
+  let calls = 0;
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return calls === 1 ? new Response(null, { status: 401 }) : Response.json({ items: [] });
+  });
+  assert.deepEqual(await storeRequest("/api/v1/stores", "GET"), { items: [] });
+  assert.equal(fetch.mock.callCount(), 2);
+  const events = JSON.parse(diagnosticsJSON());
+  assert.deepEqual(events.filter(({ phase }) => phase === "response_headers").map(({ http_status }) => http_status), [401, 200]);
+  assert.equal(events.filter(({ phase }) => phase === "failed").length, 0);
+  assert.deepEqual(events.filter(({ phase }) => phase === "token_preflight").map(({ token_cached }) => token_cached), [true, false]);
+  assert.ok(events.every((event) => event.request_id === events[0].request_id));
+  assert.equal(events.at(-1).cache_hit, false);
+});
+
+test("GET 401 still fails when refresh cannot authorize", async (t) => {
+  rejectSession();
+  clearDiagnostics();
+  const fetch = t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 401 }));
+  await assert.rejects(storeRequest("/api/v1/stores", "GET"), /登录已过期/);
+  assert.equal(fetch.mock.callCount(), 2);
+  const events = JSON.parse(diagnosticsJSON());
+  assert.equal(events.filter(({ phase }) => phase === "failed").length, 1);
+  assert.equal(events.at(-1).error_code, "http_401");
+});
+
+test("interleaved diagnostic operations retain separate request IDs", () => {
+  clearDiagnostics();
+  const first = beginRequestDiagnostic("/api/v1/stores", "GET");
+  const second = beginRequestDiagnostic("/api/v1/stores/sample/published-listings", "GET");
+  first("response_headers", new Response(null, { status: 200 }));
+  second("response_headers", new Response(null, { status: 200 }));
+  first("response_body", new Response(null, { status: 200 }));
+  const events = JSON.parse(diagnosticsJSON());
+  assert.deepEqual(events.map(({ request_id }) => request_id), [1, 2, 1]);
+  assert.deepEqual(events.map(({ cache_hit }) => cache_hit), [undefined, undefined, false]);
+  recordCacheHit("/api/v1/stores");
+  const cached = JSON.parse(diagnosticsJSON()).at(-1);
+  assert.equal(cached.request_id, 3);
+  assert.equal(cached.cache_hit, true);
+  assert.equal(cached.token_cached, undefined);
 });
 
 test("8-second timeout has an actionable Chinese message", () => {

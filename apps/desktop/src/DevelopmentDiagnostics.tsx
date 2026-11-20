@@ -6,12 +6,14 @@ type Operation = "stores_get" | "listings_get" | "description_get" | "store_toke
 type Phase = "token_preflight" | "response_headers" | "response_body" | "failed";
 type Entry = {
   time: string;
+  request_id: number;
   operation: Operation;
   phase: Phase;
   duration_ms: number;
   http_status?: number;
   error_code?: string;
-  cache_hit: boolean;
+  token_cached?: boolean;
+  cache_hit?: boolean;
   server_timing?: string;
 };
 
@@ -23,9 +25,11 @@ const knownCodes = new Set([
   "listing_store_missing", "listing_site_unverified", "listing_reauthorization", "listing_platform_auth", "listing_platform_error",
   "listing_token_expired", "listing_refresh_unknown", "listing_auth_changed", "listing_cursor_changed",
   "listing_busy", "listing_rate_limited", "listing_timeout", "listing_commit_unknown", "listing_transport",
-  "listing_identity_mismatch", "listing_review_changed", "listing_canceled", "listing_invalid_response",
+  "listing_identity_mismatch", "listing_review_changed", "listing_review_invalid", "listing_offset",
+  "listing_canceled", "listing_invalid_response",
 ]);
 let cursor = 0;
+let nextRequestId = 0;
 let version = 0;
 let lifetime = 0;
 
@@ -37,6 +41,7 @@ function changed() {
 export function clearDiagnostics() {
   lifetime++;
   cursor = 0;
+  nextRequestId = 0;
   entries.length = 0;
   changed();
 }
@@ -55,6 +60,7 @@ export function beginRequestDiagnostic(path: string, method: "GET" | "POST") {
   } else return;
 
   const session = lifetime;
+  const requestId = ++nextRequestId;
   let start = performance.now();
   return (phase: Phase, response?: Response, code?: unknown, cacheHit = false) => {
     if (session !== lifetime) return;
@@ -65,13 +71,15 @@ export function beginRequestDiagnostic(path: string, method: "GET" | "POST") {
       .slice(0, 4).join(", ");
     entries[cursor] = {
       time: new Date().toISOString(),
+      request_id: requestId,
       operation,
       phase,
       duration_ms: Math.round((end - start) * 10) / 10,
       http_status: response?.status,
       error_code: typeof code === "string" && knownCodes.has(code) ? code :
         phase === "failed" ? failureCode(code, response) : undefined,
-      cache_hit: cacheHit,
+      token_cached: phase === "token_preflight" ? cacheHit : undefined,
+      cache_hit: phase === "response_body" ? cacheHit : undefined,
       server_timing: timing || undefined,
     };
     start = end;

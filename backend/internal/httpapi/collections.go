@@ -56,13 +56,9 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				}
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-				switch origin {
-				case "http://127.0.0.1:1420", "http://localhost:1420",
-					"http://tauri.localhost", "https://tauri.localhost", "tauri://localhost":
-					if r.Method != http.MethodOptions && timedStoreRoute(r.Method, r.URL.Path) {
-						w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
-						w = storeTimingResponse{w, time.Now()}
-					}
+				if allowedAppOrigin(origin) && r.Method != http.MethodOptions && timedStoreRoute(r.Method, r.URL.Path) {
+					w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
+					w = storeTimingResponse{w, time.Now()}
 				}
 			}
 			if r.Method == http.MethodOptions {
@@ -98,6 +94,11 @@ type storeTimingResponse struct {
 func (w storeTimingResponse) WriteHeader(status int) {
 	w.Header().Add("Server-Timing", "api;dur="+strconv.FormatFloat(float64(time.Since(w.started).Microseconds())/1000, 'f', 1, 64))
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Forward ResponseController operations to the original writer when supported.
+func (w storeTimingResponse) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // allowedAppOrigin only grants CORS transport to the desktop shell, not API access.

@@ -147,8 +147,9 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   let response = await request();
   assertActive();
   if (response.status === 401) {
-    diagnostic?.("failed", response);
     if (method === "POST") {
+      // A POST cannot be retried automatically after an unknown commit.
+      diagnostic?.("failed", response);
       await getAccessToken(true, diagnostic
         ? (cached) => diagnostic("token_preflight", undefined, undefined, cached) : undefined);
       assertActive();

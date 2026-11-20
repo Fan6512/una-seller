@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 )
@@ -48,6 +49,17 @@ func TestDesktopStoreTimingOriginAndRoute(t *testing.T) {
 		} else if expose != "" || timing != "" {
 			t.Fatalf("%+v: expose=%q timing=%q", test, expose, timing)
 		}
+	}
+}
+
+func TestStoreTimingResponseSupportsResponseController(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	wrapped := storeTimingResponse{ResponseWriter: recorder, started: time.Now()}
+	if err := http.NewResponseController(wrapped).Flush(); err != nil {
+		t.Fatalf("ResponseController.Flush: %v", err)
+	}
+	if !recorder.Flushed {
+		t.Fatal("underlying response was not flushed")
 	}
 }
 
