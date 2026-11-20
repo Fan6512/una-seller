@@ -288,7 +288,7 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
           <small>仅修改本地草稿。更换类目后将重新加载官方属性，不改变平台商品。</small>
         </label>
       </details>
-      {!validCategory && <p className="published-form-warning">请输入当前站点的有效类目后加载规则。</p>
+      {!validCategory && <p className="published-form-warning">请输入当前站点的有效类目后加载规则。</p>}
     </section>
 
     <section className="published-block">
