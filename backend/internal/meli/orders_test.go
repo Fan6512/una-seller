@@ -357,6 +357,61 @@ func TestOrderPostgresResetsCursorForNewSeller(t *testing.T) {
 	}
 }
 
+func TestOrderPostgresResetCursor(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	_, err := db.Exec(ctx, `INSERT INTO app.meli_order_syncs
+ (store_id,site_id,logistic_type,seller_id,window_from,window_to,next_offset)
+ VALUES ($1::uuid,'MLB','remote','987654',now()-interval '30 days',now(),4)`, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ResetOrderCursor(ctx, "550e8400-e29b-41d4-a716-446655440000", store, scope, 4); !errors.Is(err, ErrOrderResetConflict) {
+		t.Fatalf("cross-owner reset: %v", err)
+	}
+	if _, err = s.ResetOrderCursor(ctx, owner, store, scope, 3); !errors.Is(err, ErrOrderResetConflict) {
+		t.Fatalf("wrong offset reset: %v", err)
+	}
+	if _, err = s.ResetOrderCursor(ctx, owner, store, scope, 0); !errors.Is(err, ErrOrderResetInvalid) {
+		t.Fatalf("no-op reset: %v", err)
+	}
+	_, err = db.Exec(ctx, `UPDATE app.meli_order_syncs SET lease_id=gen_random_uuid(),lease_until=now()+interval '1 minute'
+ WHERE store_id=$1::uuid`, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ResetOrderCursor(ctx, owner, store, scope, 4); !errors.Is(err, ErrOrderResetConflict) {
+		t.Fatalf("reset bypassed active lease: %v", err)
+	}
+	_, err = db.Exec(ctx, `UPDATE app.meli_order_syncs SET lease_id=NULL,lease_until=NULL,pending_order_ids=ARRAY['101']
+ WHERE store_id=$1::uuid`, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ResetOrderCursor(ctx, owner, store, scope, 4); !errors.Is(err, ErrOrderResetConflict) {
+		t.Fatalf("reset discarded pending orders: %v", err)
+	}
+	_, err = db.Exec(ctx, `UPDATE app.meli_order_syncs SET pending_order_ids='{}'::text[] WHERE store_id=$1::uuid`, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.ResetOrderCursor(ctx, owner, store, scope, 4)
+	if err != nil || !result.HasMore || result.NextOffset != 0 {
+		t.Fatalf("reset=%+v error=%v", result, err)
+	}
+	var offset, audit int
+	if err = db.QueryRow(ctx, `SELECT sync.next_offset,(SELECT count(*) FROM app.meli_order_resets
+ WHERE store_id=$1::uuid AND previous_offset=4) FROM app.meli_order_syncs sync
+ WHERE sync.store_id=$1::uuid`, store).Scan(&offset, &audit); err != nil || offset != 0 || audit != 1 {
+		t.Fatalf("reset state offset=%d audit=%d error=%v", offset, audit, err)
+	}
+	if _, err = s.ResetOrderCursor(ctx, owner, store, scope, 4); !errors.Is(err, ErrOrderResetConflict) {
+		t.Fatalf("repeated reset bypassed offset fence: %v", err)
+	}
+}
+
 func orderTestDetail(id, seller, site string) string {
 	return fmt.Sprintf(`{"id":%s,"seller":{"id":%s},"context":{"site":%q},"status":"payment_required","currency_id":"USD","total_amount":12.3400,"date_created":"2026-11-01T00:00:00Z","last_updated":"2026-11-01T01:00:00Z"}`, id, seller, site)
 }
@@ -511,5 +566,20 @@ func TestOrderPostgresReviewAndSkip(t *testing.T) {
 	page, err := s.ListOrders(ctx, owner, store, scope, "", 0)
 	if err != nil || len(page.Items) != 2 || page.Items[0].ID != "104" || page.Items[1].ID != "101" {
 		t.Fatalf("skip lost valid details, page=%+v error=%v", page, err)
+	}
+
+	// Re-overlap the same two search envelopes: only still-invalid details
+	// matching an earlier explicit Skip are bypassed, never valid details.
+	replayed, err := s.SyncOrders(ctx, owner, store, scope)
+	if err != nil || replayed.Saved != 1 || !replayed.HasMore || replayed.NextOffset != 1 {
+		t.Fatalf("repeat skipped page=%+v error=%v", replayed, err)
+	}
+	replayed, err = s.SyncOrders(ctx, owner, store, scope)
+	if err != nil || replayed.Saved != 1 || replayed.HasMore || replayed.NextOffset != 0 {
+		t.Fatalf("repeat final page=%+v error=%v", replayed, err)
+	}
+	var skipCount int
+	if err = db.QueryRow(ctx, "SELECT count(*) FROM app.meli_order_skips WHERE store_id=$1::uuid", store).Scan(&skipCount); err != nil || skipCount != 2 {
+		t.Fatalf("duplicate Skip audit count=%d error=%v", skipCount, err)
 	}
 }

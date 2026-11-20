@@ -22,7 +22,10 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_constraint
         WHERE conrelid='app.meli_orders'::regclass AND conname='meli_orders_pkey'
-        AND pg_get_constraintdef(oid)='PRIMARY KEY (store_id, site_id, logistic_type, order_id)') THEN
+        AND (SELECT array_agg(a.attname ORDER BY col.ord)
+             FROM unnest(conkey) WITH ORDINALITY AS col(attnum,ord)
+             JOIN pg_attribute a ON a.attrelid='app.meli_orders'::regclass AND a.attnum=col.attnum)
+            = ARRAY['store_id','site_id','logistic_type','order_id']::name[]) THEN
         ALTER TABLE app.meli_orders DROP CONSTRAINT meli_orders_pkey,
             ADD PRIMARY KEY (store_id,site_id,logistic_type,seller_id,order_id);
     END IF;
@@ -71,6 +74,23 @@ CREATE TABLE IF NOT EXISTS app.meli_order_skips (
     skipped_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS meli_order_skips_scope_lookup_idx
+ON app.meli_order_skips (store_id,site_id,logistic_type,seller_id,order_id,reason);
+
+-- An explicit rewind is auditable, but does not erase orders or skip decisions.
+CREATE TABLE IF NOT EXISTS app.meli_order_resets (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id uuid NOT NULL REFERENCES app.meli_store_connections(id) ON DELETE CASCADE,
+    site_id text NOT NULL,
+    logistic_type text NOT NULL,
+    seller_id text NOT NULL,
+    previous_offset integer NOT NULL CHECK (previous_offset > 0),
+    window_from timestamptz NOT NULL,
+    window_to timestamptz NOT NULL,
+    reset_at timestamptz NOT NULL DEFAULT now()
+);
+
 ALTER TABLE app.meli_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.meli_order_syncs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.meli_order_skips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.meli_order_resets ENABLE ROW LEVEL SECURITY;

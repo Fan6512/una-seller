@@ -55,6 +55,29 @@ func TestOrdersRejectMissingScopeAndInvalidFiltersBeforeDatabase(t *testing.T) {
 	}
 }
 
+func TestOrderUnsupportedMethodsReturn405(t *testing.T) {
+	h := HandlerWithCollections(&collections.Store{}, stubVerifier{
+		id: "6cbe41df-69cb-4594-9bad-a5473aa1a5fb",
+	}, &meli.Service{})
+	for _, tc := range []struct {
+		method, tail, allowed string
+	}{
+		{http.MethodPut, "sync", http.MethodPost},
+		{http.MethodGet, "skip", http.MethodPost},
+		{http.MethodGet, "reset", http.MethodPost},
+		{http.MethodPost, "", http.MethodGet},
+	} {
+		r := httptest.NewRequest(tc.method,
+			"/api/v1/stores/00000000-0000-4000-8000-000000000001/orders"+map[bool]string{true: "/" + tc.tail, false: ""}[tc.tail != ""]+"?site=MLB&logistic_type=remote", nil)
+		r.Header.Set("Authorization", "Bearer test-only")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusMethodNotAllowed || w.Header().Get("Allow") != tc.allowed {
+			t.Fatalf("%s %s: status=%d allow=%s body=%s", tc.method, tc.tail, w.Code, w.Header().Get("Allow"), w.Body.String())
+		}
+	}
+}
+
 func TestOrderSkipRequiresExplicitOffset(t *testing.T) {
 	h := HandlerWithCollections(&collections.Store{}, stubVerifier{
 		id: "6cbe41df-69cb-4594-9bad-a5473aa1a5fb",
@@ -137,7 +160,8 @@ SELECT owner_user_id::text,id::text,review_id::text FROM connection CROSS JOIN r
 		Review meli.OrderReview
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &blocked); err != nil || w.Code != http.StatusConflict ||
-		blocked.Error != "order_needs_review" || blocked.Review != (meli.OrderReview{OrderID: "102", ReviewID: reviewID, Offset: 3, Reason: "detail_not_found"}) {
+		blocked.Error != "order_needs_review" || blocked.Review != (meli.OrderReview{OrderID: "102", ReviewID: reviewID, Offset: 3, Reason: "detail_not_found"}) ||
+		!strings.Contains(w.Body.String(), "\"saved\":0") || !strings.Contains(w.Body.String(), "\"next_offset\":3") {
 		t.Fatalf("unexpected review HTTP %d %s", w.Code, w.Body)
 	}
 	body := fmt.Sprintf(`{"order_id":"102","review_id":%q,"offset":3}`, reviewID)

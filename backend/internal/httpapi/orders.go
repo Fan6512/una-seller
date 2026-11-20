@@ -30,11 +30,22 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 		return
 	}
 	scope := meli.OrderScope{Site: site, Logistic: logistic}
+	allowedMethod := http.MethodGet
+	if tail == "sync" || tail == "skip" || tail == "reset" {
+		allowedMethod = http.MethodPost
+	}
+	if r.Method != allowedMethod {
+		w.Header().Set("Allow", allowedMethod)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "order_method_not_allowed"})
+		return
+	}
 	var err error
+	var syncResult meli.OrderSyncResult
 	switch {
 	case tail == "sync" && r.Method == http.MethodPost:
 		var result meli.OrderSyncResult
 		result, err = a.service.SyncOrders(r.Context(), owner, store, scope)
+		syncResult = result
 		if err == nil {
 			writeJSON(w, http.StatusOK, result)
 			return
@@ -53,6 +64,22 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 		}
 		var result meli.OrderSyncResult
 		result, err = a.service.SkipOrder(r.Context(), owner, store, scope, request.OrderID, request.ReviewID, *request.Offset)
+		if err == nil {
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+	case tail == "reset" && r.Method == http.MethodPost:
+		var request struct {
+			Offset *int `json:"offset"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&request) != nil || request.Offset == nil || decoder.Decode(new(any)) != io.EOF {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_reset_invalid"})
+			return
+		}
+		var result meli.OrderSyncResult
+		result, err = a.service.ResetOrderCursor(r.Context(), owner, store, scope, *request.Offset)
 		if err == nil {
 			writeJSON(w, http.StatusOK, result)
 			return
@@ -78,7 +105,7 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 			writeJSON(w, http.StatusOK, page)
 			return
 		}
-	case tail != "" && tail != "sync" && tail != "skip" && r.Method == http.MethodGet:
+	case tail != "" && tail != "sync" && tail != "skip" && tail != "reset" && r.Method == http.MethodGet:
 		var order meli.OrderRecord
 		order, err = a.service.GetOrder(r.Context(), owner, store, scope, tail)
 		if err == nil {
@@ -92,10 +119,16 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 	code := meli.OrderErrorCode(err)
 	var review *meli.OrderReview
 	if errors.As(err, &review) {
+		// Even a 409 can follow a committed prefix; report that actual progress.
+		if !syncResult.HasMore {
+			syncResult.HasMore = true
+			syncResult.NextOffset = review.Offset
+		}
 		writeJSON(w, http.StatusConflict, struct {
 			Error  string            `json:"error"`
 			Review *meli.OrderReview `json:"review"`
-		}{code, review})
+			meli.OrderSyncResult
+		}{code, review, syncResult})
 		return
 	}
 	status := http.StatusServiceUnavailable
@@ -104,7 +137,7 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 		status = http.StatusNotFound
 	case "order_site_not_authorized", "order_reauth_required":
 		status = http.StatusForbidden
-	case "order_busy", "order_refresh_unknown", "order_auth_changed", "order_review_conflict":
+	case "order_busy", "order_refresh_unknown", "order_auth_changed", "order_review_conflict", "order_reset_conflict":
 		status = http.StatusConflict
 	case "order_invalid_response", "order_platform_unavailable":
 		status = http.StatusBadGateway
@@ -114,7 +147,7 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 		status = http.StatusGatewayTimeout
 	case "order_canceled":
 		status = http.StatusRequestTimeout
-	case "order_skip_invalid":
+	case "order_skip_invalid", "order_reset_invalid":
 		status = http.StatusBadRequest
 	}
 	writeJSON(w, status, map[string]string{"error": code})

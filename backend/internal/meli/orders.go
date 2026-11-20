@@ -24,6 +24,8 @@ var (
 	ErrOrderInvalidResponse      = errors.New("invalid order response")
 	ErrOrderAuthorizationChanged = errors.New("order authorization changed")
 	ErrOrderReviewConflict       = errors.New("order review no longer matches")
+	ErrOrderResetConflict        = errors.New("order reset no longer matches")
+	ErrOrderResetInvalid         = errors.New("invalid order reset request")
 	ErrOrderSkipInvalid          = errors.New("invalid order skip request")
 	ErrOrderNotFound             = errors.New("order not found")
 	orderSitePattern             = regexp.MustCompile(`^[A-Z]{3,8}$`)
@@ -63,8 +65,8 @@ type OrderPage struct {
 }
 
 type OrderSyncResult struct {
-	Saved      int  `json:"saved"`
-	Processed  int  `json:"processed"`
+	Saved      int  `json:"saved"`     // number of order details stored
+	Processed  int  `json:"processed"` // number of search envelopes completed
 	HasMore    bool `json:"has_more"`
 	NextOffset int  `json:"next_offset"`
 }
@@ -307,6 +309,18 @@ WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND lease_id=$4::uui
 		store, scope.Site, scope.Logistic, lease)
 }
 
+// wasOrderSkipped only recognizes a previously confirmed skip for the same seller,
+// order and failure reason. Valid details are still fetched and saved normally.
+func (s *Service) wasOrderSkipped(ctx context.Context, store string, scope OrderScope, seller, orderID, reason string) (bool, error) {
+	var skipped bool
+	err := s.db.QueryRow(ctx, `SELECT EXISTS(
+ SELECT 1 FROM app.meli_order_skips
+ WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3
+ AND seller_id=$4 AND order_id=$5 AND reason=$6)`,
+		store, scope.Site, scope.Logistic, seller, orderID, reason).Scan(&skipped)
+	return skipped, err
+}
+
 // SyncOrders commits one detail batch and advances the search offset only after the whole page is saved.
 func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope OrderScope) (OrderSyncResult, error) {
 	if !orderScopeValid(scope) {
@@ -363,37 +377,54 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 	}
 	batchSize := min(orderDetailBatchSize, len(ids))
 	records := make([]OrderRecord, 0, batchSize)
+	processedDetails := 0
+detailLoop:
 	for _, id := range ids[:batchSize] {
 		var raw json.RawMessage
-		status, err := s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw, nil)
-		if status == http.StatusNotFound {
-			cursor.ReviewReason = "detail_not_found"
-			break
-		}
-		if errors.Is(err, ErrListingResponse) {
-			cursor.ReviewReason = "invalid_detail"
-			break
-		}
-		if err != nil {
-			// A provider timeout can leave a fetched prefix or a newly discovered page.
-			// Preserve it only while the caller's context is still active.
-			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil &&
-				(len(records) > 0 || len(cursor.PendingIDs) == 0) {
-				break
+		status, detailErr := s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw, nil)
+		reason := ""
+		switch {
+		case status == http.StatusNotFound:
+			reason = "detail_not_found"
+		case errors.Is(detailErr, ErrListingResponse):
+			reason = "invalid_detail"
+		case detailErr != nil:
+			// Keep an already processed prefix when only the provider budget expires.
+			if errors.Is(detailErr, context.DeadlineExceeded) && ctx.Err() == nil &&
+				(processedDetails > 0 || len(cursor.PendingIDs) == 0) {
+				break detailLoop
 			}
-			return OrderSyncResult{}, err
+			return OrderSyncResult{}, detailErr
 		}
-		record, parseErr := parseOrderDetail(raw, id, childID, scope.Site)
-		if parseErr != nil {
-			cursor.ReviewReason = "invalid_detail"
+		var record OrderRecord
+		if reason == "" {
+			var parseErr error
+			record, parseErr = parseOrderDetail(raw, id, childID, scope.Site)
+			if parseErr != nil {
+				reason = "invalid_detail"
+			}
+		}
+		if reason != "" {
+			// Reuse the operator's decision only if the same order fails again in
+			// the same way. Never hide a recovered/valid order.
+			skipped, checkErr := s.wasOrderSkipped(ctx, store, scope, childID, id, reason)
+			if checkErr != nil {
+				return OrderSyncResult{}, checkErr
+			}
+			if skipped {
+				processedDetails++
+				continue
+			}
+			cursor.ReviewReason = reason
 			break
 		}
 		records = append(records, record)
+		processedDetails++
 	}
 	if ctx.Err() != nil {
 		return OrderSyncResult{}, ctx.Err()
 	}
-	cursor.PendingIDs = ids[len(records):]
+	cursor.PendingIDs = ids[processedDetails:]
 	if cursor.ReviewReason != "" {
 		cursor.ReviewID = cursor.LeaseID
 	}
@@ -550,6 +581,62 @@ func (s *Service) SkipOrder(ctx context.Context, owner, store string, scope Orde
 	return result, nil
 }
 
+// ResetOrderCursor explicitly rewinds an already advanced search page within its
+// original time window. It does not delete orders, skips or change the window.
+// Incomplete detail pages and active reviews must be resolved, not reset.
+func (s *Service) ResetOrderCursor(ctx context.Context, owner, store string, scope OrderScope, expectedOffset int) (OrderSyncResult, error) {
+	if !validUUID(store) {
+		return OrderSyncResult{}, ErrStoreNotFound
+	}
+	if !orderScopeValid(scope) {
+		return OrderSyncResult{}, ErrSiteNotAuthorized
+	}
+	if expectedOffset <= 0 || expectedOffset > 1<<31-1 {
+		return OrderSyncResult{}, ErrOrderResetInvalid
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	var seller string
+	var oldOffset int
+	var from, to time.Time
+	err = tx.QueryRow(ctx, `WITH connection AS (`+orderConnection+` FOR SHARE OF c)
+ SELECT sync.seller_id,sync.next_offset,sync.window_from,sync.window_to`+orderSyncScope+`
+ AND c.status='connected' AND sync.next_offset=$5
+ AND sync.window_from IS NOT NULL AND sync.window_to IS NOT NULL
+ AND sync.review_id IS NULL AND cardinality(sync.pending_order_ids)=0
+ AND (sync.lease_until IS NULL OR sync.lease_until<now()) FOR UPDATE OF sync`,
+		store, owner, scope.Site, scope.Logistic, expectedOffset).
+		Scan(&seller, &oldOffset, &from, &to)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrderSyncResult{}, ErrOrderResetConflict
+	}
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO app.meli_order_resets
+ (store_id,site_id,logistic_type,seller_id,previous_offset,window_from,window_to)
+ VALUES ($1::uuid,$2,$3,$4,$5,$6,$7)`,
+		store, scope.Site, scope.Logistic, seller, oldOffset, from, to)
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	_, err = tx.Exec(ctx, `UPDATE app.meli_order_syncs
+ SET next_offset=0, pending_order_ids='{}'::text[],pending_page_count=0,
+ pending_has_more=false,lease_id=NULL,lease_until=NULL
+ WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND seller_id=$4`,
+		store, scope.Site, scope.Logistic, seller)
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return OrderSyncResult{}, err
+	}
+	return OrderSyncResult{HasMore: true, NextOffset: 0}, nil
+}
+
 func (s *Service) authorizeOrderRead(ctx context.Context, owner, store string, scope OrderScope) error {
 	if !validUUID(store) {
 		return ErrStoreNotFound
@@ -661,6 +748,10 @@ func OrderErrorCode(err error) string {
 		return "order_needs_review"
 	case errors.Is(err, ErrOrderReviewConflict):
 		return "order_review_conflict"
+	case errors.Is(err, ErrOrderResetConflict):
+		return "order_reset_conflict"
+	case errors.Is(err, ErrOrderResetInvalid):
+		return "order_reset_invalid"
 	case errors.Is(err, ErrOrderSkipInvalid):
 		return "order_skip_invalid"
 	case errors.Is(err, ErrStoreNotFound), errors.Is(err, ErrOrderNotFound):
