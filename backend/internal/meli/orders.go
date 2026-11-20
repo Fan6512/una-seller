@@ -675,7 +675,7 @@ func (s *Service) GetOrderSyncState(ctx context.Context, owner, store string, sc
 	var reviewID, reason, pendingID *string
 	err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+`)
 SELECT sync.next_offset,
-  (sync.next_offset>0 AND sync.window_from IS NOT NULL AND sync.window_to IS NOT NULL
+  (c.status='connected' AND sync.next_offset>0 AND sync.window_from IS NOT NULL AND sync.window_to IS NOT NULL
     AND sync.review_id IS NULL AND cardinality(sync.pending_order_ids)=0
     AND (sync.lease_until IS NULL OR sync.lease_until<now())),
   sync.review_id::text,sync.review_reason,sync.pending_order_ids[1]

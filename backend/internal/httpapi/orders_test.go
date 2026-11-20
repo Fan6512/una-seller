@@ -266,6 +266,14 @@ WHERE store_id=$1::uuid`, store); err != nil {
 			t.Fatal(err)
 		}
 		state := readState()
+		if state.CanReset || state.NextOffset != 3 {
+			t.Fatalf("reauth_required store must not offer reset: %+v", state)
+		}
+		// A permitted reset requires an actively connected seller scope.
+		if _, err := cs.DB.Exec(ctx, "UPDATE app.meli_store_connections SET status='connected' WHERE id=$1::uuid", store); err != nil {
+			t.Fatal(err)
+		}
+		state = readState()
 		if !state.CanReset || state.NextOffset != 3 || state.Review != nil {
 			t.Fatalf("expected recoverable reset offset, got %+v", state)
 		}
