@@ -146,10 +146,49 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   const [rulesError, setRulesError] = useState("");
   const [loading, setLoading] = useState(false);
   const [version, setVersion] = useState(0);
+  const [descriptionReload, setDescriptionReload] = useState(0);
+  const [remoteDescription, setRemoteDescription] = useState("");
+  const [descriptionState, setDescriptionState] = useState<"idle" | "loading" | "loaded" | "empty" | "error">("idle");
+  const [descriptionError, setDescriptionError] = useState("");
 
   useEffect(() => {
     setDraft(loadDraft(localKey, listing)); setSaved("");
   }, [localKey]);
+
+  useEffect(() => {
+    if (listing.description) {
+      setRemoteDescription(listing.description);
+      setDescriptionState("loaded");
+      return;
+    }
+    const controller = new AbortController();
+    setDescriptionState("loading");
+    setDescriptionError("");
+    const path = "/api/v1/stores/" + encodeURIComponent(store) + "/published-listings/" +
+      encodeURIComponent(listing.id) + "/description?" +
+      new URLSearchParams({ site, logistic_type: logistic }).toString();
+    storeRequest<{ description: string }>(path, "GET", controller.signal, true).then((response) => {
+      if (controller.signal.aborted) return;
+      if (!response || typeof response.description !== "string" || !response.description.trim()) {
+        setDescriptionState("empty");
+        return;
+      }
+      setRemoteDescription(response.description);
+      setDescriptionState("loaded");
+      // Keep a previously saved local draft untouched; also never overwrite active typing.
+      let hasSavedDraft = true;
+      try { hasSavedDraft = localStorage.getItem(localKey) !== null; } catch { /* conservative */ }
+      if (!hasSavedDraft) {
+        setDraft((old) => old.description ? old : { ...old, description: response.description });
+      }
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setDescriptionState("error");
+        setDescriptionError(error instanceof Error ? error.message : "无法读取平台商品描述");
+      }
+    });
+    return () => controller.abort();
+  }, [localKey, store, site, logistic, listing.id, listing.description, descriptionReload]);
   const category = draft.category_id.trim();
   const [settledCategory, setSettledCategory] = useState(category);
   const validCategory = new RegExp("^" + site + "[0-9]{1,15}$").test(category);
@@ -231,7 +270,8 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   function reset() {
     if (!window.confirm("清除当前刊登在本机的编辑草稿并恢复已同步资料？")) return;
     try { localStorage.removeItem(localKey); } catch { /* still reset visible form */ }
-    setDraft(initialDraft(listing)); setSaved("已恢复本次同步数据。");
+    setDraft({ ...initialDraft(listing), description: remoteDescription || listing.description || "" });
+    setSaved("已恢复已读取的商品资料。");
   }
   return <>
     <section className="published-block">
@@ -324,13 +364,25 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
     </section>
 
     <section className="published-block">
-      <div className="published-block-head"><h3>商品详情</h3><span>完整描述</span></div>
+      <div className="published-block-head"><h3>商品详情</h3>
+        <span>{descriptionState === "loading" ? "正在读取平台描述…" :
+          descriptionState === "loaded" ? "已读取平台描述 · 本地可编辑" :
+          descriptionState === "empty" ? "平台未返回完整描述" : "完整描述"}</span>
+      </div>
       <div className="published-counter-wrap">
         <textarea className="published-edit-textarea" rows={6} value={draft.description}
           onChange={(e) => update("description", e.target.value)}
           placeholder="平台描述尚未读取；可先录入本地草稿" />
         <span className="published-char-counter">{charCount(draft.description)} 字符</span>
       </div>
+      {descriptionState === "error" && <p className="published-form-warning" role="status">
+        {descriptionError}。本地草稿不受影响。
+        <button type="button" className="published-inline-action" onClick={() => setDescriptionReload((v) => v + 1)}>重新读取</button>
+      </p>}
+      {remoteDescription && remoteDescription !== draft.description && <button type="button"
+        className="published-inline-action" onClick={() => {
+          if (window.confirm("使用平台描述替换当前草稿中的描述？")) update("description", remoteDescription);
+        }}>用平台描述填入当前草稿</button>}
       <details className="published-detail-expand"><summary>平台标识与同步信息</summary>
         <div className="published-field-grid">
           <Field label="刊登 ID" value={listing.id}/>
