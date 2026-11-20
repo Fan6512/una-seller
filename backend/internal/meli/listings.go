@@ -3,10 +3,12 @@ package meli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const ListingBatchSize = 5
@@ -165,9 +168,12 @@ func (s *Service) SkipPublishedReview(ctx context.Context, owner, store string, 
 }
 
 func (s *Service) syncPublished(ctx context.Context, owner, store string, scope ListingScope, expected *int, restart bool, skipID string, budget time.Duration) (ListingSync, error) {
+	trace := slog.With("listing_sync_attempt", rand.Text(), "restart", restart)
 	readCtx, endRead := context.WithTimeout(ctx, 2*time.Second)
 	defer endRead()
+	started := time.Now()
 	row, seller, err := s.listingScope(readCtx, owner, store, scope)
+	logListingStage(trace, "read_authorization", started, err)
 	if err != nil {
 		return ListingSync{}, err
 	}
@@ -187,8 +193,10 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 		return ListingSync{}, ErrListingBusy
 	}
 	defer s.listingRuns.Delete(key)
+	started = time.Now()
 	cursor, err := readListingCursor(readCtx, s.db, store, scope, seller)
 	endRead()
+	logListingStage(trace, "read_cursor", started, err)
 	if err != nil {
 		return ListingSync{}, err
 	}
@@ -203,7 +211,7 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 		return ListingSync{}, ErrListingReviewChanged
 	}
 	fetchCtx, endFetch := context.WithTimeout(ctx, budget)
-	result, details, err := s.fetchListingBatch(fetchCtx, auth.AccessToken, seller, scope, offset, skipID)
+	result, details, err := s.fetchListingBatch(fetchCtx, auth.AccessToken, seller, scope, offset, skipID, trace)
 	endFetch()
 	if ctx.Err() != nil {
 		return ListingSync{}, ctx.Err()
@@ -213,7 +221,7 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 			return ListingSync{}, err
 		}
 		interruption := listingInterruption(err)
-		result = ListingSync{NextOffset: &offset, Interruption: interruption}
+		result = ListingSync{Interruption: interruption}
 		switch interruption.Code {
 		case "listing_invalid_response", "listing_identity_mismatch":
 			reason := "search_response_invalid"
@@ -222,11 +230,15 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 			}
 			result.Review = &ListingReview{Offset: offset, Reason: reason}
 			result.NeedsReview = 1
-		default:
-			if !restart {
-				return ListingSync{}, interruption
-			}
 		}
+		// A failed first search has no progress to replace the persisted restart state.
+		if restart {
+			return result, interruption
+		}
+		if result.Review == nil {
+			return ListingSync{}, interruption
+		}
+		result.NextOffset = &offset
 	}
 	if result.Review == nil && result.Interruption != nil && !restart &&
 		cursor.Review.Reason != "" && result.NextOffset != nil && cursor.Review.Offset == *result.NextOffset {
@@ -235,7 +247,7 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 	// The platform budget can expire while the original request is still live.
 	writeCtx, endWrite := context.WithTimeout(ctx, 3*time.Second)
 	defer endWrite()
-	if err = s.saveListingBatch(writeCtx, owner, store, scope, seller, row, cursor, result, details); err != nil {
+	if err = s.saveListingBatch(writeCtx, owner, store, scope, seller, row, cursor, result, details, trace); err != nil {
 		return ListingSync{}, err
 	}
 	if result.Saved == 0 && result.Interruption != nil {
@@ -263,7 +275,7 @@ type listingWrite struct {
 	unavailableAt *time.Time
 }
 
-func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, scope ListingScope, offset int, skipID string) (ListingSync, map[string]listingWrite, error) {
+func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, scope ListingScope, offset int, skipID string, trace *slog.Logger) (ListingSync, map[string]listingWrite, error) {
 	var search struct {
 		Seller json.Number `json:"seller_id"`
 		IDs    []string    `json:"results"`
@@ -275,17 +287,21 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 	}
 	limit := min(ListingBatchSize, 1000-offset)
 	query := url.Values{"offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(limit)}, "orders": {"start_time_desc"}}
+	started := time.Now()
 	_, err := s.listingGET(ctx, token, "/marketplace/users/"+seller+"/items/search?"+query.Encode(), &search)
+	p := search.Paging
+	if err == nil {
+		switch {
+		case search.Seller.String() != seller:
+			err = ErrListingIdentity
+		case search.IDs == nil || p.Total == nil || *p.Total < 0 || p.Offset == nil || *p.Offset != offset ||
+			p.Limit == nil || *p.Limit != limit || len(search.IDs) > limit || (len(search.IDs) == 0 && offset < *p.Total):
+			err = ErrListingResponse
+		}
+	}
+	logListingStage(trace, "platform_search_get", started, err)
 	if err != nil {
 		return ListingSync{}, nil, err
-	}
-	if search.Seller.String() != seller {
-		return ListingSync{}, nil, ErrListingIdentity
-	}
-	p := search.Paging
-	if search.IDs == nil || p.Total == nil || *p.Total < 0 || p.Offset == nil || *p.Offset != offset ||
-		p.Limit == nil || *p.Limit != limit || len(search.IDs) > limit || (len(search.IDs) == 0 && offset < *p.Total) {
-		return ListingSync{}, nil, ErrListingResponse
 	}
 
 	if skipID != "" && (len(search.IDs) == 0 || search.IDs[0] != skipID) {
@@ -308,7 +324,9 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 		if result.Interruption != nil {
 			break
 		}
+		started = time.Now()
 		item, reason, fetchErr := s.fetchListingDetail(ctx, token, seller, scope, id)
+		logListingStage(trace, "platform_detail_get", started, fetchErr)
 		if errors.Is(fetchErr, ListingPlatformError(http.StatusNotFound)) {
 			checkedAt := time.Now()
 			details[id] = listingWrite{unavailableAt: &checkedAt}
@@ -358,15 +376,40 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 	return result, details, nil
 }
 
-func (s *Service) saveListingBatch(ctx context.Context, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor listingCursor, result ListingSync, details map[string]listingWrite) error {
+func (s *Service) saveListingBatch(ctx context.Context, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor listingCursor, result ListingSync, details map[string]listingWrite, trace *slog.Logger) error {
+	started := time.Now()
 	tx, err := s.db.Begin(ctx)
+	logListingStage(trace, "db_begin", started, err)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) // pgx discards the connection if cancellation prevents rollback.
 
+	started = time.Now()
+	err = writeListingBatch(ctx, tx, owner, store, scope, seller, row, cursor, result, details)
+	logListingStage(trace, "db_write", started, err)
+	if err != nil {
+		return err
+	}
+	started = time.Now()
+	err = tx.Commit(ctx)
+	if err != nil && !errors.Is(err, pgx.ErrTxCommitRollback) {
+		if pgconn.SafeToRetry(err) {
+			trace.Warn("listing sync stage", "stage", "db_commit", "elapsed_ms", time.Since(started).Milliseconds(),
+				"outcome", "commit_not_sent", "cause", listingStageOutcome(err))
+			return err
+		}
+		trace.Warn("listing sync stage", "stage", "db_commit", "elapsed_ms", time.Since(started).Milliseconds(),
+			"outcome", "commit_unknown", "cause", listingStageOutcome(err))
+		return &ListingInterruption{Code: "listing_commit_unknown"}
+	}
+	logListingStage(trace, "db_commit", started, err)
+	return err
+}
+
+func writeListingBatch(ctx context.Context, tx pgx.Tx, owner, store string, scope ListingScope, seller string, row tokenSnapshot, cursor listingCursor, result ListingSync, details map[string]listingWrite) error {
 	var valid bool
-	err = tx.QueryRow(ctx, `SELECT COALESCE(status='connected' AND seller_id=$3
+	err := tx.QueryRow(ctx, `SELECT COALESCE(status='connected' AND seller_id=$3
         AND access_token_ciphertext=$4 AND marketplaces=$5::jsonb AND marketplaces_status=$6
         AND access_token_expires_at > clock_timestamp(),false)
         FROM app.meli_store_connections
@@ -436,10 +479,44 @@ func (s *Service) saveListingBatch(ctx context.Context, owner, store string, sco
 	if err != nil {
 		return err
 	}
-	if err = ctx.Err(); err != nil {
-		return err
+	return ctx.Err()
+}
+
+func logListingStage(trace *slog.Logger, stage string, started time.Time, err error) {
+	var platform ListingPlatformError
+	errors.As(err, &platform)
+	trace.Info("listing sync stage", "stage", stage, "elapsed_ms", time.Since(started).Milliseconds(),
+		"outcome", listingStageOutcome(err), "platform_status", int(platform))
+}
+
+func listingStageOutcome(err error) string {
+	var platform ListingPlatformError
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded), pgconn.Timeout(err):
+		return "timeout"
+	case errors.Is(err, pgx.ErrTxCommitRollback):
+		return "rolled_back"
+	case errors.Is(err, ErrListingTransport):
+		return "platform_transport"
+	case errors.Is(err, ErrListingResponse):
+		return "invalid_platform_response"
+	case errors.Is(err, ErrListingIdentity):
+		return "identity_mismatch"
+	case errors.As(err, &platform):
+		return "platform_http_error"
+	case errors.Is(err, ErrStoreNotFound), errors.Is(err, ErrSiteNotAuthorized), errors.Is(err, ErrListingAuthorizationChanged):
+		return "authorization_rejected"
+	case errors.Is(err, ErrListingCursor):
+		return "cursor_changed"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection_eof"
+	default:
+		return "error"
 	}
-	return tx.Commit(ctx)
 }
 
 type ListingInterruption struct {
