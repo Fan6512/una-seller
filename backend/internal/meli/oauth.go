@@ -40,14 +40,18 @@ type Config struct {
 }
 
 type Service struct {
-	db           *pgxpool.Pool
-	cipher       *TokenCipher
-	cfg          Config
-	client       *http.Client
-	authorizeURL string
-	apiURL       string
-	refreshGroup singleflight.Group
-	listingRuns  sync.Map
+	db               *pgxpool.Pool
+	cipher           *TokenCipher
+	cfg              Config
+	client           *http.Client
+	authorizeURL     string
+	apiURL           string
+	refreshGroup     singleflight.Group
+	listingRuns      sync.Map
+	orderRequests    sync.Mutex
+	orderNextRequest time.Time
+	orderNextSearch  time.Time
+	orderRetryUntil  time.Time
 }
 
 type Store struct {

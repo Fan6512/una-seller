@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,6 +19,12 @@ import (
 const OrderBatchSize = 3
 const orderPageSize = 20
 const orderDetailBatchSize = 3
+const orderRequestInterval = 100 * time.Millisecond
+
+// Official /marketplace/orders/search quota: 100 requests/minute.
+// Use 650ms between searches for headroom; details keep the 100ms pacing.
+const orderSearchRequestInterval = 650 * time.Millisecond
+const orderDefaultCooldown = 5 * time.Second
 
 var (
 	ErrOrderBusy                 = errors.New("order sync already running")
@@ -71,6 +78,13 @@ type OrderSyncResult struct {
 	NextOffset int  `json:"next_offset"`
 }
 
+// Read-only persisted sync snapshot for a verified seller scope.
+type OrderSyncState struct {
+	NextOffset int          `json:"next_offset"`
+	CanReset   bool         `json:"can_reset"`
+	Review     *OrderReview `json:"review,omitempty"`
+}
+
 type OrderReview struct {
 	OrderID  string `json:"order_id"`
 	ReviewID string `json:"review_id"`
@@ -79,6 +93,73 @@ type OrderReview struct {
 }
 
 func (r *OrderReview) Error() string { return "order_needs_review" }
+
+type OrderRateLimitError struct {
+	until time.Time
+}
+
+func (e *OrderRateLimitError) Error() string { return "order rate limited" }
+func (e *OrderRateLimitError) Unwrap() error { return ListingPlatformError(http.StatusTooManyRequests) }
+func (e *OrderRateLimitError) RetryAfter() string {
+	delay := time.Until(e.until)
+	if delay <= 0 {
+		return "0"
+	}
+	return strconv.FormatInt(int64((delay-1)/time.Second)+1, 10)
+}
+
+// Pace order reads across scopes in this process and apply upstream cooldowns
+// before another request can start, including concurrent syncs from other stores.
+func (s *Service) orderGET(ctx context.Context, token, path string, target any) (int, error) {
+	if !s.orderRequests.TryLock() {
+		// A concurrent local request is not an upstream 429.
+		return http.StatusConflict, ErrOrderBusy
+	}
+	defer s.orderRequests.Unlock()
+	if time.Now().Before(s.orderRetryUntil) {
+		return http.StatusTooManyRequests, &OrderRateLimitError{until: s.orderRetryUntil}
+	}
+	// Both clocks are protected by orderRequests. Search calls have their
+	// own slower quota; detail reads must not inherit the search delay.
+	isSearch := path == "/marketplace/orders/search" || strings.HasPrefix(path, "/marketplace/orders/search?")
+	next := s.orderNextRequest
+	if isSearch && s.orderNextSearch.After(next) {
+		next = s.orderNextSearch
+	}
+	if delay := time.Until(next); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	s.orderNextRequest = now.Add(orderRequestInterval)
+	if isSearch {
+		s.orderNextSearch = now.Add(orderSearchRequestInterval)
+	}
+	var response listingGETTiming
+	status, err := s.listingGET(ctx, token, path, target, &response)
+	if status == http.StatusTooManyRequests {
+		now := time.Now()
+		until, dateErr := http.ParseTime(response.retryAfter)
+		if dateErr != nil {
+			delay := orderDefaultCooldown
+			if seconds, parseErr := strconv.ParseUint(response.retryAfter, 10, 64); parseErr == nil {
+				delay = time.Duration(min(seconds, math.MaxInt64/uint64(time.Second))) * time.Second
+			}
+			until = now.Add(delay)
+		}
+		s.orderRetryUntil = until
+		return status, &OrderRateLimitError{until: until}
+	}
+	return status, err
+}
 
 type orderCursor struct {
 	LeaseID      string
@@ -364,7 +445,7 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 			"offset":            {strconv.Itoa(cursor.Offset)},
 		}
 		var search json.RawMessage
-		_, err = s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/search?"+query.Encode(), &search, nil)
+		_, err = s.orderGET(fetchCtx, auth.AccessToken, "/marketplace/orders/search?"+query.Encode(), &search)
 		if err != nil {
 			return OrderSyncResult{}, err
 		}
@@ -381,7 +462,7 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 detailLoop:
 	for _, id := range ids[:batchSize] {
 		var raw json.RawMessage
-		status, detailErr := s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw, nil)
+		status, detailErr := s.orderGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw)
 		reason := ""
 		switch {
 		case status == http.StatusNotFound:
@@ -579,6 +660,38 @@ func (s *Service) SkipOrder(ctx context.Context, owner, store string, scope Orde
 		return OrderSyncResult{}, err
 	}
 	return result, nil
+}
+
+// GetOrderSyncState reads the server-persisted cursor for the current verified
+// child seller. Never reveal an old seller's state after remapping.
+func (s *Service) GetOrderSyncState(ctx context.Context, owner, store string, scope OrderScope) (OrderSyncState, error) {
+	var state OrderSyncState
+	if !orderScopeValid(scope) {
+		return state, ErrSiteNotAuthorized
+	}
+	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
+		return state, err
+	}
+	var reviewID, reason, pendingID *string
+	err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+`)
+SELECT sync.next_offset,
+  (c.status='connected' AND sync.next_offset>0 AND sync.window_from IS NOT NULL AND sync.window_to IS NOT NULL
+    AND sync.review_id IS NULL AND cardinality(sync.pending_order_ids)=0
+    AND (sync.lease_until IS NULL OR sync.lease_until<now())),
+  sync.review_id::text,sync.review_reason,sync.pending_order_ids[1]
+FROM app.meli_order_syncs sync JOIN connection c ON c.id=sync.store_id AND c.child_id=sync.seller_id
+WHERE c.status<>'disconnected' AND sync.site_id=$3 AND sync.logistic_type=$4`,
+		store, owner, scope.Site, scope.Logistic).Scan(&state.NextOffset, &state.CanReset, &reviewID, &reason, &pendingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return state, nil
+	}
+	if err != nil {
+		return OrderSyncState{}, err
+	}
+	if reviewID != nil && reason != nil && pendingID != nil {
+		state.Review = &OrderReview{OrderID: *pendingID, ReviewID: *reviewID, Offset: state.NextOffset, Reason: *reason}
+	}
+	return state, nil
 }
 
 // ResetOrderCursor explicitly rewinds an already advanced search page within its

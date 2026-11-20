@@ -103,7 +103,8 @@ export function readableStoreError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false, body?: string): Promise<T> {
+export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false, body?: string,
+  errorLabel?: (code: string, status: number) => string): Promise<T> {
   const lifetime = authLifetime();
   const diagnostic = beginRequestDiagnostic(path, method);
   const assertActive = () => {
@@ -175,6 +176,12 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
         : "商品请求失败（HTTP " + response.status + "）";
       assertActive();
       throw new StoreRequestError(detail?.skipped ? reason + "，该批已跳过 " + detail.skipped + " 条" : reason, response.status);
+    }
+    if (errorLabel) {
+      const detail = await response.json().catch(() => null) as { error?: string } | null;
+      assertActive();
+      diagnostic?.("failed", response, detail?.error);
+      throw new StoreRequestError(errorLabel(detail?.error || "order_unavailable", response.status), response.status);
     }
     diagnostic?.("failed", response);
     const reason = ({

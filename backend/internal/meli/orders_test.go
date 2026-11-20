@@ -133,6 +133,106 @@ func TestOrderCancellationAndTimeoutAreDistinct(t *testing.T) {
 	}
 }
 
+func TestOrderLocalRequestContentionIsNotUpstreamRateLimit(t *testing.T) {
+	s := Service{}
+	s.orderRequests.Lock()
+	defer s.orderRequests.Unlock()
+	var raw json.RawMessage
+	status, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw)
+	if status != http.StatusConflict || !errors.Is(err, ErrOrderBusy) ||
+		OrderErrorCode(err) != "order_busy" {
+		t.Fatalf("local contention incorrectly reported as provider 429: status=%d err=%v", status, err)
+	}
+}
+
+func TestOrderProviderPacing(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, `{}`)
+	}))
+	defer server.Close()
+	s := Service{apiURL: server.URL, client: server.Client()}
+	var raw json.RawMessage
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	next := s.orderNextRequest
+	// Reserve a known future slot even on a loaded test runner.
+	s.orderNextRequest = started.Add(orderRequestInterval)
+	if next.IsZero() {
+		t.Fatal("provider request did not reserve the next slot")
+	}
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/101", &raw); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 || time.Since(started) < orderRequestInterval {
+		t.Fatal("second provider request was not paced")
+	}
+}
+
+// The search endpoint has a separate 100/minute quota. Detail GETs remain
+// on the faster shared pacing and must not consume/reserve a search slot.
+func TestOrderSearchPacingRespectsQuota(t *testing.T) {
+	requests := make(chan time.Time, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests <- time.Now()
+		fmt.Fprint(w, "{}")
+	}))
+	defer server.Close()
+	s := Service{apiURL: server.URL, client: server.Client()}
+	var raw json.RawMessage
+
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search?seller.id=1", &raw); err != nil {
+		t.Fatal(err)
+	}
+	first := <-requests
+	nextSearch := s.orderNextSearch
+	if nextSearch.IsZero() {
+		t.Fatal("search did not reserve a quota slot")
+	}
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/101", &raw); err != nil {
+		t.Fatal(err)
+	}
+	detail := <-requests
+	if !s.orderNextSearch.Equal(nextSearch) {
+		t.Fatal("detail request consumed a search quota slot")
+	}
+	if detail.Sub(first) < orderRequestInterval-20*time.Millisecond {
+		t.Fatal("detail request bypassed general pacing")
+	}
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw); err != nil {
+		t.Fatal(err)
+	}
+	second := <-requests
+	if elapsed := second.Sub(first); elapsed < orderSearchRequestInterval-20*time.Millisecond {
+		t.Fatalf("search requests too close: %s, want at least %s", elapsed, orderSearchRequestInterval)
+	}
+}
+
+func TestOrderSearchCanceledWhileThrottledDoesNotSendRequest(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, "{}")
+	}))
+	defer server.Close()
+	s := Service{apiURL: server.URL, client: server.Client()}
+	var raw json.RawMessage
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.orderGET(ctx, "fixture", "/marketplace/orders/search", &raw); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled search returned %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("canceled search sent %d upstream requests", calls.Load())
+	}
+}
+
 func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -418,7 +518,7 @@ func orderTestDetail(id, seller, site string) string {
 
 func TestOrderPostgresReviewAndSkip(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	const original = `[{ "user_id":987654,"site_id":"MLB","logistic_type":"remote"},{"user_id":987654,"site_id":"MPE","logistic_type":"remote"}]`
 	if _, err := db.Exec(ctx, "UPDATE app.meli_store_connections SET marketplaces=$2::jsonb,access_token_expires_at=now()+interval '30 minutes' WHERE id=$1::uuid", store, original); err != nil {
@@ -451,6 +551,9 @@ func TestOrderPostgresReviewAndSkip(t *testing.T) {
 			case -1:
 				<-r.Context().Done()
 			default:
+				if status == http.StatusTooManyRequests {
+					w.Header().Set("Retry-After", "0")
+				}
 				w.WriteHeader(int(status))
 			}
 		case "/marketplace/orders/103":
@@ -471,7 +574,9 @@ func TestOrderPostgresReviewAndSkip(t *testing.T) {
 		code   string
 	}{{429, "order_rate_limited"}, {503, "order_platform_unavailable"}, {-1, "order_timeout"}} {
 		firstFailure.Store(transient.status)
-		attempt, stop := context.WithTimeout(ctx, 500*time.Millisecond)
+		// The search quota may delay a subsequent attempt by 650ms; allow
+		// enough time to reach the simulated 429/503/timeout response.
+		attempt, stop := context.WithTimeout(ctx, 1500*time.Millisecond)
 		_, err := s.SyncOrders(attempt, owner, store, scope)
 		stop()
 		if OrderErrorCode(err) != transient.code {
