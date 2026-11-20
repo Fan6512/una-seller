@@ -193,6 +193,10 @@ func TestPublishedListingHandler(t *testing.T) {
 		if status == 405 && w.Header().Get("Allow") != "GET, POST" {
 			t.Fatal("wrong allowed methods")
 		}
+		if method == "GET" && status == http.StatusOK &&
+			(!strings.HasPrefix(w.Header().Get("Server-Timing"), "auth;dur=") || !strings.Contains(w.Header().Get("Server-Timing"), ", read;dur=")) {
+			t.Fatal("missing read timing")
+		}
 		return result
 	}
 	call("DELETE", "", 405, "listing_method")
@@ -296,7 +300,7 @@ func TestPublishedListingHandler(t *testing.T) {
 	stop()
 	cancelResponse := httptest.NewRecorder()
 	(storeAPI{service: service}).publishedListings(cancelResponse,
-		httptest.NewRequest("POST", path+"?restart=1", nil).WithContext(canceled), owner, store)
+		httptest.NewRequest("POST", path+"?restart=1", nil).WithContext(canceled), owner, store, time.Now())
 	if cancelResponse.Code != http.StatusRequestTimeout || !strings.Contains(cancelResponse.Body.String(), "listing_canceled") {
 		t.Fatalf("cancellation returned HTTP %d", cancelResponse.Code)
 	}

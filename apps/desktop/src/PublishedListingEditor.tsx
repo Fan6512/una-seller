@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { storeRequest } from "./stores";
+import { ensureStoreConnection, storeRequest } from "./stores";
 import type { Listing } from "./PublishedListingView";
 
 type Choice = { id?: string | number; name?: string };
@@ -188,7 +188,9 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
     const path = "/api/v1/stores/" + encodeURIComponent(store) + "/published-listings/" +
       encodeURIComponent(listing.id) + "/description?" +
       new URLSearchParams({ site, logistic_type: logistic }).toString();
-    storeRequest<{ description: string }>(path, "GET", controller.signal, true).then((response) => {
+    ensureStoreConnection(store, controller.signal).then(() =>
+      storeRequest<{ description: string }>(path, "GET", controller.signal, true),
+    ).then((response) => {
       if (controller.signal.aborted) return;
       if (!response || typeof response.description !== "string" || !response.description.trim()) {
         setDescriptionState("empty");
