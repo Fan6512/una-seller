@@ -1,5 +1,6 @@
 import { getAccessToken, rejectSession } from "./auth";
 import { apiBase } from "./collections";
+import { beginRequestDiagnostic } from "./DevelopmentDiagnostics";
 
 export type StoreMarketplace = {
   user_id: number | string;
@@ -48,14 +49,17 @@ export function listingErrorMessage(code: string, platformStatus?: number): stri
 }
 
 export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false, body?: string): Promise<T> {
+  const diagnostic = beginRequestDiagnostic(path, method);
   const unreadable = () => new Error(method === "POST"
     ? "未收到可读取的同步响应，请刷新后以服务端同步位置为准"
     : "无法读取服务端商品和同步位置，请重试读取");
   const request = async (refresh = false) => {
+    let preflight = true;
     try {
-      const token = await getAccessToken(refresh);
+      const token = await getAccessToken(refresh, diagnostic && ((cached) => diagnostic("token_preflight", undefined, undefined, cached)));
+      preflight = false;
       signal?.throwIfAborted();
-      return await fetch(apiBase + path, {
+      const response = await fetch(apiBase + path, {
         method,
         signal,
         cache: "no-store",
@@ -64,7 +68,11 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
         },
         body,
       });
+      diagnostic?.("response_headers", response);
+      return response;
     } catch (error) {
+      diagnostic?.("failed", undefined, signal?.reason?.name === "TimeoutError" ? "timeout" :
+        signal?.aborted ? "aborted" : preflight ? "token_preflight" : "network");
       signal?.throwIfAborted();
       if (listing && error instanceof TypeError) throw unreadable();
       throw error;
@@ -72,24 +80,31 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   };
   let response = await request();
   if (response.status === 401) {
+    diagnostic?.("failed", response);
     signal?.throwIfAborted();
     response = await request(true);
     if (response.status === 401) {
+      diagnostic?.("failed", response);
       rejectSession();
       throw new Error("登录已过期，请重新登录");
     }
   }
   if (!response.ok) {
     if (listing) {
-      const detail = await response.json().catch((error: unknown) => {
+      const detail = await response.json().then((detail: { code?: string; platform_status?: number; skipped?: number } | null) => {
+        diagnostic?.("failed", response, detail?.code);
+        return detail;
+      }).catch((error: unknown) => {
+        diagnostic?.("failed", response, signal?.aborted ? "aborted" : "invalid_body");
         signal?.throwIfAborted();
         if (error instanceof Error && error.name === "AbortError") throw error;
         return null;
-      }) as { code?: string; platform_status?: number; skipped?: number } | null;
+      });
       const reason = detail?.code ? listingErrorMessage(detail.code, detail.platform_status)
         : "商品请求失败（HTTP " + response.status + "）";
       throw new Error(detail?.skipped ? reason + "，该批已跳过 " + detail.skipped + " 条" : reason);
     }
+    diagnostic?.("failed", response);
     if (response.status === 503) throw new Error("美客多授权尚未在服务器上配置或服务不可用");
     if (response.status === 404) throw new Error("店铺不存在或无权访问");
     if (response.status === 403) throw new Error("此店铺需要重新授权");
@@ -97,8 +112,12 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
     throw new Error("店铺操作失败（HTTP " + response.status + "）");
   }
   try {
-    return await response.json() as T;
+    const result = await response.json() as T;
+    diagnostic?.("response_body", response, (result as { interruption?: { code?: unknown } } | null)?.interruption?.code);
+    return result;
   } catch (error) {
+    diagnostic?.("failed", response, signal?.reason?.name === "TimeoutError" ? "timeout" :
+      signal?.aborted ? "aborted" : "invalid_body");
     signal?.throwIfAborted();
     if (listing && !(error instanceof Error && error.name === "AbortError")) throw unreadable();
     throw error;

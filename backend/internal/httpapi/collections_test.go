@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Fan6512/una-seller/backend/internal/collections"
@@ -12,6 +13,41 @@ import (
 type stubVerifier struct {
 	id  string
 	err error
+}
+
+func TestDesktopStoreTimingOriginAndRoute(t *testing.T) {
+	h := HandlerWithCollections(&collections.Store{}, stubVerifier{})
+	const listing = "/api/v1/stores/test/published-listings"
+	for _, test := range []struct {
+		method, path, origin string
+		timing               bool
+	}{
+		{"GET", "/api/v1/stores", "http://tauri.localhost", true},
+		{"GET", listing, "https://tauri.localhost", true},
+		{"POST", listing, "tauri://localhost", true},
+		{"GET", listing + "/test/description", "http://tauri.localhost", true},
+		{"POST", "/api/v1/stores/test/connection-check", "http://tauri.localhost", true},
+		{"GET", listing, "https://untrusted.example", false},
+		{"GET", listing, "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false},
+		{"GET", listing, "http://localhost:1420", false},
+		{"GET", listing, "", false},
+		{"OPTIONS", listing, "http://tauri.localhost", false},
+		{"POST", "/api/v1/stores/oauth/start", "http://tauri.localhost", false},
+	} {
+		r := httptest.NewRequest(test.method, test.path, nil)
+		r.Header.Set("Origin", test.origin)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		headers := w.Result().Header
+		expose, timing := headers.Get("Access-Control-Expose-Headers"), headers.Get("Server-Timing")
+		if test.timing {
+			if w.Code != http.StatusUnauthorized || expose != "Server-Timing" || !strings.HasPrefix(timing, "api;dur=") {
+				t.Fatalf("%+v: status=%d expose=%q timing=%q", test, w.Code, expose, timing)
+			}
+		} else if expose != "" || timing != "" {
+			t.Fatalf("%+v: expose=%q timing=%q", test, expose, timing)
+		}
+	}
 }
 
 func (v stubVerifier) Verify(_ context.Context, _ string) (string, error) {

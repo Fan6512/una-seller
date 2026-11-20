@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
+import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
 import StoresPage from "./StoresPage";
 import PublishedListingsPage from "./PublishedListingsPage";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
@@ -388,6 +389,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
 
       <main className="main-content">
         {settings && <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />}
+        {diagnosticsEnabled && settings && <DevelopmentDiagnostics />}
         {section === "stores" ? <div hidden={settings}><StoresPage /></div>
           : section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : !settings && <>
