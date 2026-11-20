@@ -38,10 +38,12 @@ function getFamily(item: Listing): { key: string; id?: string } {
 }
 
 function getSKU(item: Listing, variation?: Variation): string | undefined {
-  return variation?.seller_custom_field
+  const sku = variation?.seller_custom_field
     || variation?.attributes?.find((a) => a.id === "SELLER_SKU")?.value_name
     || item.attributes?.find((a) => a.id === "SELLER_SKU")?.value_name
     || item.seller_custom_field || undefined;
+  // Some older platform payloads copy the entire title into the custom field.
+  return sku?.trim() && sku.trim() !== item.title?.trim() ? sku.trim() : undefined;
 }
 const optionField = /^(COLOR|MAIN_COLOR|SECONDARY_COLOR|SIZE|SIZE_GRID|MODEL|PATTERN|DESIGN)$/;
 function variantName(item: Listing, variation?: Variation, index?: number): string {
