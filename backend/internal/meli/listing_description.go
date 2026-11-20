@@ -35,10 +35,13 @@ func (s *Service) GetPublishedDescription(ctx context.Context, owner, store stri
 	// Do not contact the platform for a listing that does not belong to the
 	// authenticated owner, store, verified site and currently linked child seller.
 	var global, parent *string
-	err = s.db.QueryRow(readCtx, `SELECT details->>'cbt_item_id', details->>'parent_item_id'
-		FROM app.meli_published_listings
-		WHERE (store_id,site_id,logistic_type,listing_id)=($1::uuid,$2,$3,$4)
-		  AND details->>'seller_id'=$5`, store, scope.Site, scope.Logistic, listing, seller).Scan(&global, &parent)
+	err = s.db.QueryRow(readCtx, `SELECT item.details->>'cbt_item_id', item.details->>'parent_item_id'
+		FROM app.meli_published_listings item
+		JOIN app.meli_store_connections c ON c.id=item.store_id
+		WHERE (item.store_id,item.site_id,item.logistic_type,item.listing_id)=($1::uuid,$2,$3,$4)
+		  AND item.details->>'seller_id'=$5 AND c.owner_user_id=$6::uuid AND c.status='connected'
+		  AND c.marketplaces=$7::jsonb AND c.marketplaces_status=$8 AND c.access_token_ciphertext=$9`,
+		store, scope.Site, scope.Logistic, listing, seller, owner, row.marketsJSON, row.marketsStatus, row.accessCipher).Scan(&global, &parent)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrListingDescriptionMissing
 	}

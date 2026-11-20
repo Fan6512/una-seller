@@ -103,6 +103,7 @@ func TestPublishedListingHandler(t *testing.T) {
 	}
 
 	detailCode := 200
+	var descriptionCalls atomic.Int32
 	searchTimeout, invalidSearch := false, false
 	detailBody := `{"id":"CBT1","seller_id":678901,"site_id":"CBT","price":0,"status":"active"}`
 	ids, total := `"CBT1"`, 1
@@ -130,6 +131,15 @@ func TestPublishedListingHandler(t *testing.T) {
 			body = detailBody
 		case "/marketplace/items/CBT2":
 			body = `{"id":"CBT2","seller_id":678901,"site_id":"CBT"}`
+		case "/marketplace/items/CBT1/description":
+			descriptionCalls.Add(1)
+			if r.URL.RawQuery != "logistic_type=remote&site_id=MLB" {
+				t.Error("wrong platform description scope")
+			}
+			body = `{"plain_text":"Platform description"}`
+		case "/marketplace/items/CBT3/description":
+			descriptionCalls.Add(1)
+			code = http.StatusNotFound
 		default:
 			t.Error("unexpected platform path")
 			code = 404
@@ -349,4 +359,94 @@ func TestPublishedListingHandler(t *testing.T) {
 		t.Fatal("a committed batch did not advance the persisted cursor after losing its acknowledgment")
 	}
 	call("POST", "?offset=1", http.StatusConflict, "listing_cursor_changed")
+
+	t.Run("description HTTP route", func(t *testing.T) {
+		const markets = `[{"site_id":"MLB","logistic_type":"remote","user_id":987654},
+			{"site_id":"MLM","logistic_type":"remote","user_id":987655}]`
+		if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces=$2::jsonb,
+			marketplaces_status='verified' WHERE id=$1::uuid`, store, markets); err != nil {
+			t.Fatal(err)
+		}
+		const otherSeller = "678902"
+		otherCipher, err := cipher.Seal(access, []byte("meli|"+owner+"|"+otherSeller+"|access"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var otherStore string
+		if err := db.QueryRow(ctx, `INSERT INTO app.meli_store_connections
+			(owner_user_id,seller_id,access_token_ciphertext,refresh_token_ciphertext,access_token_expires_at,marketplaces,marketplaces_status)
+			VALUES ($1::uuid,$2,$3,$3,now()+interval '30 minutes',$4::jsonb,'verified') RETURNING id::text`,
+			owner, otherSeller, otherCipher, markets).Scan(&otherStore); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `INSERT INTO app.meli_published_listings
+			(store_id,site_id,logistic_type,listing_id,details) VALUES
+			($1::uuid,'MLB','remote','MLB1','{"seller_id":"987654","cbt_item_id":"CBT1"}'),
+			($1::uuid,'MLB','remote','MLB2','{"seller_id":"987655","cbt_item_id":"CBT1"}'),
+			($1::uuid,'MLB','remote','MLB3','{"seller_id":"987654","cbt_item_id":"CBT3"}')`, store); err != nil {
+			t.Fatal(err)
+		}
+
+		server := httptest.NewServer(handler)
+		defer server.Close()
+		otherOwner := httptest.NewServer(HandlerWithCollections(collectionStore,
+			stubVerifier{id: "00000000-0000-4000-8000-000000000001"}, service))
+		defer otherOwner.Close()
+		const scope = "?site=MLB&logistic_type=remote"
+		for _, check := range []struct {
+			name, base, store, listing, query, method, token string
+			status                                           int
+			code, description                                string
+			calls                                            int32
+		}{
+			{"success", server.URL, store, "MLB1", scope, "GET", "synthetic-session", 200, "", "Platform description", 1},
+			{"no session", server.URL, store, "MLB1", scope, "GET", "", 401, "", "", 0},
+			{"wrong owner", otherOwner.URL, store, "MLB1", scope, "GET", "synthetic-session", 404, "listing_store_missing", "", 0},
+			{"other store", server.URL, otherStore, "MLB1", scope, "GET", "synthetic-session", 404, "listing_store_missing", "", 0},
+			{"other verified site", server.URL, store, "MLB1", "?site=MLM&logistic_type=remote", "GET", "synthetic-session", 404, "listing_store_missing", "", 0},
+			{"unverified logistics", server.URL, store, "MLB1", "?site=MLB&logistic_type=fulfillment", "GET", "synthetic-session", 403, "listing_site_unverified", "", 0},
+			{"wrong child seller", server.URL, store, "MLB2", scope, "GET", "synthetic-session", 404, "listing_store_missing", "", 0},
+			{"missing listing", server.URL, store, "MLB999", scope, "GET", "synthetic-session", 404, "listing_store_missing", "", 0},
+			{"malformed listing ID", server.URL, store, "MLB-1", scope, "GET", "synthetic-session", 400, "listing_invalid_response", "", 0},
+			{"duplicate site", server.URL, store, "MLB1", scope + "&site=MLM", "GET", "synthetic-session", 400, "listing_invalid_response", "", 0},
+			{"platform 404", server.URL, store, "MLB3", scope, "GET", "synthetic-session", 404, "description_unavailable", "", 1},
+			{"wrong method", server.URL, store, "MLB1", scope, "POST", "synthetic-session", 405, "", "", 0},
+		} {
+			t.Run(check.name, func(t *testing.T) {
+				before := descriptionCalls.Load()
+				req, err := http.NewRequestWithContext(ctx, check.method,
+					check.base+"/api/v1/stores/"+check.store+"/published-listings/"+check.listing+"/description"+check.query, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Set("Origin", "http://tauri.localhost")
+				if check.token != "" {
+					req.Header.Set("Authorization", "Bearer "+check.token)
+				}
+				resp, err := server.Client().Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				var result struct {
+					Code        string `json:"code"`
+					Description string `json:"description"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+					t.Fatal(err)
+				}
+				if resp.StatusCode != check.status || result.Code != check.code || result.Description != check.description {
+					t.Fatalf("HTTP %d, body %+v", resp.StatusCode, result)
+				}
+				if resp.Header.Get("Access-Control-Allow-Origin") != "http://tauri.localhost" ||
+					(check.status == 200 && resp.Header.Get("Cache-Control") != "no-store") ||
+					(check.status == 405 && resp.Header.Get("Allow") != "GET") {
+					t.Fatalf("unexpected response headers: %v", resp.Header)
+				}
+				if got := descriptionCalls.Load() - before; got != check.calls {
+					t.Fatalf("platform calls = %d, want %d", got, check.calls)
+				}
+			})
+		}
+	})
 }
