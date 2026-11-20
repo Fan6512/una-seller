@@ -95,6 +95,13 @@ export function listingErrorMessage(code: string, platformStatus?: number): stri
   }
 }
 
+export function readableStoreError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return "请求超时，请检查网络后重试";
+  }
+  return error instanceof Error ? error.message : fallback;
+}
+
 export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false, body?: string): Promise<T> {
   const lifetime = authLifetime();
   const assertActive = () => {
@@ -171,13 +178,18 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   }
 }
 
+// Cache reads are safe even while a sign-out abort listener is running.
 export function cachedStores() {
-  const cached = storeSession().stores;
+  const lifetime = authLifetime();
+  if (lifetime.aborted) return undefined;
+  const cached = storeSession(lifetime).stores;
   return cached && cached.expires > Date.now() ? cached.items : undefined;
 }
 
 export function watchStoreList(listener: (items: StoreConnection[]) => void) {
-  const { storeListeners } = storeSession();
+  const lifetime = authLifetime();
+  if (lifetime.aborted) return () => {};
+  const { storeListeners } = storeSession(lifetime);
   storeListeners.add(listener);
   return () => { storeListeners.delete(listener); };
 }
@@ -313,7 +325,9 @@ export async function ensureStoreConnection(id: string, signal?: AbortSignal) {
 }
 
 export function cachedListingPage(path: string) {
-  const entry = storeSession().pages.get(path);
+  const lifetime = authLifetime();
+  if (lifetime.aborted) return undefined;
+  const entry = storeSession(lifetime).pages.get(path);
   return entry && entry.expires > Date.now() ? entry.page : undefined;
 }
 
