@@ -78,6 +78,13 @@ type OrderSyncResult struct {
 	NextOffset int  `json:"next_offset"`
 }
 
+// Read-only persisted sync snapshot for a verified seller scope.
+type OrderSyncState struct {
+	NextOffset int          `json:"next_offset"`
+	CanReset   bool         `json:"can_reset"`
+	Review     *OrderReview `json:"review,omitempty"`
+}
+
 type OrderReview struct {
 	OrderID  string `json:"order_id"`
 	ReviewID string `json:"review_id"`
@@ -652,6 +659,38 @@ func (s *Service) SkipOrder(ctx context.Context, owner, store string, scope Orde
 		return OrderSyncResult{}, err
 	}
 	return result, nil
+}
+
+// GetOrderSyncState reads the server-persisted cursor for the current verified
+// child seller. Never reveal an old seller's state after remapping.
+func (s *Service) GetOrderSyncState(ctx context.Context, owner, store string, scope OrderScope) (OrderSyncState, error) {
+	var state OrderSyncState
+	if !orderScopeValid(scope) {
+		return state, ErrSiteNotAuthorized
+	}
+	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
+		return state, err
+	}
+	var reviewID, reason, pendingID *string
+	err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+`)
+SELECT sync.next_offset,
+  (sync.next_offset>0 AND sync.window_from IS NOT NULL AND sync.window_to IS NOT NULL
+    AND sync.review_id IS NULL AND cardinality(sync.pending_order_ids)=0
+    AND (sync.lease_until IS NULL OR sync.lease_until<now())),
+  sync.review_id::text,sync.review_reason,sync.pending_order_ids[1]
+FROM app.meli_order_syncs sync JOIN connection c ON c.id=sync.store_id AND c.child_id=sync.seller_id
+WHERE c.status<>'disconnected' AND sync.site_id=$3 AND sync.logistic_type=$4`,
+		store, owner, scope.Site, scope.Logistic).Scan(&state.NextOffset, &state.CanReset, &reviewID, &reason, &pendingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return state, nil
+	}
+	if err != nil {
+		return OrderSyncState{}, err
+	}
+	if reviewID != nil && reason != nil && pendingID != nil {
+		state.Review = &OrderReview{OrderID: *pendingID, ReviewID: *reviewID, Offset: state.NextOffset, Reason: *reason}
+	}
+	return state, nil
 }
 
 // ResetOrderCursor explicitly rewinds an already advanced search page within its

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cachedStores, listStores, type StoreConnection } from "./stores";
 import {
-  getOrder, listOrders, orderDate, orderMoney, orderStatusLabel,
+  getOrder, getOrderSyncState, listOrders, orderDate, orderMoney, orderStatusLabel,
   OrderRequestError, resetOrderCursor, skipOrder, syncOrders,
-  type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope,
+  type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
 import "./orders.css";
@@ -104,6 +104,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [notice, setNotice] = useState("");
   const [review, setReview] = useState<OrderReview | null>(null);
   const [progress, setProgress] = useState<OrderProgress | null>(null);
+  const [syncState, setSyncState] = useState<OrderSyncState | null>(null);
+  const [completedBatches, setCompletedBatches] = useState(0);
   const [purchase, setPurchase] = useState<OrderPurchase | null>(null);
   const [purchaseNumber, setPurchaseNumber] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
@@ -123,6 +125,20 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   }, []);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
+  // Server cursor and Review survive page refresh and process restarts.
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!scope) return () => controller.abort();
+    void getOrderSyncState(scope, controller.signal).then((state) => {
+      if (controller.signal.aborted) return;
+      setSyncState(state);
+      if (state.review) setReview(state.review);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setNotice("无法读取订单同步位置：" + displayError(error));
+    });
+    return () => controller.abort();
+  }, [scope, nonce]);
+
   useEffect(() => {
     const controller = new AbortController();
     if (!scope) {
@@ -231,6 +247,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     const controller = new AbortController();
     syncAbort.current = controller;
     setRunning(true);
+    setCompletedBatches(0);
+    setProgress(null);
     setNotice("");
     setReview(null);
     setListError("");
@@ -244,6 +262,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         controller.signal.throwIfAborted();
         saved += current.saved;
         last = current;
+        setCompletedBatches(batches + 1);
         setProgress({ ...current, saved });
         if (!current.has_more) break;
       }
@@ -293,16 +312,18 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
   };
   const performReset = async () => {
-    if (!scope || !progress || progress.next_offset <= 0 || running || actionBusy || review) return;
+    if (!scope || !syncState?.can_reset || syncState.next_offset <= 0 || running || actionBusy || review) return;
     if (!window.confirm("将当前订单搜索窗口从第 0 页重新扫描，不删除已保存的订单。确定重扫吗？")) return;
     const controller = new AbortController();
     reviewAbort.current = controller;
     setActionBusy(true);
     try {
-      const result = await resetOrderCursor(scope, progress.next_offset, controller.signal);
+      const result = await resetOrderCursor(scope, syncState.next_offset, controller.signal);
       if (controller.signal.aborted) return;
       setProgress(result);
+      setSyncState({ next_offset: 0, can_reset: false });
       setNotice("重扫游标已归零，不会删除已有订单或人工 Skip 审计。");
+      loadRows();
     } catch (error) {
       if (!controller.signal.aborted) setNotice(displayError(error));
     } finally {
@@ -376,9 +397,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <span className="orders-tabs-meta">本页 {page.items.length} 笔 · 每页 {PAGE_SIZE} 笔</span>
         </div>
 
-        {notice && <div className="orders-notice" role="status">
-          <span>{notice}</span>
-          {progress && progress.next_offset > 0 && !review && !running &&
+        {running && <div className="orders-notice" role="status">
+          正在同步：已完成 {completedBatches} 批，本次已保存 {progress?.saved ?? 0} 笔。
+          最近一批处理 {progress?.processed ?? 0} 个搜索结果组；单次操作最多 20 批。
+        </div>}
+        {(notice || syncState?.can_reset) && <div className="orders-notice" role="status">
+          <span>{notice || "当前存在可重新扫描的服务器同步窗口。"}</span>
+          {syncState?.can_reset && !review && !running &&
             <button type="button" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
         </div>}
         {review && <div className="orders-review" role="alert">

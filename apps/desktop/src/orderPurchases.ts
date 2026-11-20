@@ -1,7 +1,6 @@
 import { authLifetime, getAccessToken } from "./auth";
 import { apiBase } from "./collections";
-import { storeRequest } from "./stores";
-import { OrderRequestError, type OrderScope } from "./orders";
+import { ORDER_WRITE_TIMEOUT_MS, OrderRequestError, orderRead, type OrderScope } from "./orders";
 
 export type OrderPurchase = {
   order_id: string;
@@ -19,7 +18,7 @@ function purchasePath(scope: OrderScope, orderId: string) {
 }
 
 export async function loadPurchase(scope: OrderScope, orderId: string, signal?: AbortSignal) {
-  return storeRequest<{ purchase: OrderPurchase | null }>(purchasePath(scope, orderId), "GET", signal);
+  return orderRead<{ purchase: OrderPurchase | null }>(purchasePath(scope, orderId), signal);
 }
 
 // Explicit user action only. Do not automatically repeat a POST after ambiguous network failure.
@@ -30,28 +29,30 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
     throw new Error("采购金额应为非负人民币金额，最多保留两位小数");
   }
   const lifetime = authLifetime();
+  const timedSignal = AbortSignal.any([signal, AbortSignal.timeout(ORDER_WRITE_TIMEOUT_MS)]);
   lifetime.throwIfAborted();
   const token = await getAccessToken();
   lifetime.throwIfAborted();
-  signal.throwIfAborted();
+  timedSignal.throwIfAborted();
   let response: Response;
   try {
     response = await fetch(apiBase + purchasePath(scope, orderId), {
-      method: "POST", cache: "no-store", signal,
+      method: "POST", cache: "no-store", signal: timedSignal,
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       body: JSON.stringify({ purchase_order_id: purchaseId, cost_cny: costCNY, updated_at: updatedAt }),
     });
   } catch (error) {
     if (lifetime.aborted || signal.aborted) throw error;
+    if (timedSignal.aborted) throw new Error("采购关联保存超时，结果尚未确认；请重新读取订单，不要盲目重复保存");
     throw new Error("采购关联写入结果未确认，请重新打开订单核对，不要盲目重复操作");
   }
   lifetime.throwIfAborted();
-  signal.throwIfAborted();
+  timedSignal.throwIfAborted();
   const result = await response.json().catch(() => null) as {
     purchase?: OrderPurchase; error?: string;
   } | null;
   lifetime.throwIfAborted();
-  signal.throwIfAborted();
+  timedSignal.throwIfAborted();
   if (!response.ok) {
     if (response.status === 409) throw new OrderRequestError("order_purchase_conflict", 409);
     if (response.status === 401) {

@@ -101,6 +101,33 @@ func TestOrderSkipRequiresExplicitOffset(t *testing.T) {
 	}
 }
 
+func TestOrderPurchaseRejectsUnsupportedMethodAndMalformedJSON(t *testing.T) {
+	h := HandlerWithCollections(&collections.Store{}, stubVerifier{
+		id: "6cbe41df-69cb-4594-9bad-a5473aa1a5fb",
+	}, &meli.Service{})
+	const path = "/api/v1/stores/00000000-0000-4000-8000-000000000001/orders/102/purchase?site=MLB&logistic_type=remote"
+	for _, tc := range []struct {
+		method, body string
+		status       int
+	}{
+		{http.MethodPut, "", http.StatusMethodNotAllowed},
+		{http.MethodPost, "{", http.StatusBadRequest},
+		{http.MethodPost, "{\"purchase_order_id\":\"12345678\",\"cost_cny\":\"10\",\"updated_at\":null} {}", http.StatusBadRequest},
+		{http.MethodPost, "{\"purchase_order_id\":\"12345678\",\"unknown\":true}", http.StatusBadRequest},
+	} {
+		r := httptest.NewRequest(tc.method, path, strings.NewReader(tc.body))
+		r.Header.Set("Authorization", "Bearer test-only")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != tc.status {
+			t.Errorf("%s %q: status=%d expected=%d body=%s", tc.method, tc.body, w.Code, tc.status, w.Body.String())
+		}
+		if tc.status == http.StatusMethodNotAllowed && w.Header().Get("Allow") != "GET, POST" {
+			t.Errorf("wrong Allow header: %q", w.Header().Get("Allow"))
+		}
+	}
+}
+
 func TestOrderReviewAndSkipHTTP(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -162,6 +189,28 @@ SELECT owner_user_id::text,id::text,review_id::text FROM connection CROSS JOIN r
 		h.ServeHTTP(w, r)
 		return w
 	}
+	// Recovery state survives a new client session and is scoped by the
+	// current verified child seller, not by the client-provided offset.
+	readState := func() meli.OrderSyncState {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/stores/"+store+"/orders/sync-state?site=MLB&logistic_type=remote", nil)
+		req.Header.Set("Authorization", "Bearer test-only")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("sync state HTTP %d %s", rec.Code, rec.Body)
+		}
+		var state meli.OrderSyncState
+		if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	state := readState()
+	if state.CanReset || state.NextOffset != 3 || state.Review == nil ||
+		state.Review.ReviewID != reviewID || state.Review.OrderID != "102" {
+		t.Fatalf("expected persisted Review, got %+v", state)
+	}
 	w := post("sync", "")
 	var blocked struct {
 		Error  string
@@ -206,6 +255,27 @@ SELECT owner_user_id::text,id::text,review_id::text FROM connection CROSS JOIN r
 				i == 1 && (response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "order_purchase_conflict")) {
 				t.Fatalf("purchase client %d: %d %s", i, response.Code, response.Body)
 			}
+		}
+	})
+
+
+	t.Run("persisted reset offset", func(t *testing.T) {
+		if _, err := cs.DB.Exec(ctx, `UPDATE app.meli_order_syncs
+SET next_offset=3,window_from=now()-interval '1 day',window_to=now(),
+pending_order_ids='{}'::text[],review_id=NULL,review_reason=NULL,lease_id=NULL,lease_until=NULL
+WHERE store_id=$1::uuid`, store); err != nil {
+			t.Fatal(err)
+		}
+		state := readState()
+		if !state.CanReset || state.NextOffset != 3 || state.Review != nil {
+			t.Fatalf("expected recoverable reset offset, got %+v", state)
+		}
+		reset := post("reset", `{"offset":3}`)
+		if reset.Code != http.StatusOK {
+			t.Fatalf("reset HTTP %d %s", reset.Code, reset.Body)
+		}
+		if state = readState(); state.CanReset || state.NextOffset != 0 {
+			t.Fatalf("reset state not refreshed: %+v", state)
 		}
 	})
 

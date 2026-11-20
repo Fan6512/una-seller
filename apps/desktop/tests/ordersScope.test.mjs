@@ -36,6 +36,7 @@ window.fetch = (path, options) => {
   const { pathname } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
   if (pathname.endsWith("/orders")) return Promise.resolve(Response.json({ items: [order], has_more: false }));
+   if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
   if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json(order));
   if (pathname.endsWith("/purchase")) {
     return new Promise((resolve) => purchaseRequests.push({ resolve, ...options }));

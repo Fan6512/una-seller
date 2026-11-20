@@ -84,6 +84,13 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 			writeJSON(w, http.StatusOK, result)
 			return
 		}
+	case tail == "sync-state" && r.Method == http.MethodGet:
+		var state meli.OrderSyncState
+		state, err = a.service.GetOrderSyncState(r.Context(), owner, store, scope)
+		if err == nil {
+			writeJSON(w, http.StatusOK, state)
+			return
+		}
 	case tail == "" && r.Method == http.MethodGet:
 		offset := 0
 		if q.Has("offset") {
@@ -105,7 +112,7 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 			writeJSON(w, http.StatusOK, page)
 			return
 		}
-	case tail != "" && tail != "sync" && tail != "skip" && tail != "reset" && r.Method == http.MethodGet:
+	case tail != "" && tail != "sync" && tail != "skip" && tail != "reset" && tail != "sync-state" && r.Method == http.MethodGet:
 		var order meli.OrderRecord
 		order, err = a.service.GetOrder(r.Context(), owner, store, scope, tail)
 		if err == nil {

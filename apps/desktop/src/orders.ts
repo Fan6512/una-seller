@@ -24,6 +24,7 @@ export type OrderRecord = {
 };
 export type OrderPage = { items: OrderRecord[]; has_more: boolean };
 export type OrderProgress = { saved: number; processed: number; has_more: boolean; next_offset: number };
+export type OrderSyncState = { next_offset: number; can_reset: boolean; review?: OrderReview };
 export type OrderReview = { order_id: string; review_id: string; offset: number; reason: string };
 
 export class OrderRequestError extends Error {
@@ -42,6 +43,10 @@ export class OrderRequestError extends Error {
 
 const messages: Record<string, string> = {
   order_purchase_conflict: "采购关联已被修改，请重新读取后再保存。",
+  order_unavailable: "订单服务暂不可用，请稍后重新读取。",
+  order_not_found: "当前订单不存在，或此店铺无权访问。",
+  order_scope_required: "请先选择已验证的站点和物流类型。",
+  order_reset_invalid: "重扫请求无效，请重新读取服务器同步状态。",
   order_needs_review: "有一笔订单详情异常，同步已暂停，请核实后再决定是否跳过。",
   order_review_conflict: "异常订单或同步位置已变化，请重新检查，不会重复跳过。",
   order_invalid_response: "美客多返回的订单数据无法解析，本次没有自动跳过订单。",
@@ -77,6 +82,14 @@ export function orderMoney(value: string, currency: string) {
   if (!/^\d{1,16}(\.\d{1,8})?$/.test(value)) return value + " " + currency;
   return currency + " " + value;
 }
+export const ORDER_READ_TIMEOUT_MS = 8_000;
+export const ORDER_WRITE_TIMEOUT_MS = 25_000;
+
+export function orderRead<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const deadline = AbortSignal.timeout(ORDER_READ_TIMEOUT_MS);
+  const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  return storeRequest<T>(path, "GET", combined, false, undefined, orderErrorLabel);
+}
 function pathWithTail(scope: OrderScope, tail: string) {
   return "/api/v1/stores/" + encodeURIComponent(scope.storeId) + "/orders/" + encodeURIComponent(tail) +
     "?" + new URLSearchParams({ site: scope.site, logistic_type: scope.logistic }).toString();
@@ -86,24 +99,28 @@ export function listOrders(scope: OrderScope, status: string, offset: number, si
     site: scope.site, logistic_type: scope.logistic, offset: String(offset),
   });
   if (status) query.set("status", status);
-  return storeRequest<OrderPage>("/api/v1/stores/" + encodeURIComponent(scope.storeId) +
-    "/orders?" + query.toString(), "GET", signal);
+  return orderRead<OrderPage>("/api/v1/stores/" + encodeURIComponent(scope.storeId) +
+    "/orders?" + query.toString(), signal);
 }
 export function getOrder(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
-  return storeRequest<OrderRecord>(pathWithTail(scope, id), "GET", signal);
+  return orderRead<OrderRecord>(pathWithTail(scope, id), signal);
+}
+export function getOrderSyncState(scope: OrderScope, signal?: AbortSignal) {
+  return orderRead<OrderSyncState>(pathWithTail(scope, "sync-state"), signal);
 }
 async function orderPost(scope: OrderScope, tail: string, body: object | undefined, signal: AbortSignal) {
   const lifetime = authLifetime();
+  const timedSignal = AbortSignal.any([signal, AbortSignal.timeout(ORDER_WRITE_TIMEOUT_MS)]);
   lifetime.throwIfAborted();
-  signal.throwIfAborted();
+  timedSignal.throwIfAborted();
   const token = await getAccessToken();
   lifetime.throwIfAborted();
-  signal.throwIfAborted();
+  timedSignal.throwIfAborted();
   let response: Response;
   try {
     response = await fetch(apiBase + pathWithTail(scope, tail), {
-      method: "POST", cache: "no-store", signal,
+      method: "POST", cache: "no-store", signal: timedSignal,
       headers: {
         Authorization: "Bearer " + token,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -112,15 +129,16 @@ async function orderPost(scope: OrderScope, tail: string, body: object | undefin
     });
   } catch (error) {
     if (signal.aborted || lifetime.aborted) throw error;
+    if (timedSignal.aborted) throw new Error("订单操作超时，服务端是否提交尚未确认，请刷新后核对，不要直接重试。");
     throw new Error("订单请求未完成，请刷新后以服务端状态为准，勿盲目重复操作。");
   }
   lifetime.throwIfAborted();
-  signal.throwIfAborted();
+  timedSignal.throwIfAborted();
   const value = await response.json().catch(() => null) as (OrderProgress & {
     error?: string; review?: OrderReview;
   }) | null;
   lifetime.throwIfAborted();
-  signal.throwIfAborted();
+  timedSignal.throwIfAborted();
   if (!response.ok) {
     if (response.status === 401) {
       // Never automatically retry a POST whose commit outcome is unknown.
