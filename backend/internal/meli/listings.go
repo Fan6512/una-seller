@@ -11,11 +11,13 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -158,7 +160,7 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
 }
 
 func (s *Service) SyncPublished(ctx context.Context, owner, store string, scope ListingScope, expected *int, restart bool) (ListingSync, error) {
-	// Leave room in the proxy's 20-second budget for validation and the final commit.
+	// Reserve time for authorization and the final commit before the proxy's upstream idle timeout.
 	return s.syncPublished(ctx, owner, store, scope, expected, restart, "", 10*time.Second)
 }
 
@@ -213,7 +215,11 @@ func (s *Service) syncPublished(ctx context.Context, owner, store string, scope 
 		return ListingSync{}, ErrListingReviewChanged
 	}
 	fetchCtx, endFetch := context.WithTimeout(ctx, budget)
+	started = time.Now()
 	result, details, err := s.fetchListingBatch(fetchCtx, auth.AccessToken, seller, scope, offset, skipID, trace)
+	trace.Info("listing sync stage", "stage", "platform_read_batch", "elapsed_ms", time.Since(started).Milliseconds(),
+		"processed", result.Processed, "ready_to_save", result.Saved,
+		"platform_budget_exhausted", errors.Is(fetchCtx.Err(), context.DeadlineExceeded))
 	endFetch()
 	if ctx.Err() != nil {
 		return ListingSync{}, ctx.Err()
@@ -290,7 +296,8 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 	limit := min(ListingBatchSize, 1000-offset)
 	query := url.Values{"offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(limit)}, "orders": {"start_time_desc"}}
 	started := time.Now()
-	_, err := s.listingGET(ctx, token, "/marketplace/users/"+seller+"/items/search?"+query.Encode(), &search)
+	var timing listingGETTiming
+	_, err := s.listingGET(ctx, token, "/marketplace/users/"+seller+"/items/search?"+query.Encode(), &search, &timing)
 	p := search.Paging
 	if err == nil {
 		switch {
@@ -301,7 +308,11 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 			err = ErrListingResponse
 		}
 	}
-	logListingStage(trace, "platform_search_get", started, err)
+	var pagingTotal any
+	if p.Total != nil {
+		pagingTotal = *p.Total
+	}
+	logListingStage(trace.With(timing.attrs(ctx)...).With("result_count", len(search.IDs), "paging_total", pagingTotal), "platform_search_get", started, err)
 	if err != nil {
 		return ListingSync{}, nil, err
 	}
@@ -318,17 +329,22 @@ func (s *Service) fetchListingBatch(ctx context.Context, token, seller string, s
 			result.Processed++
 			continue
 		}
+		started = time.Now()
 		select {
 		case <-ctx.Done():
 			result.Interruption = listingInterruption(ctx.Err())
+			logListingStage(trace.With("processed_before", result.Processed,
+				"platform_budget_exhausted", errors.Is(ctx.Err(), context.DeadlineExceeded)), "platform_pacing", started, ctx.Err())
 		case <-time.After(250 * time.Millisecond):
 		}
 		if result.Interruption != nil {
 			break
 		}
 		started = time.Now()
-		item, reason, fetchErr := s.fetchListingDetail(ctx, token, seller, scope, id)
-		logListingStage(trace, "platform_detail_get", started, fetchErr)
+		timing = listingGETTiming{}
+		item, reason, fetchErr := s.fetchListingDetail(ctx, token, seller, scope, id, &timing)
+		logListingStage(trace.With(timing.attrs(ctx)...).With("processed_before", result.Processed),
+			"platform_detail_get", started, fetchErr)
 		if errors.Is(fetchErr, ListingPlatformError(http.StatusNotFound)) {
 			checkedAt := time.Now()
 			details[id] = listingWrite{unavailableAt: &checkedAt}
@@ -711,15 +727,17 @@ func listingEntryID(entry any) (string, bool) {
 	}
 }
 
-func (s *Service) fetchListingDetail(ctx context.Context, token, seller string, scope ListingScope, id string) (listingDetail, string, error) {
+func (s *Service) fetchListingDetail(ctx context.Context, token, seller string, scope ListingScope, id string, timing *listingGETTiming) (listingDetail, string, error) {
 	var body json.RawMessage
-	status, err := s.listingGET(ctx, token, "/marketplace/items/"+id+"?include_attributes=all", &body)
+	status, err := s.listingGET(ctx, token, "/marketplace/items/"+id+"?include_attributes=all", &body, timing)
 	if errors.Is(err, ErrListingResponse) {
 		return listingDetail{}, "detail_payload_unreadable", err
 	}
 	if err != nil {
 		return listingDetail{}, "", err
 	}
+	started := time.Now()
+	defer func() { timing.decode += time.Since(started) }()
 	// Verify identity independently of the rest of the payload before classifying a skippable error.
 	var identity struct {
 		ID       string      `json:"id"`
@@ -785,27 +803,70 @@ type listingDetail struct {
 	Markets        json.RawMessage `json:"marketplace_items,omitempty"`
 }
 
-func (s *Service) listingGET(ctx context.Context, token, path string, target any) (int, error) {
+type listingGETTiming struct {
+	request, body, decode time.Duration
+	failedPhase           string
+}
+
+func (timing listingGETTiming) attrs(ctx context.Context) []any {
+	deadline, _ := ctx.Deadline()
+	remaining := time.Until(deadline)
+	return []any{
+		"request_to_headers_or_error_ms", timing.request.Milliseconds(), "body_read_ms", timing.body.Milliseconds(),
+		"json_decode_ms", timing.decode.Milliseconds(), "failed_phase", timing.failedPhase,
+		"platform_budget_remaining_ms", max(0, remaining.Milliseconds()),
+		"platform_budget_exhausted", remaining <= 0,
+	}
+}
+
+func (s *Service) listingGET(ctx context.Context, token, path string, target any, timing *listingGETTiming) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.apiURL+path, nil)
 	if err != nil {
 		return 0, ErrListingResponse
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	var written atomic.Bool
+	if timing == nil {
+		timing = &listingGETTiming{}
+	} else {
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+			WroteRequest: func(info httptrace.WroteRequestInfo) { written.Store(info.Err == nil) },
+		}))
+	}
+	// Do includes connection setup or reuse and ends at response headers or an error.
+	started := time.Now()
 	resp, err := s.client.Do(req)
+	timing.request = time.Since(started)
 	if err != nil {
+		timing.failedPhase = "request_transport"
+		if written.Load() {
+			timing.failedPhase = "response_headers"
+		}
 		return 0, listingReadError(ctx, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		timing.failedPhase = "http_status"
 		return resp.StatusCode, ListingPlatformError(resp.StatusCode)
 	}
 	const maxBody = 2 << 20
+	started = time.Now()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	timing.body = time.Since(started)
 	if err != nil {
+		timing.failedPhase = "response_body"
 		return resp.StatusCode, listingReadError(ctx, err)
 	}
-	if len(data) > maxBody || json.Unmarshal(data, target) != nil {
+	if len(data) > maxBody {
+		timing.failedPhase = "response_body"
+		return resp.StatusCode, ErrListingResponse
+	}
+	started = time.Now()
+	err = json.Unmarshal(data, target)
+	timing.decode = time.Since(started)
+	if err != nil {
+		timing.failedPhase = "json_decode"
 		return resp.StatusCode, ErrListingResponse
 	}
 	return resp.StatusCode, nil
