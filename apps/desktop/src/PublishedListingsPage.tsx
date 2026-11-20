@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { authLifetime } from "./auth";
+import { recordCacheHit } from "./DevelopmentDiagnostics";
 import { cachedListingPage, cachedStores, ensureStoreConnection, invalidateListingPages, listingAccessDenied, listingErrorMessage, listStores, loadListingPage, storeRequest, watchStoreList, readableStoreError, type ListingPage, type Review, type StoreConnection } from "./stores";
 import { runListingBatches, type ListingBatch } from "./listingBatches";
 import PublishedListingView from "./PublishedListingView";
@@ -37,10 +38,15 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
     const cached = cachedStores();
     return cached && eligibleStores(cached);
   });
+  const storeCacheReported = useRef(false);
   const [storeId, setStoreId] = useState("");
   const [scope, setScope] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
+    if (!storeCacheReported.current && cachedStores()) {
+      storeCacheReported.current = true;
+      recordCacheHit("/api/v1/stores");
+    }
     const controller = new AbortController();
     const unwatch = watchStoreList((items) => setStores(eligibleStores(items)));
     listStores().then(async (items) => {
@@ -103,6 +109,7 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
   const [progress, setProgress] = useState<Progress>();
   const [notice, setNotice] = useState("");
   const active = useRef<AbortController | null>(null);
+  const lastCacheHitPath = useRef("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
@@ -115,6 +122,11 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
   const page = loaded?.path === pagePath ? loaded.page : cachedListingPage(pagePath);
 
   useEffect(() => {
+    // One cache-hit event per page navigation; background GET still revalidates.
+    if (lastCacheHitPath.current !== pagePath && loaded?.path !== pagePath && cachedListingPage(pagePath)) {
+      lastCacheHitPath.current = pagePath;
+      recordCacheHit(pagePath);
+    }
     const controller = new AbortController();
     setReading(true);
     setReadError("");

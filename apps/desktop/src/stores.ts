@@ -1,5 +1,6 @@
 import { authLifetime, getAccessToken, rejectSession } from "./auth";
 import { apiBase } from "./collections";
+import { beginRequestDiagnostic } from "./DevelopmentDiagnostics";
 import type { Listing } from "./PublishedListingView";
 
 export type StoreMarketplace = {
@@ -104,6 +105,7 @@ export function readableStoreError(error: unknown, fallback: string): string {
 
 export async function storeRequest<T>(path: string, method: "GET" | "POST", signal?: AbortSignal, listing = false, body?: string): Promise<T> {
   const lifetime = authLifetime();
+  const diagnostic = beginRequestDiagnostic(path, method);
   const assertActive = () => {
     lifetime.throwIfAborted();
     signal?.throwIfAborted();
@@ -112,11 +114,14 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
     ? "未收到可读取的同步响应，请刷新后以服务端同步位置为准"
     : "无法读取服务端商品和同步位置，请重试读取");
   const request = async (refresh = false) => {
+    let duringPreflight = true;
     try {
       assertActive();
-      const token = await getAccessToken(refresh);
+      const token = await getAccessToken(refresh, diagnostic
+        ? (cached) => diagnostic("token_preflight", undefined, undefined, cached) : undefined);
+      duringPreflight = false;
       assertActive();
-      return await fetch(apiBase + path, {
+      const response = await fetch(apiBase + path, {
         method,
         signal,
         cache: "no-store",
@@ -125,7 +130,14 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
         },
         body,
       });
+      assertActive();
+      diagnostic?.("response_headers", response);
+      return response;
     } catch (error) {
+      diagnostic?.("failed", undefined,
+        signal?.reason?.name === "TimeoutError" ? "timeout" :
+        lifetime.aborted || signal?.aborted ? "aborted" :
+        duringPreflight ? "token_preflight" : "network");
       assertActive();
       if (listing && error instanceof TypeError) throw unreadable();
       if (error instanceof TypeError) throw new Error("无法连接店铺服务，请检查网络后重试");
@@ -136,13 +148,17 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   assertActive();
   if (response.status === 401) {
     if (method === "POST") {
-      await getAccessToken(true);
+      // A POST cannot be retried automatically after an unknown commit.
+      diagnostic?.("failed", response);
+      await getAccessToken(true, diagnostic
+        ? (cached) => diagnostic("token_preflight", undefined, undefined, cached) : undefined);
       assertActive();
       throw new StoreRequestError("登录令牌已刷新，请确认状态后重新发起操作", 401);
     }
     response = await request(true);
     assertActive();
     if (response.status === 401) {
+      diagnostic?.("failed", response);
       rejectSession();
       throw new Error("登录已过期，请重新登录");
     }
@@ -154,11 +170,13 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
         if (error instanceof Error && error.name === "AbortError") throw error;
         return null;
       }) as { code?: string; platform_status?: number; skipped?: number } | null;
+      diagnostic?.("failed", response, detail?.code);
       const reason = detail?.code ? listingErrorMessage(detail.code, detail.platform_status)
         : "商品请求失败（HTTP " + response.status + "）";
       assertActive();
       throw new StoreRequestError(detail?.skipped ? reason + "，该批已跳过 " + detail.skipped + " 条" : reason, response.status);
     }
+    diagnostic?.("failed", response);
     const reason = ({
       503: "暂时无法检查店铺连接，请稍后验证",
       404: "店铺不存在或无权访问",
@@ -170,8 +188,11 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
   try {
     const result = await response.json() as T;
     assertActive();
+    diagnostic?.("response_body", response, (result as { interruption?: { code?: unknown } } | null)?.interruption?.code);
     return result;
   } catch (error) {
+    diagnostic?.("failed", response, signal?.reason?.name === "TimeoutError" ? "timeout" :
+      lifetime.aborted || signal?.aborted ? "aborted" : "invalid_body");
     assertActive();
     if (listing && !(error instanceof Error && error.name === "AbortError")) throw unreadable();
     throw error;

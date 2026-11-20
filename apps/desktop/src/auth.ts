@@ -1,3 +1,5 @@
+import { clearDiagnostics, diagnosticsEnabled } from "./DevelopmentDiagnostics";
+
 // Lightweight client for the open-source Supabase Auth (GoTrue) REST API.
 // Only the publishable key ships with the desktop; no DB or server secret is embedded.
 const authBase = (import.meta.env.VITE_SUPABASE_URL || "https://rwktwfxzfkzglxwaulcm.supabase.co").replace(/\/$/, "");
@@ -59,6 +61,7 @@ function storeSession(value: AuthSession) {
 }
 
 function clearSession(notify = false) {
+  if (diagnosticsEnabled) clearDiagnostics();
   endSessionLifetime();
   current = null;
   localStorage.removeItem(storageKey);
@@ -98,14 +101,16 @@ async function tokenRequest(grantType: "password" | "refresh_token", payload: ob
 export async function signIn(email: string, password: string): Promise<AuthSession> {
   const next = await tokenRequest("password", { email: email.trim(), password });
   endSessionLifetime();
+  if (diagnosticsEnabled) clearDiagnostics();
   storeSession(next);
   return next;
 }
 
-export async function getAccessToken(forceRefresh = false): Promise<string> {
+export async function getAccessToken(forceRefresh = false, onPreflight?: (cached: boolean) => void): Promise<string> {
   const session = loadSession();
   if (!session) throw new Error("请先登录");
   if (!forceRefresh && session.expires_at > Math.floor(Date.now() / 1000) + 60) {
+    onPreflight?.(true);
     return session.access_token;
   }
   const lifetime = authLifetime();
@@ -121,6 +126,7 @@ export async function getAccessToken(forceRefresh = false): Promise<string> {
   try {
     await refreshInFlight;
     lifetime.throwIfAborted();
+    onPreflight?.(false);
     return loadSession()!.access_token;
   } catch (error) {
     // Network failures are recoverable; only an explicit expired-session error logs out.

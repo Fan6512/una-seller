@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
@@ -55,6 +56,10 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				}
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				if allowedAppOrigin(origin) && r.Method != http.MethodOptions && timedStoreRoute(r.Method, r.URL.Path) {
+					w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
+					w = storeTimingResponse{w, time.Now()}
+				}
 			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -63,6 +68,37 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func timedStoreRoute(method, path string) bool {
+	if path == "/api/v1/stores" {
+		return method == http.MethodGet
+	}
+	part, ok := strings.CutPrefix(path, "/api/v1/stores/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(part, "/")
+	return len(parts) == 2 && parts[0] != "" &&
+		(method == http.MethodPost && parts[1] == "connection-check" ||
+			(method == http.MethodGet || method == http.MethodPost) && parts[1] == "published-listings") ||
+		len(parts) == 4 && parts[0] != "" && parts[1] == "published-listings" &&
+			parts[2] != "" && parts[3] == "description" && method == http.MethodGet
+}
+
+type storeTimingResponse struct {
+	http.ResponseWriter
+	started time.Time
+}
+
+func (w storeTimingResponse) WriteHeader(status int) {
+	w.Header().Add("Server-Timing", "api;dur="+strconv.FormatFloat(float64(time.Since(w.started).Microseconds())/1000, 'f', 1, 64))
+	w.ResponseWriter.WriteHeader(status)
+}
+
+// Forward ResponseController operations to the original writer when supported.
+func (w storeTimingResponse) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // allowedAppOrigin only grants CORS transport to the desktop shell, not API access.

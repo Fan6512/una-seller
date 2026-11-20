@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import test from "node:test";
+import ts from "typescript";
 import { runListingBatches } from "../src/listingBatches.ts";
 
 const storesURL = new URL("../src/stores.ts", import.meta.url).href;
+const diagnosticsSource = readFileSync(new URL("../src/DevelopmentDiagnostics.tsx", import.meta.url), "utf8");
+const { outputText } = ts.transpileModule(
+  diagnosticsSource.replace("import.meta.env.VITE_UNA_SELLER_DEV_DIAGNOSTICS", '"1"'),
+  { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } },
+);
+const diagnosticsURL = "data:text/javascript," + encodeURIComponent(outputText
+  .replace('"react"', JSON.stringify(import.meta.resolve("react")))
+  .replace('"react/jsx-runtime"', JSON.stringify(import.meta.resolve("react/jsx-runtime"))));
 const authURL = "data:text/javascript," + encodeURIComponent(`
   let controller = new AbortController();
   export const authLifetime = () => controller.signal;
-  export const getAccessToken = async () => 'fixture';
+  export const getAccessToken = async (refresh, report) => { report?.(!refresh); return 'fixture'; };
   export function rejectSession() { controller.abort(); controller = new AbortController(); }
 `);
 const hooks = registerHooks({
@@ -19,6 +29,7 @@ const hooks = registerHooks({
       if (specifier === "./collections") {
         return { url: "data:text/javascript,export const apiBase = 'https://fixture.invalid';", shortCircuit: true };
       }
+      if (specifier === "./DevelopmentDiagnostics") return { url: diagnosticsURL, shortCircuit: true };
     }
     return nextResolve(specifier, context);
   },
@@ -26,7 +37,94 @@ const hooks = registerHooks({
 const { cachedStores, listStores, checkStoreConnection, ensureStoreConnection, cachedListingPage, loadListingPage,
   disconnectStore, invalidateListingPages, storeRequest, readableStoreError, watchStoreList } = await import(storesURL);
 const { rejectSession, authLifetime } = await import(authURL);
+const { beginRequestDiagnostic, clearDiagnostics, diagnosticsJSON, recordCacheHit } = await import(diagnosticsURL);
 hooks.deregister();
+
+test("diagnostics retain only allowlisted fields and rotate within the current account", async (t) => {
+  clearDiagnostics();
+  t.mock.method(globalThis, "fetch", async () => Response.json({ code: "fixture-secret" }, {
+    status: 409, headers: { "Server-Timing": 'api;dur=1.2, private;dur=3, read;dur=5;desc="fixture-secret"' },
+  }));
+  const path = "/api/v1/stores/fixture-secret/published-listings/fixture-secret/description?state=fixture-secret";
+  await assert.rejects(storeRequest(path, "GET", undefined, true));
+  let events = JSON.parse(diagnosticsJSON());
+  assert.deepEqual(events.map(({ operation, phase, cache_hit, token_cached }) =>
+    [operation, phase, cache_hit, token_cached]), [
+    ["description_get", "token_preflight", undefined, true],
+    ["description_get", "response_headers", undefined, undefined],
+    ["description_get", "failed", undefined, undefined],
+  ]);
+  assert.ok(events[0].request_id > 0);
+  assert.ok(events.every((event) => event.request_id === events[0].request_id));
+  assert.equal(events[2].http_status, 409);
+  assert.equal(events[2].error_code, "http_409");
+  assert.equal(events[2].server_timing, "api;dur=1.2");
+  assert.doesNotMatch(diagnosticsJSON(), /fixture-secret|Authorization/i);
+
+  const previousAccount = beginRequestDiagnostic("/api/v1/stores", "GET");
+  clearDiagnostics();
+  previousAccount("failed");
+  assert.deepEqual(JSON.parse(diagnosticsJSON()), []);
+  const report = beginRequestDiagnostic("/api/v1/stores/example/published-listings", "POST");
+  report("response_body", undefined, "listing_commit_unknown");
+  assert.equal(JSON.parse(diagnosticsJSON())[0].error_code, "listing_commit_unknown");
+  report("failed", new Response(null, { status: 400 }), "listing_review_invalid");
+  report("failed", new Response(null, { status: 400 }), "listing_offset");
+  assert.deepEqual(JSON.parse(diagnosticsJSON()).slice(-2).map(({ error_code }) => error_code),
+    ["listing_review_invalid", "listing_offset"]);
+  for (let i = 0; i < 200; i++) report("response_headers", new Response(null, { status: i < 199 ? 200 : 204 }));
+  events = JSON.parse(diagnosticsJSON());
+  assert.equal(events.length, 200);
+  assert.equal(events[0].phase, "response_headers");
+  assert.equal(events.at(-1).http_status, 204);
+  clearDiagnostics();
+});
+
+test("GET 401 recovered by refresh does not count as failure", async (t) => {
+  rejectSession();
+  clearDiagnostics();
+  let calls = 0;
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return calls === 1 ? new Response(null, { status: 401 }) : Response.json({ items: [] });
+  });
+  assert.deepEqual(await storeRequest("/api/v1/stores", "GET"), { items: [] });
+  assert.equal(fetch.mock.callCount(), 2);
+  const events = JSON.parse(diagnosticsJSON());
+  assert.deepEqual(events.filter(({ phase }) => phase === "response_headers").map(({ http_status }) => http_status), [401, 200]);
+  assert.equal(events.filter(({ phase }) => phase === "failed").length, 0);
+  assert.deepEqual(events.filter(({ phase }) => phase === "token_preflight").map(({ token_cached }) => token_cached), [true, false]);
+  assert.ok(events.every((event) => event.request_id === events[0].request_id));
+  assert.equal(events.at(-1).cache_hit, false);
+});
+
+test("GET 401 still fails when refresh cannot authorize", async (t) => {
+  rejectSession();
+  clearDiagnostics();
+  const fetch = t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 401 }));
+  await assert.rejects(storeRequest("/api/v1/stores", "GET"), /登录已过期/);
+  assert.equal(fetch.mock.callCount(), 2);
+  const events = JSON.parse(diagnosticsJSON());
+  assert.equal(events.filter(({ phase }) => phase === "failed").length, 1);
+  assert.equal(events.at(-1).error_code, "http_401");
+});
+
+test("interleaved diagnostic operations retain separate request IDs", () => {
+  clearDiagnostics();
+  const first = beginRequestDiagnostic("/api/v1/stores", "GET");
+  const second = beginRequestDiagnostic("/api/v1/stores/sample/published-listings", "GET");
+  first("response_headers", new Response(null, { status: 200 }));
+  second("response_headers", new Response(null, { status: 200 }));
+  first("response_body", new Response(null, { status: 200 }));
+  const events = JSON.parse(diagnosticsJSON());
+  assert.deepEqual(events.map(({ request_id }) => request_id), [1, 2, 1]);
+  assert.deepEqual(events.map(({ cache_hit }) => cache_hit), [undefined, undefined, false]);
+  recordCacheHit("/api/v1/stores");
+  const cached = JSON.parse(diagnosticsJSON()).at(-1);
+  assert.equal(cached.request_id, 3);
+  assert.equal(cached.cache_hit, true);
+  assert.equal(cached.token_cached, undefined);
+});
 
 test("8-second timeout has an actionable Chinese message", () => {
   assert.equal(readableStoreError(new DOMException("signal timed out", "TimeoutError"), "无法读取店铺"),
@@ -260,7 +358,14 @@ test("pages are available during revalidation, isolated by scope, and invalidate
   await coldRead;
   const coldMs = performance.now() - coldStart;
   const warmStart = performance.now();
+  const countHits = () => JSON.parse(diagnosticsJSON())
+    .filter((event) => event.operation === "listings_get" && event.cache_hit).length;
+  const before = countHits();
   assert.deepEqual(cachedListingPage(mlm), page);
+  assert.deepEqual(cachedListingPage(mlm), page);
+  assert.equal(countHits(), before, "pure cache reads must not record during render");
+  recordCacheHit(mlm);
+  assert.equal(countHits(), before + 1);
   const warmMs = performance.now() - warmStart;
   t.diagnostic(`fixture cold data ${coldMs.toFixed(1)} ms, warm memory data ${warmMs.toFixed(2)} ms`);
   for (const other of [mlm.replace("MLM", "MLB"), mlm.replace("remote", "fulfillment"), mlm.replace("offset=0", "offset=20"), mlm.replace("store-1", "store-2")]) {
