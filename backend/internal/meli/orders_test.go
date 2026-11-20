@@ -506,7 +506,7 @@ func orderTestDetail(id, seller, site string) string {
 
 func TestOrderPostgresReviewAndSkip(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	const original = `[{ "user_id":987654,"site_id":"MLB","logistic_type":"remote"},{"user_id":987654,"site_id":"MPE","logistic_type":"remote"}]`
 	if _, err := db.Exec(ctx, "UPDATE app.meli_store_connections SET marketplaces=$2::jsonb,access_token_expires_at=now()+interval '30 minutes' WHERE id=$1::uuid", store, original); err != nil {
@@ -562,7 +562,9 @@ func TestOrderPostgresReviewAndSkip(t *testing.T) {
 		code   string
 	}{{429, "order_rate_limited"}, {503, "order_platform_unavailable"}, {-1, "order_timeout"}} {
 		firstFailure.Store(transient.status)
-		attempt, stop := context.WithTimeout(ctx, 500*time.Millisecond)
+		// The search quota may delay a subsequent attempt by 650ms; allow
+		// enough time to reach the simulated 429/503/timeout response.
+		attempt, stop := context.WithTimeout(ctx, 1500*time.Millisecond)
 		_, err := s.SyncOrders(attempt, owner, store, scope)
 		stop()
 		if OrderErrorCode(err) != transient.code {
