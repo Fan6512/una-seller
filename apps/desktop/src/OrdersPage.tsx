@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cachedStores, listStores, type StoreConnection } from "./stores";
 import {
   getOrder, listOrders, orderDate, orderMoney, orderStatusLabel,
@@ -45,6 +45,50 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
   const [storeChoice, setStoreChoice] = useState("");
   const [scopeChoice, setScopeChoice] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  useEffect(() => {
+    let alive = true;
+    void listStores().then((items) => {
+      if (alive) setStores(items);
+    }).catch((error: unknown) => {
+      if (alive) setStoreError(displayError(error));
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const availableStores = useMemo(() =>
+    stores.filter((store) => store.status !== "disconnected" &&
+      store.marketplaces_status === "verified" && store.marketplaces.length > 0), [stores]);
+  const store = availableStores.find((item) => item.id === storeChoice) ?? availableStores[0];
+  const marketplaces = store?.marketplaces ?? [];
+  const scopeKey = marketplaces.some((m) => m.site_id + "|" + m.logistic_type === scopeChoice)
+    ? scopeChoice : marketplaces[0] ? marketplaces[0].site_id + "|" + marketplaces[0].logistic_type : "";
+  const selectedMarket = marketplaces.find((m) => m.site_id + "|" + m.logistic_type === scopeKey);
+  const scope = useMemo<OrderScope | null>(() => store && selectedMarket
+    ? { storeId: store.id, site: selectedMarket.site_id, logistic: selectedMarket.logistic_type } : null,
+    [store?.id, selectedMarket?.site_id, selectedMarket?.logistic_type]);
+
+  return <ScopedOrders key={JSON.stringify([scope, selectedMarket?.user_id])}
+    scope={scope} scopeKey={scopeKey} store={store} stores={availableStores} storeError={storeError}
+    statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+    selectStore={(id) => { setStoreChoice(id); setScopeChoice(""); }} selectScope={setScopeChoice}
+    beginSync={beginSync} installingUpdate={installingUpdate} />;
+}
+
+function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter, setStatusFilter,
+  selectStore, selectScope, beginSync, installingUpdate }: {
+  scope: OrderScope | null;
+  scopeKey: string;
+  store: StoreConnection | undefined;
+  stores: StoreConnection[];
+  storeError: string;
+  statusFilter: string;
+  setStatusFilter: (value: string) => void;
+  selectStore: (id: string) => void;
+  selectScope: (key: string) => void;
+  beginSync: BeginSync;
+  installingUpdate: boolean;
+}) {
+  const marketplaces = store?.marketplaces ?? [];
   const [searchText, setSearchText] = useState("");
   const [offset, setOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
@@ -68,37 +112,17 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
   const [purchaseMessage, setPurchaseMessage] = useState("");
   const syncAbort = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    void listStores().then((items) => {
-      if (alive) setStores(items);
-    }).catch((error: unknown) => {
-      if (alive) setStoreError(displayError(error));
-    });
-    return () => { alive = false; syncAbort.current?.abort(); };
+  const reviewAbort = useRef<AbortController | null>(null);
+  const purchaseRequest = useRef<AbortController | null>(null);
+  const [purchaseReady, setPurchaseReady] = useState(false);
+  const [purchaseReload, setPurchaseReload] = useState(0);
+
+  useLayoutEffect(() => () => {
+    syncAbort.current?.abort();
+    reviewAbort.current?.abort();
   }, []);
 
-  const availableStores = useMemo(() =>
-    stores.filter((store) => store.status !== "disconnected" &&
-      store.marketplaces_status === "verified" && store.marketplaces.length > 0), [stores]);
-  const store = availableStores.find((item) => item.id === storeChoice) ?? availableStores[0];
-  const marketplaces = store?.marketplaces ?? [];
-  const scopeKey = marketplaces.some((m) => m.site_id + "|" + m.logistic_type === scopeChoice)
-    ? scopeChoice : marketplaces[0] ? marketplaces[0].site_id + "|" + marketplaces[0].logistic_type : "";
-  const selectedMarket = marketplaces.find((m) => m.site_id + "|" + m.logistic_type === scopeKey);
-  const scope = useMemo<OrderScope | null>(() => store && selectedMarket
-    ? { storeId: store.id, site: selectedMarket.site_id, logistic: selectedMarket.logistic_type } : null,
-    [store?.id, selectedMarket?.site_id, selectedMarket?.logistic_type]);
-
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
-  useEffect(() => {
-    setSelectedId("");
-    setDetail(null);
-    setReview(null);
-    setProgress(null);
-    setNotice("");
-  }, [scope?.storeId, scope?.site, scope?.logistic]);
-
   useEffect(() => {
     const controller = new AbortController();
     if (!scope) {
@@ -139,8 +163,11 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     return () => controller.abort();
   }, [scope?.storeId, scope?.site, scope?.logistic, selectedId, nonce]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const controller = new AbortController();
+    purchaseRequest.current = controller;
+    setPurchaseReady(false);
+    setPurchaseBusy(false);
     setPurchase(null);
     setPurchaseNumber("");
     setPurchaseCost("");
@@ -152,28 +179,32 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
       setPurchase(value.purchase);
       setPurchaseNumber(value.purchase?.purchase_order_id ?? "");
       setPurchaseCost(value.purchase?.cost_cny ?? "");
+      setPurchaseReady(true);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setPurchaseError(displayError(error));
     });
     return () => controller.abort();
-  }, [scope?.storeId, scope?.site, scope?.logistic, selectedId]);
+  }, [scope, selectedId, purchaseReload]);
 
   const savePurchaseInfo = async () => {
-    if (!scope || !selectedId || purchaseBusy || !purchaseNumber) return;
-    const controller = new AbortController();
+    const signal = purchaseRequest.current?.signal;
+    if (!scope || !selectedId || !purchaseReady || purchaseBusy || !purchaseNumber || !signal) return;
     setPurchaseBusy(true);
     setPurchaseError("");
     setPurchaseMessage("");
     try {
-      const result = await savePurchase(scope, selectedId, purchaseNumber.trim(), purchaseCost.trim(), controller.signal);
+      const result = await savePurchase(scope, selectedId, purchaseNumber.trim(), purchaseCost.trim(), purchase?.updated_at ?? null, signal);
+      if (signal.aborted) return;
       setPurchase(result);
       setPurchaseNumber(result.purchase_order_id);
       setPurchaseCost(result.cost_cny ?? "");
       setPurchaseMessage("采购信息已保存。后续优先接入 1688 官方买家授权与订单金额查询。");
     } catch (error) {
+      if (signal.aborted) return;
+      if (error instanceof OrderRequestError && error.status === 409) setPurchaseReady(false);
       setPurchaseError(displayError(error));
     } finally {
-      setPurchaseBusy(false);
+      if (!signal.aborted) setPurchaseBusy(false);
     }
   };
 
@@ -192,23 +223,13 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     setOffset(0);
     setSearchText("");
   };
-  const selectStore = (value: string) => {
-    setStoreChoice(value);
-    setScopeChoice("");
-    setOffset(0);
-    setSearchText("");
-  };
-  const selectScope = (value: string) => {
-    setScopeChoice(value);
-    setOffset(0);
-    setSearchText("");
-  };
 
   const performSync = async () => {
     if (!scope || running || actionBusy || installingUpdate || store?.status !== "connected") return;
+    const endSync = beginSync();
+    if (!endSync) return;
     const controller = new AbortController();
     syncAbort.current = controller;
-    const endSync = beginSync();
     setRunning(true);
     setNotice("");
     setReview(null);
@@ -220,6 +241,7 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
       // Bound one user action to avoid unbounded request loops/rate-limit storms.
       for (; batches < 20; batches++) {
         const current = await syncOrders(scope, controller.signal);
+        controller.signal.throwIfAborted();
         saved += current.saved;
         last = current;
         setProgress({ ...current, saved });
@@ -244,7 +266,7 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     } finally {
       if (syncAbort.current === controller) syncAbort.current = null;
       setRunning(false);
-      endSync?.();
+      endSync();
       loadRows();
     }
   };
@@ -254,32 +276,38 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     if (!window.confirm("仅跳过本次无法解析的订单 " + review.order_id +
       "，不操作美客多平台。该决定会被记录。确定继续吗？")) return;
     const controller = new AbortController();
+    reviewAbort.current = controller;
     setActionBusy(true);
     try {
       const result = await skipOrder(scope, review, controller.signal);
+      if (controller.signal.aborted) return;
       setReview(null);
       setProgress(result);
       setNotice("已记录人工跳过订单 " + review.order_id + "；其他订单仍可正常同步。");
       loadRows();
     } catch (error) {
-      setNotice(displayError(error));
+      if (!controller.signal.aborted) setNotice(displayError(error));
     } finally {
-      setActionBusy(false);
+      if (reviewAbort.current === controller) reviewAbort.current = null;
+      if (!controller.signal.aborted) setActionBusy(false);
     }
   };
   const performReset = async () => {
     if (!scope || !progress || progress.next_offset <= 0 || running || actionBusy || review) return;
     if (!window.confirm("将当前订单搜索窗口从第 0 页重新扫描，不删除已保存的订单。确定重扫吗？")) return;
     const controller = new AbortController();
+    reviewAbort.current = controller;
     setActionBusy(true);
     try {
       const result = await resetOrderCursor(scope, progress.next_offset, controller.signal);
+      if (controller.signal.aborted) return;
       setProgress(result);
       setNotice("重扫游标已归零，不会删除已有订单或人工 Skip 审计。");
     } catch (error) {
-      setNotice(displayError(error));
+      if (!controller.signal.aborted) setNotice(displayError(error));
     } finally {
-      setActionBusy(false);
+      if (reviewAbort.current === controller) reviewAbort.current = null;
+      if (!controller.signal.aborted) setActionBusy(false);
     }
   };
   const openOrder = (id: string) => setSelectedId(id);
@@ -312,7 +340,7 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
       <div className="orders-filters">
         <label>店铺
           <select aria-label="订单店铺" value={store?.id ?? ""} onChange={(event) => selectStore(event.target.value)}>
-            {availableStores.map((item) => <option key={item.id} value={item.id}>{item.nickname || item.seller_id}</option>)}
+            {stores.map((item) => <option key={item.id} value={item.id}>{item.nickname || item.seller_id}</option>)}
           </select>
         </label>
         <label>站点 / 物流模式
@@ -334,12 +362,12 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
       <p className="orders-filter-note">商品关键词只筛选当前页；输入完整数字订单号并点击“查订单”可直接查询该订单，不受当前分页限制。</p>
 
       {storeError && <p className="orders-alert" role="alert">{storeError}</p>}
-      {!availableStores.length && <div className="orders-empty">
+      {!stores.length && <div className="orders-empty">
         <strong>还没有可查看订单的店铺</strong>
         <p>请先在“店铺管理”完成美客多 OAuth 授权并验证站点映射。</p>
       </div>}
 
-      {availableStores.length > 0 && <>
+      {stores.length > 0 && <>
         <div className="orders-tabs" role="group" aria-label="订单状态筛选">
           {FILTERS.map((filter) => <button type="button" key={filter.value}
             aria-pressed={statusFilter === filter.value} onClick={() => selectStatus(filter.value)}>
@@ -444,19 +472,21 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
                 <div className="orders-purchase-form">
                   <label>1688 采购订单号
                     <input type="text" inputMode="numeric" maxLength={40} placeholder="输入 1688 采购单号"
-                      value={purchaseNumber} onChange={(event) => setPurchaseNumber(event.target.value)}
+                      value={purchaseNumber} disabled={!purchaseReady || purchaseBusy} onChange={(event) => setPurchaseNumber(event.target.value)}
                       aria-label="1688 采购订单号" />
                   </label>
                   <label>采购总金额 CNY（可选）
                     <input type="text" inputMode="decimal" maxLength={20} placeholder="例如 16.50，可稍后补录"
-                      value={purchaseCost} onChange={(event) => setPurchaseCost(event.target.value)}
+                      value={purchaseCost} disabled={!purchaseReady || purchaseBusy} onChange={(event) => setPurchaseCost(event.target.value)}
                       aria-label="人民币采购总金额" />
                   </label>
                   {purchaseError && <p className="orders-alert" role="alert">{purchaseError}</p>}
                   {purchaseMessage && <p className="orders-purchase-success" role="status">{purchaseMessage}</p>}
                   <div className="orders-purchase-actions">
-                    <button type="button" className="orders-main-button" disabled={purchaseBusy || !/^\d{8,40}$/.test(purchaseNumber)}
+                    <button type="button" className="orders-main-button" disabled={!purchaseReady || purchaseBusy || !/^\d{8,40}$/.test(purchaseNumber)}
                       onClick={() => void savePurchaseInfo()}>{purchaseBusy ? "保存中…" : "保存采购关联"}</button>
+                    {!purchaseReady && purchaseError && <button type="button"
+                      onClick={() => setPurchaseReload((n) => n + 1)}>重新读取采购关联</button>}
                     <a href="https://www.1688.com/" target="_blank" rel="noopener noreferrer">打开 1688</a>
                   </div>
                   {purchase && <p className="orders-purchase-state">已保存采购单：{purchase.purchase_order_id}

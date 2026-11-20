@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -135,12 +137,18 @@ SELECT owner_user_id::text,id::text,review_id::text FROM connection CROSS JOIN r
 		_, _ = cs.DB.Exec(ctx, "DELETE FROM app.meli_store_connections WHERE id=$1::uuid", store)
 		_, _ = cs.DB.Exec(ctx, "DELETE FROM app.users WHERE id=$1::uuid", owner)
 	}()
+	key := base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901"))
+	upstreamCalls := 0
 	svc, err := meli.NewService(cs.DB, meli.Config{
 		ClientID: "synthetic", ClientSecret: "synthetic", RedirectURI: "https://example.invalid" + meli.CallbackPath,
-		TokenEncryptionKey: base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901")),
-		HTTPClient: &http.Client{Transport: listingTestTransport(func(*http.Request) (*http.Response, error) {
-			t.Error("review or skip attempted an upstream request")
-			return nil, context.Canceled
+		TokenEncryptionKey: key,
+		HTTPClient: &http.Client{Transport: listingTestTransport(func(r *http.Request) (*http.Response, error) {
+			upstreamCalls++
+			if r.URL.Path != "/marketplace/orders/search" {
+				t.Errorf("unexpected upstream request: %s", r.URL.Path)
+			}
+			return &http.Response{StatusCode: http.StatusTooManyRequests,
+				Header: http.Header{"Retry-After": {"30"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 		})},
 	})
 	if err != nil {
@@ -175,4 +183,61 @@ SELECT owner_user_id::text,id::text,review_id::text FROM connection CROSS JOIN r
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "order_review_conflict") {
 		t.Fatalf("skip replay HTTP %d %s", w.Code, w.Body)
 	}
+	if upstreamCalls != 0 {
+		t.Fatal("review or skip attempted an upstream request")
+	}
+
+	t.Run("purchase version conflict", func(t *testing.T) {
+		if _, err := cs.DB.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated)
+ VALUES($1::uuid,'MLB','remote','987654','102','paid','USD',12.34,now(),now())`, store); err != nil {
+			t.Fatal(err)
+		}
+		const initial = `{"purchase_order_id":"12345678","cost_cny":"10","updated_at":null}`
+		created := post("102/purchase", initial)
+		var value struct{ Purchase meli.OrderPurchase }
+		if err := json.Unmarshal(created.Body.Bytes(), &value); err != nil || created.Code != http.StatusOK || value.Purchase.UpdatedAt.IsZero() {
+			t.Fatalf("purchase create: %d %s", created.Code, created.Body)
+		}
+		for i, cost := range []string{"11", "12"} {
+			edit := fmt.Sprintf(`{"purchase_order_id":"12345678","cost_cny":%q,"updated_at":%q}`, cost, value.Purchase.UpdatedAt.Format(time.RFC3339Nano))
+			response := post("102/purchase", edit)
+			if i == 0 && response.Code != http.StatusOK ||
+				i == 1 && (response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "order_purchase_conflict")) {
+				t.Fatalf("purchase client %d: %d %s", i, response.Code, response.Body)
+			}
+		}
+	})
+
+	t.Run("provider 429 and cooldown", func(t *testing.T) {
+		cipher, err := meli.NewTokenCipher(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		access, err := cipher.Seal("synthetic", []byte("meli|"+owner+"|987650|access"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cs.DB.Exec(ctx, `UPDATE app.meli_store_connections
+ SET status='connected',access_token_ciphertext=$2,refresh_token_ciphertext=$2,
+ access_token_expires_at=now()+interval '30 minutes' WHERE id=$1::uuid`, store, access); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			response := post("sync", "")
+			retry, err := strconv.Atoi(response.Header().Get("Retry-After"))
+			if response.Code != http.StatusTooManyRequests || err != nil || retry < 29 || retry > 30 ||
+				!strings.Contains(response.Body.String(), "order_rate_limited") {
+				t.Fatalf("rate limit HTTP %d Retry-After=%q %s", response.Code, response.Header().Get("Retry-After"), response.Body)
+			}
+		}
+		if upstreamCalls != 1 {
+			t.Fatalf("cooldown allowed another upstream request, calls=%d", upstreamCalls)
+		}
+		var leased, reviewing bool
+		if err := cs.DB.QueryRow(ctx, `SELECT lease_id IS NOT NULL, review_id IS NOT NULL
+ FROM app.meli_order_syncs WHERE store_id=$1::uuid`, store).Scan(&leased, &reviewing); err != nil || leased || reviewing {
+			t.Fatalf("429 left lease=%t review=%t error=%v", leased, reviewing, err)
+		}
+	})
 }

@@ -806,6 +806,7 @@ type listingDetail struct {
 type listingGETTiming struct {
 	request, body, decode time.Duration
 	failedPhase           string
+	retryAfter            string
 }
 
 func (timing listingGETTiming) attrs(ctx context.Context) []any {
@@ -848,6 +849,9 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		timing.failedPhase = "http_status"
+		if resp.StatusCode == http.StatusTooManyRequests {
+			timing.retryAfter = resp.Header.Get("Retry-After")
+		}
 		return resp.StatusCode, ListingPlatformError(resp.StatusCode)
 	}
 	const maxBody = 2 << 20

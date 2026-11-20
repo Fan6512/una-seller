@@ -41,6 +41,7 @@ export class OrderRequestError extends Error {
 }
 
 const messages: Record<string, string> = {
+  order_purchase_conflict: "采购关联已被修改，请重新读取后再保存。",
   order_needs_review: "有一笔订单详情异常，同步已暂停，请核实后再决定是否跳过。",
   order_review_conflict: "异常订单或同步位置已变化，请重新检查，不会重复跳过。",
   order_invalid_response: "美客多返回的订单数据无法解析，本次没有自动跳过订单。",

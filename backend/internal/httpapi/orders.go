@@ -143,6 +143,10 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 		status = http.StatusBadGateway
 	case "order_rate_limited":
 		status = http.StatusTooManyRequests
+		var limit *meli.OrderRateLimitError
+		if errors.As(err, &limit) {
+			w.Header().Set("Retry-After", limit.RetryAfter())
+		}
 	case "order_timeout":
 		status = http.StatusGatewayTimeout
 	case "order_canceled":

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
@@ -36,8 +37,9 @@ func (a storeAPI) orderPurchase(w http.ResponseWriter, r *http.Request, store, o
 		record, err = a.service.GetOrderPurchase(r.Context(), owner, store, scope, orderID)
 	} else {
 		var request struct {
-			PurchaseOrderID string `json:"purchase_order_id"`
-			CostCNY         string `json:"cost_cny"`
+			PurchaseOrderID string     `json:"purchase_order_id"`
+			CostCNY         string     `json:"cost_cny"`
+			UpdatedAt       *time.Time `json:"updated_at"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
 		decoder.DisallowUnknownFields()
@@ -47,9 +49,11 @@ func (a storeAPI) orderPurchase(w http.ResponseWriter, r *http.Request, store, o
 			return
 		}
 		record, err = a.service.SaveOrderPurchase(r.Context(), owner, store, scope, orderID,
-			request.PurchaseOrderID, request.CostCNY)
+			request.PurchaseOrderID, request.CostCNY, request.UpdatedAt)
 	}
 	switch {
+	case errors.Is(err, meli.ErrOrderPurchaseConflict):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "order_purchase_conflict"})
 	case errors.Is(err, meli.ErrOrderPurchaseInvalid):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_purchase_invalid"})
 	case errors.Is(err, meli.ErrStoreNotFound), errors.Is(err, meli.ErrOrderNotFound):

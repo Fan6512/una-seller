@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,6 +19,8 @@ import (
 const OrderBatchSize = 3
 const orderPageSize = 20
 const orderDetailBatchSize = 3
+const orderRequestInterval = 100 * time.Millisecond
+const orderDefaultCooldown = 5 * time.Second
 
 var (
 	ErrOrderBusy                 = errors.New("order sync already running")
@@ -79,6 +82,61 @@ type OrderReview struct {
 }
 
 func (r *OrderReview) Error() string { return "order_needs_review" }
+
+type OrderRateLimitError struct {
+	until time.Time
+}
+
+func (e *OrderRateLimitError) Error() string { return "order rate limited" }
+func (e *OrderRateLimitError) Unwrap() error { return ListingPlatformError(http.StatusTooManyRequests) }
+func (e *OrderRateLimitError) RetryAfter() string {
+	delay := time.Until(e.until)
+	if delay <= 0 {
+		return "0"
+	}
+	return strconv.FormatInt(int64((delay-1)/time.Second)+1, 10)
+}
+
+// Pace order reads across scopes in this process and apply upstream cooldowns
+// before another request can start, including concurrent syncs from other stores.
+func (s *Service) orderGET(ctx context.Context, token, path string, target any) (int, error) {
+	if !s.orderRequests.TryLock() {
+		return http.StatusTooManyRequests, &OrderRateLimitError{until: time.Now().Add(time.Second)}
+	}
+	defer s.orderRequests.Unlock()
+	if time.Now().Before(s.orderRetryUntil) {
+		return http.StatusTooManyRequests, &OrderRateLimitError{until: s.orderRetryUntil}
+	}
+	if delay := time.Until(s.orderNextRequest); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	s.orderNextRequest = time.Now().Add(orderRequestInterval)
+	var response listingGETTiming
+	status, err := s.listingGET(ctx, token, path, target, &response)
+	if status == http.StatusTooManyRequests {
+		now := time.Now()
+		until, dateErr := http.ParseTime(response.retryAfter)
+		if dateErr != nil {
+			delay := orderDefaultCooldown
+			if seconds, parseErr := strconv.ParseUint(response.retryAfter, 10, 64); parseErr == nil {
+				delay = time.Duration(min(seconds, math.MaxInt64/uint64(time.Second))) * time.Second
+			}
+			until = now.Add(delay)
+		}
+		s.orderRetryUntil = until
+		return status, &OrderRateLimitError{until: until}
+	}
+	return status, err
+}
 
 type orderCursor struct {
 	LeaseID      string
@@ -364,7 +422,7 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 			"offset":            {strconv.Itoa(cursor.Offset)},
 		}
 		var search json.RawMessage
-		_, err = s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/search?"+query.Encode(), &search, nil)
+		_, err = s.orderGET(fetchCtx, auth.AccessToken, "/marketplace/orders/search?"+query.Encode(), &search)
 		if err != nil {
 			return OrderSyncResult{}, err
 		}
@@ -381,7 +439,7 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 detailLoop:
 	for _, id := range ids[:batchSize] {
 		var raw json.RawMessage
-		status, detailErr := s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw, nil)
+		status, detailErr := s.orderGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw)
 		reason := ""
 		switch {
 		case status == http.StatusNotFound:

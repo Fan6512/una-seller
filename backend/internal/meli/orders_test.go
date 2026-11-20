@@ -133,6 +133,33 @@ func TestOrderCancellationAndTimeoutAreDistinct(t *testing.T) {
 	}
 }
 
+func TestOrderProviderPacing(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, `{}`)
+	}))
+	defer server.Close()
+	s := Service{apiURL: server.URL, client: server.Client()}
+	var raw json.RawMessage
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/search", &raw); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	next := s.orderNextRequest
+	// Reserve a known future slot even on a loaded test runner.
+	s.orderNextRequest = started.Add(orderRequestInterval)
+	if next.IsZero() {
+		t.Fatal("provider request did not reserve the next slot")
+	}
+	if _, err := s.orderGET(t.Context(), "fixture", "/marketplace/orders/101", &raw); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 || time.Since(started) < orderRequestInterval {
+		t.Fatal("second provider request was not paced")
+	}
+}
+
 func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -451,6 +478,9 @@ func TestOrderPostgresReviewAndSkip(t *testing.T) {
 			case -1:
 				<-r.Context().Done()
 			default:
+				if status == http.StatusTooManyRequests {
+					w.Header().Set("Retry-After", "0")
+				}
 				w.WriteHeader(int(status))
 			}
 		case "/marketplace/orders/103":

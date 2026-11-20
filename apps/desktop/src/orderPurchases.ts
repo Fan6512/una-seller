@@ -1,7 +1,7 @@
 import { authLifetime, getAccessToken } from "./auth";
 import { apiBase } from "./collections";
 import { storeRequest } from "./stores";
-import type { OrderScope } from "./orders";
+import { OrderRequestError, type OrderScope } from "./orders";
 
 export type OrderPurchase = {
   order_id: string;
@@ -24,7 +24,7 @@ export async function loadPurchase(scope: OrderScope, orderId: string, signal?: 
 
 // Explicit user action only. Do not automatically repeat a POST after ambiguous network failure.
 export async function savePurchase(scope: OrderScope, orderId: string, purchaseId: string,
-  costCNY: string, signal: AbortSignal) {
+  costCNY: string, updatedAt: string | null, signal: AbortSignal) {
   if (!/^\d{8,40}$/.test(purchaseId)) throw new Error("1688 采购订单号应为 8–40 位数字");
   if (costCNY && !/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/.test(costCNY)) {
     throw new Error("采购金额应为非负人民币金额，最多保留两位小数");
@@ -39,7 +39,7 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
     response = await fetch(apiBase + purchasePath(scope, orderId), {
       method: "POST", cache: "no-store", signal,
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ purchase_order_id: purchaseId, cost_cny: costCNY }),
+      body: JSON.stringify({ purchase_order_id: purchaseId, cost_cny: costCNY, updated_at: updatedAt }),
     });
   } catch (error) {
     if (lifetime.aborted || signal.aborted) throw error;
@@ -50,7 +50,10 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
   const result = await response.json().catch(() => null) as {
     purchase?: OrderPurchase; error?: string;
   } | null;
+  lifetime.throwIfAborted();
+  signal.throwIfAborted();
   if (!response.ok) {
+    if (response.status === 409) throw new OrderRequestError("order_purchase_conflict", 409);
     if (response.status === 401) {
       await getAccessToken(true);
       throw new Error("会话已刷新，请检查采购关联是否保存后再操作");
