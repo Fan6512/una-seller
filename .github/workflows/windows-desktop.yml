@@ -96,15 +96,7 @@ jobs:
 
       - name: Build test NSIS installer
         if: github.event_name != 'push' && !inputs.signed_smoke
-        env:
-          # PR #39 temporary Windows acceptance artifact only; releases stay diagnostics-off.
-          VITE_UNA_SELLER_DEV_DIAGNOSTICS: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 39 && '1' || '0' }}
         run: npm run tauri:build -- --bundles nsis -- --locked
-
-      - name: Verify PR #39 diagnostic payload is present
-        if: github.event_name == 'pull_request' && github.event.pull_request.number == 39
-        run: |
-          node -e "const fs=require('fs'); const path=require('path'); const a=fs.readdirSync('dist/assets').filter(f=>f.endsWith('.js')); if(!a.some(f=>fs.readFileSync(path.join('dist/assets',f),'utf8').includes('una-seller-diagnostics.json'))) process.exit(1)"
 
       - name: Build signed NSIS installer
         if: github.event_name == 'push' || inputs.signed_smoke
@@ -198,7 +190,7 @@ jobs:
         if: github.event_name != 'push' && !inputs.signed_smoke
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 39 && 'una-seller-windows-x64-diagnostics-pr39' || 'una-seller-windows-x64' }}
+          name: una-seller-windows-x64
           path: |
             apps/desktop/src-tauri/target/release/una-seller.exe
             apps/desktop/src-tauri/target/release/una-seller-api.exe
