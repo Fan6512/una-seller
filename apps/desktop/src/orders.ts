@@ -76,10 +76,6 @@ export function orderMoney(value: string, currency: string) {
   if (!/^\d{1,16}(\.\d{1,8})?$/.test(value)) return value + " " + currency;
   return currency + " " + value;
 }
-function basePath(scope: OrderScope) {
-  const query = new URLSearchParams({ site: scope.site, logistic_type: scope.logistic });
-  return "/api/v1/stores/" + encodeURIComponent(scope.storeId) + "/orders?" + query.toString();
-}
 function pathWithTail(scope: OrderScope, tail: string) {
   return "/api/v1/stores/" + encodeURIComponent(scope.storeId) + "/orders/" + encodeURIComponent(tail) +
     "?" + new URLSearchParams({ site: scope.site, logistic_type: scope.logistic }).toString();
