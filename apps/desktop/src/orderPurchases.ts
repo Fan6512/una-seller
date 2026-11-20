@@ -1,6 +1,7 @@
 import { authLifetime, getAccessToken } from "./auth";
 import { apiBase } from "./collections";
 import { ORDER_WRITE_TIMEOUT_MS, OrderRequestError, orderRead, type OrderScope } from "./orders";
+import { beginRequestDiagnostic } from "./DevelopmentDiagnostics";
 
 export type OrderPurchase = {
   order_id: string;
@@ -28,10 +29,18 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
   if (costCNY && !/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/.test(costCNY)) {
     throw new Error("采购金额应为非负人民币金额，最多保留两位小数");
   }
+  const diagnostic = beginRequestDiagnostic(purchasePath(scope, orderId), "POST");
   const lifetime = authLifetime();
   const timedSignal = AbortSignal.any([signal, AbortSignal.timeout(ORDER_WRITE_TIMEOUT_MS)]);
   lifetime.throwIfAborted();
-  const token = await getAccessToken();
+  let token: string;
+  try {
+    token = await getAccessToken(false, diagnostic
+      ? (cached) => diagnostic("token_preflight", undefined, undefined, cached) : undefined);
+  } catch (error) {
+    diagnostic?.("failed", undefined, "token_preflight");
+    throw error;
+  }
   lifetime.throwIfAborted();
   timedSignal.throwIfAborted();
   let response: Response;
@@ -41,7 +50,10 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       body: JSON.stringify({ purchase_order_id: purchaseId, cost_cny: costCNY, updated_at: updatedAt }),
     });
+    diagnostic?.("response_headers", response);
   } catch (error) {
+    diagnostic?.("failed", undefined, timedSignal.reason?.name === "TimeoutError" ? "timeout"
+      : signal.aborted || lifetime.aborted ? "aborted" : "network");
     if (lifetime.aborted || signal.aborted) throw error;
     if (timedSignal.aborted) throw new Error("采购关联保存超时，结果尚未确认；请重新读取订单，不要盲目重复保存");
     throw new Error("采购关联写入结果未确认，请重新打开订单核对，不要盲目重复操作");
@@ -54,6 +66,7 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
   lifetime.throwIfAborted();
   timedSignal.throwIfAborted();
   if (!response.ok) {
+    diagnostic?.("failed", response, result?.error);
     if (response.status === 409) throw new OrderRequestError("order_purchase_conflict", 409);
     if (response.status === 401) {
       await getAccessToken(true);
@@ -64,7 +77,9 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
     throw new Error("保存采购信息失败（HTTP " + response.status + "）");
   }
   if (!result?.purchase?.purchase_order_id) {
+    diagnostic?.("failed", response, "invalid_body");
     throw new Error("采购保存结果无法确认，请重新读取订单后核对");
   }
+  diagnostic?.("response_body", response);
   return result.purchase;
 }

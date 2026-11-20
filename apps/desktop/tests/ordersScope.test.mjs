@@ -27,7 +27,8 @@ const markets = [
   { user_id: 3, site_id: "MLA", logistic_type: "remote" },
 ];
 const stores = ["one", "two"].map((id) => ({
-  id, nickname: id, status: "connected", marketplaces_status: "verified", marketplaces: markets,
+  id, nickname: id, status: id === "one" ? "token_expired" : "connected",
+  marketplaces_status: "verified", marketplaces: markets,
 }));
 const deferred = [];
 const purchaseRequests = [];

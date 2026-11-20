@@ -2,7 +2,9 @@ import { useState, useSyncExternalStore } from "react";
 
 export const diagnosticsEnabled = import.meta.env.VITE_UNA_SELLER_DEV_DIAGNOSTICS === "1";
 
-type Operation = "stores_get" | "listings_get" | "description_get" | "store_token_check" | "sync_post";
+type Operation = "stores_get" | "listings_get" | "description_get" | "store_token_check" | "sync_post"
+  | "orders_get" | "order_state_get" | "order_detail_get" | "order_purchase_get"
+  | "orders_sync_post" | "orders_skip_post" | "orders_reset_post" | "order_purchase_post";
 type Phase = "token_preflight" | "response_headers" | "response_body" | "failed";
 type Entry = {
   time: string;
@@ -27,6 +29,11 @@ const knownCodes = new Set([
   "listing_busy", "listing_rate_limited", "listing_timeout", "listing_commit_unknown", "listing_transport",
   "listing_identity_mismatch", "listing_review_changed", "listing_review_invalid", "listing_offset",
   "listing_canceled", "listing_invalid_response",
+  "order_purchase_conflict", "order_needs_review", "order_review_conflict",
+  "order_invalid_response", "order_platform_unavailable", "order_site_not_authorized",
+  "order_reauth_required", "order_refresh_unknown", "order_busy", "order_auth_changed",
+  "order_rate_limited", "order_timeout", "order_canceled", "order_reset_conflict",
+  "order_reset_invalid", "order_unavailable",
 ]);
 let cursor = 0;
 let nextRequestId = 0;
@@ -57,6 +64,16 @@ export function beginRequestDiagnostic(path: string, method: "GET" | "POST") {
     operation = "description_get";
   } else if (method === "POST" && /^\/api\/v1\/stores\/[^/]+\/connection-check$/.test(route)) {
     operation = "store_token_check";
+  } else if (/^\/api\/v1\/stores\/[^/]+\/orders(?:\/|$)/.test(route)) {
+    if (method === "GET") {
+      operation = route.endsWith("/sync-state") ? "order_state_get"
+        : route.endsWith("/purchase") ? "order_purchase_get"
+          : /^\/api\/v1\/stores\/[^/]+\/orders\/[^/]+$/.test(route) ? "order_detail_get" : "orders_get";
+    } else if (route.endsWith("/sync")) operation = "orders_sync_post";
+    else if (route.endsWith("/skip")) operation = "orders_skip_post";
+    else if (route.endsWith("/reset")) operation = "orders_reset_post";
+    else if (route.endsWith("/purchase")) operation = "order_purchase_post";
+    else return;
   } else return;
 
   const session = lifetime;

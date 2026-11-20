@@ -1,6 +1,7 @@
 import { authLifetime, getAccessToken } from "./auth";
 import { apiBase } from "./collections";
 import { storeRequest } from "./stores";
+import { beginRequestDiagnostic } from "./DevelopmentDiagnostics";
 
 export type OrderScope = { storeId: string; site: string; logistic: string };
 export type OrderLine = {
@@ -110,11 +111,19 @@ export function getOrderSyncState(scope: OrderScope, signal?: AbortSignal) {
   return orderRead<OrderSyncState>(pathWithTail(scope, "sync-state"), signal);
 }
 async function orderPost(scope: OrderScope, tail: string, body: object | undefined, signal: AbortSignal) {
+  const diagnostic = beginRequestDiagnostic(pathWithTail(scope, tail), "POST");
   const lifetime = authLifetime();
   const timedSignal = AbortSignal.any([signal, AbortSignal.timeout(ORDER_WRITE_TIMEOUT_MS)]);
   lifetime.throwIfAborted();
   timedSignal.throwIfAborted();
-  const token = await getAccessToken();
+  let token: string;
+  try {
+    token = await getAccessToken(false, diagnostic
+      ? (cached) => diagnostic("token_preflight", undefined, undefined, cached) : undefined);
+  } catch (error) {
+    diagnostic?.("failed", undefined, "token_preflight");
+    throw error;
+  }
   lifetime.throwIfAborted();
   timedSignal.throwIfAborted();
   let response: Response;
@@ -127,7 +136,10 @@ async function orderPost(scope: OrderScope, tail: string, body: object | undefin
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    diagnostic?.("response_headers", response);
   } catch (error) {
+    diagnostic?.("failed", undefined, timedSignal.reason?.name === "TimeoutError" ? "timeout"
+      : signal.aborted || lifetime.aborted ? "aborted" : "network");
     if (signal.aborted || lifetime.aborted) throw error;
     if (timedSignal.aborted) throw new Error("订单操作超时，服务端是否提交尚未确认，请刷新后核对，不要直接重试。");
     throw new Error("订单请求未完成，请刷新后以服务端状态为准，勿盲目重复操作。");
@@ -140,6 +152,7 @@ async function orderPost(scope: OrderScope, tail: string, body: object | undefin
   lifetime.throwIfAborted();
   timedSignal.throwIfAborted();
   if (!response.ok) {
+    diagnostic?.("failed", response, value?.error);
     if (response.status === 401) {
       // Never automatically retry a POST whose commit outcome is unknown.
       await getAccessToken(true);
@@ -153,8 +166,10 @@ async function orderPost(scope: OrderScope, tail: string, body: object | undefin
   }
   if (!value || typeof value.saved !== "number" || typeof value.has_more !== "boolean" ||
     typeof value.next_offset !== "number") {
+    diagnostic?.("failed", response, "invalid_body");
     throw new Error("服务端已响应但结果无法确认，请刷新订单和同步位置。");
   }
+  diagnostic?.("response_body", response);
   return value;
 }
 export function syncOrders(scope: OrderScope, signal: AbortSignal) {

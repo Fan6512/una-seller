@@ -241,7 +241,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   };
 
   const performSync = async () => {
-    if (!scope || running || actionBusy || installingUpdate || store?.status !== "connected") return;
+    if (!scope || running || actionBusy || installingUpdate ||
+        (store?.status !== "connected" && store?.status !== "token_expired")) return;
     const endSync = beginSync();
     if (!endSync) return;
     const controller = new AbortController();
@@ -341,7 +342,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       .catch(() => setNotice("复制失败，请手动选择文字复制。"));
   };
 
-  const canSync = Boolean(scope && store?.status === "connected" && !installingUpdate);
+  const canSync = Boolean(scope &&
+    (store?.status === "connected" || store?.status === "token_expired") && !installingUpdate);
+  const disabledReason = !scope ? "请先选择已验证的店铺、站点和物流类型"
+    : store?.status === "reauth_required" ? "店铺需要重新授权，请到店铺管理处理"
+      : store?.status === "refresh_unknown" ? "令牌续签状态未知，请到店铺管理核实"
+        : installingUpdate ? "正在安装应用更新" : "当前店铺暂不可同步，请检查连接状态";
 
   return (
     <div className="orders-page">
@@ -353,11 +359,16 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
           ) : (
             <button type="button" className="orders-main-button" onClick={() => void performSync()}
-              disabled={!canSync || actionBusy}>{installingUpdate ? "正在安装更新" : "同步订单"}</button>
+              disabled={!canSync || actionBusy} title={!canSync ? disabledReason : undefined}>
+              {installingUpdate ? "正在安装更新" : "同步订单"}</button>
           )}
         </div>
       </div>
 
+      {store?.status === "token_expired" && <p className="orders-filter-note" role="status">
+        美客多访问令牌已到期。点击「同步订单」后服务端将尝试续签；若失败，请到「店铺管理」验证连接。
+      </p>}
+      {scope && !canSync && !installingUpdate && <p className="orders-filter-note" role="status">{disabledReason}</p>}
       <div className="orders-filters">
         <label>店铺
           <select aria-label="订单店铺" value={store?.id ?? ""} onChange={(event) => selectStore(event.target.value)}>
