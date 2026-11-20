@@ -74,7 +74,7 @@ func (s *Service) SaveOrderPurchase(ctx context.Context, owner, store string, sc
 	}
 	var record OrderPurchase
 	var amount sql.NullString
-	err := s.db.QueryRow(ctx, `WITH connection AS (` + orderConnection + ` FOR SHARE OF c)
+	err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+` FOR SHARE OF c)
  INSERT INTO app.meli_order_purchases
  (store_id,site_id,logistic_type,seller_id,order_id,purchase_order_id,cost_cny,cost_source)
  SELECT o.store_id,o.site_id,o.logistic_type,o.seller_id,o.order_id,$6,NULLIF($7,'')::numeric,'manual'
