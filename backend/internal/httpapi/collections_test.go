@@ -31,7 +31,7 @@ func TestDesktopStoreTimingOriginAndRoute(t *testing.T) {
 		{"POST", "/api/v1/stores/test/connection-check", "http://tauri.localhost", true},
 		{"GET", listing, "https://untrusted.example", false},
 		{"GET", listing, "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false},
-				{"GET", listing, "", false},
+		{"GET", listing, "", false},
 		{"OPTIONS", listing, "http://tauri.localhost", false},
 		{"POST", "/api/v1/stores/oauth/start", "http://tauri.localhost", false},
 	} {
