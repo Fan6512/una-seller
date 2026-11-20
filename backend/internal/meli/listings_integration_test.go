@@ -633,3 +633,85 @@ func TestPublishedListingsCompleteAndPartialSnapshots(t *testing.T) {
 		}
 	}
 }
+
+func TestPublishedDescriptionOnDemandIsScopedAndReadOnly(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	ctx := context.Background()
+	_, err := db.Exec(ctx, `UPDATE app.meli_store_connections
+		SET access_token_expires_at=now()+interval '30 minutes' WHERE id=$1::uuid`, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, listing := range []struct {
+		id, body string
+	}{
+		{"MLB1", `{"id":"MLB1","seller_id":"987654","cbt_item_id":"CBT1"}`},
+		{"MLB2", `{"id":"MLB2","seller_id":"987654"}`},
+		{"MLB3", `{"id":"MLB3","seller_id":"987654","cbt_item_id":"CBT3"}`},
+	} {
+		_, err := db.Exec(ctx, `INSERT INTO app.meli_published_listings
+			(store_id,site_id,logistic_type,listing_id,details)
+			VALUES ($1::uuid,'MLB','remote',$2,$3::jsonb)`,
+			store, listing.id, listing.body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer synthetic_old_access" {
+			t.Error("unexpected platform request method or credentials")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		switch r.URL.Path {
+		case "/marketplace/items/CBT1/description":
+			if r.URL.Query().Get("site_id") != "MLB" || r.URL.Query().Get("logistic_type") != "remote" {
+				t.Error("wrong description site scope")
+			}
+			fmt.Fprint(w, `{"plain_text":"Localized product description"}`)
+		case "/items/MLB2/description":
+			fmt.Fprint(w, `{"plain_text":"Fallback local item description"}`)
+		case "/marketplace/items/CBT3/description":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected platform description path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	s.apiURL = server.URL
+	scope := ListingScope{Site: "MLB", Logistic: "remote"}
+	for _, check := range []struct {
+		id, want string
+	}{
+		{"MLB1", "Localized product description"},
+		{"MLB2", "Fallback local item description"},
+	} {
+		got, err := s.GetPublishedDescription(ctx, owner, store, scope, check.id)
+		if err != nil || got != check.want {
+			t.Fatalf("read %s: got %q err %v", check.id, got, err)
+		}
+	}
+	before := calls.Load()
+	if _, err := s.GetPublishedDescription(ctx, "00000000-0000-4000-8000-000000000001", store, scope, "MLB1"); !errors.Is(err, ErrStoreNotFound) {
+		t.Fatalf("wrong owner: %v", err)
+	}
+	if _, err := s.GetPublishedDescription(ctx, owner, store, ListingScope{Site: "MLB", Logistic: "fulfillment"}, "MLB1"); !errors.Is(err, ErrSiteNotAuthorized) {
+		t.Fatalf("wrong site logistics: %v", err)
+	}
+	if _, err := s.GetPublishedDescription(ctx, owner, store, scope, "MLB999"); !errors.Is(err, ErrListingDescriptionMissing) {
+		t.Fatalf("unowned or missing listing: %v", err)
+	}
+	if _, err := s.GetPublishedDescription(ctx, owner, store, scope, "../foo"); !errors.Is(err, ErrListingResponse) {
+		t.Fatalf("invalid listing id: %v", err)
+	}
+	if calls.Load() != before {
+		t.Fatal("unauthorized or invalid reads reached the platform")
+	}
+	var platform ListingPlatformError
+	if _, err := s.GetPublishedDescription(ctx, owner, store, scope, "MLB3"); !errors.As(err, &platform) || int(platform) != http.StatusNotFound {
+		t.Fatalf("platform 404 not surfaced: %v", err)
+	}
+}

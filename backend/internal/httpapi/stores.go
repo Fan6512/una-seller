@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
@@ -35,17 +37,26 @@ func (a storeAPI) stores(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	authStart := time.Now()
 	owner, ok := a.requireOwner(w, r)
 	if !ok {
 		return
 	}
+	readStart := time.Now()
 	items, err := a.service.List(r.Context(), owner)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "stores unavailable")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	setStoreReadTiming(w, authStart, readStart)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func setStoreReadTiming(w http.ResponseWriter, authStart, readStart time.Time) {
+	w.Header().Set("Server-Timing", fmt.Sprintf("auth;dur=%.1f, read;dur=%.1f",
+		float64(readStart.Sub(authStart))/float64(time.Millisecond),
+		float64(time.Since(readStart))/float64(time.Millisecond)))
 }
 
 func (a storeAPI) start(w http.ResponseWriter, r *http.Request) {
@@ -70,10 +81,20 @@ func (a storeAPI) start(w http.ResponseWriter, r *http.Request) {
 // storeAction is a reusable ownership/status gate for store-scoped operations.
 // The platform Access Token never leaves Go, including on a successful check.
 func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
-	if store, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/published-listings"); ok && !strings.Contains(store, "/") {
+	descriptionParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/")
+	if len(descriptionParts) == 4 && descriptionParts[0] != "" && descriptionParts[1] == "published-listings" &&
+		descriptionParts[2] != "" && descriptionParts[3] == "description" {
 		owner, ok := a.requireOwner(w, r)
 		if ok {
-			a.publishedListings(w, r, owner, store)
+			a.publishedDescription(w, r, owner, descriptionParts[0], descriptionParts[2])
+		}
+		return
+	}
+	if store, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/published-listings"); ok && !strings.Contains(store, "/") {
+		authStart := time.Now()
+		owner, ok := a.requireOwner(w, r)
+		if ok {
+			a.publishedListings(w, r, owner, store, authStart)
 		}
 		return
 	}
@@ -176,7 +197,8 @@ func (a storeAPI) callback(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("<!doctype html><html lang='zh'><meta charset='utf-8'><title>授权成功</title><h2>美客多店铺授权成功</h2><p>可以关闭此页面，返回 Una Seller 点击刷新店铺。</p></html>"))
 }
 
-func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owner, store string) {
+func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owner, store string, authStart time.Time) {
+	readStart := time.Now()
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
@@ -225,6 +247,7 @@ func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owne
 		var page meli.ListingPage
 		page, err = a.service.ListPublished(r.Context(), owner, store, scope, offset)
 		if err == nil {
+			setStoreReadTiming(w, authStart, readStart)
 			writeJSON(w, http.StatusOK, page)
 			return
 		}

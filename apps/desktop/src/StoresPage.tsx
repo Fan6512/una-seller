@@ -1,28 +1,44 @@
-import { useCallback, useEffect, useState } from "react";
-import { checkStoreConnection, disconnectStore, listStores, startStoreAuthorization, type StoreConnection } from "./stores";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { cachedStores, checkStoreConnection, disconnectStore, ensureStoreConnection, listStores, startStoreAuthorization, type StoreConnection } from "./stores";
 
 const statusText: Record<StoreConnection["status"], string> = {
   connected: "已连接",
-  token_expired: "Token 可能过期，点击验证连接进行续签",
+  token_expired: "访问令牌已到期，系统会尝试续签",
   reauth_required: "需要重新授权",
   refresh_unknown: "续签状态待确认",
   disconnected: "已断开",
 };
 
 export default function StoresPage() {
-  const [items, setItems] = useState<StoreConnection[]>([]);
+  const [items, setItems] = useState<StoreConnection[]>(() => cachedStores() ?? []);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [authorizationURL, setAuthorizationURL] = useState("");
   const [notice, setNotice] = useState("");
+  const lifecycle = useRef<AbortController>(null);
+  const lastLoad = useRef(0);
 
-  const reload = useCallback(async (signal?: AbortSignal) => {
+  const reload = useCallback(async () => {
+    const signal = lifecycle.current?.signal;
+    if (!signal || signal.aborted) return;
+    lastLoad.current = Date.now();
     setLoading(true);
     setError("");
     try {
-      const result = await listStores(signal);
-      if (!signal?.aborted) setItems(result);
+      const result = await listStores();
+      if (signal.aborted) return;
+      setItems(result);
+      const expired = result.filter((item) => item.status === "token_expired");
+      if (expired.length) {
+        void Promise.allSettled(expired.map((item) => ensureStoreConnection(item.id, signal))).then((outcomes) => {
+          if (signal.aborted) return;
+          const fresh = cachedStores();
+          if (fresh) setItems(fresh);
+          const failure = outcomes.find((outcome) => outcome.status === "rejected");
+          if (failure) setError(failure.reason instanceof Error ? failure.reason.message : "暂时无法自动续签");
+        });
+      }
     } catch (e) {
       if (!signal?.aborted) setError(e instanceof Error ? e.message : "无法读取店铺");
     } finally {
@@ -32,8 +48,11 @@ export default function StoresPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void reload(controller.signal);
-    const onFocus = () => void reload();
+    lifecycle.current = controller;
+    void reload();
+    const onFocus = () => {
+      if (Date.now() - lastLoad.current >= 15_000) void reload();
+    };
     window.addEventListener("focus", onFocus);
     return () => {
       controller.abort();
@@ -75,11 +94,11 @@ export default function StoresPage() {
       setNotice(result.marketplaces_verified
         ? "Token 有效；获准站点映射已核实，具体刊登能力仍需验证。"
         : "Token 有效；站点映射尚未核实，不允许直接刊登。");
-      await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "检查授权失败");
-      await reload();
     } finally {
+      const fresh = cachedStores();
+      if (fresh) setItems(fresh);
       setBusy(false);
     }
   }
@@ -125,7 +144,8 @@ export default function StoresPage() {
         </div>
       )}
 
-      {loading ? <p className="loading-state">正在读取店铺…</p> : items.length === 0 ? (
+      {loading && !!items.length && <p role="status">正在更新店铺…</p>}
+      {loading && !items.length ? <p className="loading-state">正在读取店铺…</p> : items.length === 0 ? (
         <div className="store-empty">暂无已绑定店铺。点击“添加美客多店铺”启动官方 OAuth 授权。</div>
       ) : (
         <div className="store-grid">
@@ -144,7 +164,8 @@ export default function StoresPage() {
               </p>
               <p className="store-note">授权成功不代表商品刊登/订单接口已经实施；站点具体写入权限仍需验证。</p>
               <div className="store-actions">
-                <button type="button" className="refresh-button" disabled={busy} onClick={() => void authorize()}>重新授权</button>
+                {(item.status === "reauth_required" || item.status === "refresh_unknown" || item.status === "disconnected") &&
+                  <button type="button" className="refresh-button" disabled={busy} onClick={() => void authorize()}>重新授权</button>}
                 {item.status !== "disconnected" && (
                   <button type="button" className="refresh-button" disabled={busy} onClick={() => void check(item)}>验证连接</button>
                 )}
