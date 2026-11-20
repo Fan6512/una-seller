@@ -70,6 +70,7 @@ async function tokenRequest(grantType: "password" | "refresh_token", payload: ob
   try {
     response = await fetch(authBase + "/auth/v1/token?grant_type=" + grantType, {
       method: "POST",
+      signal: AbortSignal.timeout(8_000),
       headers: { "apikey": publishableKey, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       cache: "no-store",

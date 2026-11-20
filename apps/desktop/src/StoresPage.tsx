@@ -94,11 +94,11 @@ export default function StoresPage() {
       setNotice(result.marketplaces_verified
         ? "Token 有效；获准站点映射已核实，具体刊登能力仍需验证。"
         : "Token 有效；站点映射尚未核实，不允许直接刊登。");
-      await reload();
     } catch (e) {
-      await reload();
       setError(e instanceof Error ? e.message : "检查授权失败");
     } finally {
+      const fresh = cachedStores();
+      if (fresh) setItems(fresh);
       setBusy(false);
     }
   }

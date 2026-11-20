@@ -39,7 +39,7 @@ type StoreSession = {
   storesRevision: number;
   storeListeners: Set<(items: StoreConnection[]) => void>;
   checks: Map<string, Promise<{ status: string; marketplaces_verified: boolean }>>;
-  renewals: Map<string, { stamp: string; result: Promise<void> }>;
+  unconfirmedChecks: Set<string>;
   pages: Map<string, { page: ListingPage; expires: number }>;
   listingRevision: number;
 };
@@ -50,14 +50,14 @@ function storeSession(lifetime = authLifetime()) {
   let session = storeSessions.get(lifetime);
   if (!session) {
     const fresh: StoreSession = {
-      storesRevision: 0, storeListeners: new Set(), checks: new Map(), renewals: new Map(), pages: new Map(), listingRevision: 0,
+      storesRevision: 0, storeListeners: new Set(), checks: new Map(), unconfirmedChecks: new Set(), pages: new Map(), listingRevision: 0,
     };
     storeSessions.set(lifetime, fresh);
     lifetime.addEventListener("abort", () => {
       fresh.stores = undefined;
       fresh.pages.clear();
       fresh.checks.clear();
-      fresh.renewals.clear();
+      fresh.unconfirmedChecks.clear();
       fresh.storeListeners.clear();
       storeSessions.delete(lifetime);
     }, { once: true });
@@ -182,11 +182,17 @@ export function watchStoreList(listener: (items: StoreConnection[]) => void) {
   return () => { storeListeners.delete(listener); };
 }
 
-export function listStores(): Promise<StoreConnection[]> {
+export function listStores(fresh = false): Promise<StoreConnection[]> {
   const lifetime = authLifetime();
   const session = storeSession(lifetime);
+  if (fresh) {
+    session.storesRevision++;
+    session.storesRead = undefined;
+  }
   const revision = session.storesRevision;
-  session.storesRead ??= storeRequest<{ items: StoreConnection[] }>("/api/v1/stores", "GET", lifetime).then(({ items }) => {
+  session.storesRead ??= storeRequest<{ items: StoreConnection[] }>(
+    "/api/v1/stores", "GET", AbortSignal.any([lifetime, AbortSignal.timeout(8_000)]),
+  ).then(({ items }) => {
     if (session.storesRevision !== revision) return listStores();
     for (const previous of session.stores?.items ?? []) {
       const latest = items.find((item) => item.id === previous.id);
@@ -194,7 +200,7 @@ export function listStores(): Promise<StoreConnection[]> {
         latest.status !== "connected" && latest.status !== "token_expired")) {
         invalidateListingPages(previous.id, lifetime);
       }
-      if (!latest || latest.status === "disconnected") session.renewals.delete(previous.id);
+      if (!latest || latest.status === "disconnected") session.unconfirmedChecks.delete(previous.id);
     }
     session.stores = { items, expires: Date.now() + cacheTTL };
     for (const listener of session.storeListeners) listener(items);
@@ -223,38 +229,62 @@ export async function disconnectStore(id: string) {
   session.storesRead = undefined;
   const remaining = session.stores?.items.filter((item) => item.id !== id) ?? [];
   session.stores = { items: remaining, expires: Date.now() + cacheTTL };
-  session.renewals.delete(id);
+  session.unconfirmedChecks.delete(id);
   invalidateListingPages(id, lifetime);
   for (const listener of session.storeListeners) listener(remaining);
 }
 
-export function checkStoreConnection(id: string) {
+export function checkStoreConnection(id: string, manual = true) {
   const lifetime = authLifetime();
   const session = storeSession(lifetime);
   const active = session.checks.get(id);
   if (active) return active;
-  // A caller leaving a page must not cancel an already dispatched token rotation.
-  const check = storeRequest<{ status: string; marketplaces_verified: boolean }>(
-    "/api/v1/stores/" + encodeURIComponent(id) + "/connection-check", "POST",
-  ).then(async (result) => {
+
+  const read = async () => (await listStores(true)).find((item) => item.id === id);
+  const check = (async () => {
+    const unconfirmed = session.unconfirmedChecks.has(id);
+    if (manual || unconfirmed) {
+      const item = await read();
+      assertStoreCanRenew(item);
+      if (unconfirmed && item.status === "connected" && Date.parse(item.token_expires_at ?? "") > Date.now() + refreshAhead) {
+        session.unconfirmedChecks.delete(id);
+        return { status: item.status, marketplaces_verified: item.marketplaces_status === "verified" };
+      }
+    }
+
+    // The server lease guards rotation even when the client stops waiting.
+    let confirmedResponse = false;
+    let requestError: unknown;
+    try {
+      await storeRequest<{ status: string }>(
+        "/api/v1/stores/" + encodeURIComponent(id) + "/connection-check", "POST",
+        AbortSignal.any([lifetime, AbortSignal.timeout(25_000)]),
+      );
+      confirmedResponse = true;
+    } catch (error) {
+      lifetime.throwIfAborted();
+      requestError = error;
+    }
+    session.unconfirmedChecks.add(id);
+    const item = await read().catch(() => undefined);
     lifetime.throwIfAborted();
-    session.storesRevision++;
-    session.storesRead = undefined;
-    const updated = (await listStores()).find((store) => store.id === id);
-    if (updated?.status !== "connected" || !(Date.parse(updated.token_expires_at ?? "") > Date.now() + 10_000)) {
-      throw new Error("店铺连接状态尚未确认，请在店铺管理查看");
+    if (item?.status === "connected" &&
+        Date.parse(item.token_expires_at ?? "") > Date.now() + (confirmedResponse ? 10_000 : refreshAhead)) {
+      session.unconfirmedChecks.delete(id);
+      return { status: item.status, marketplaces_verified: item.marketplaces_status === "verified" };
     }
-    return result;
-  }, async (error: unknown) => {
-    if (error instanceof StoreRequestError && [403, 404, 409].includes(error.status) && !lifetime.aborted) {
-      session.storesRevision++;
-      session.storesRead = undefined;
-      await listStores().catch(() => {});
-    }
-    throw error;
-  }).finally(() => session.checks.delete(id));
+    if (item) assertStoreCanRenew(item);
+    if (requestError instanceof StoreRequestError) throw requestError;
+    throw new Error("续签结果尚未确认，请检查网络后在店铺管理点击验证连接");
+  })().finally(() => session.checks.delete(id));
   session.checks.set(id, check);
   return check;
+}
+
+function assertStoreCanRenew(item: StoreConnection | undefined): asserts item is StoreConnection {
+  if (!item || item.status === "disconnected") throw new Error("店铺已断开或无权访问");
+  if (item.status === "reauth_required") throw new Error(listingErrorMessage("listing_reauthorization"));
+  if (item.status === "refresh_unknown") throw new Error(listingErrorMessage("listing_refresh_unknown"));
 }
 
 export async function ensureStoreConnection(id: string, signal?: AbortSignal) {
@@ -264,26 +294,18 @@ export async function ensureStoreConnection(id: string, signal?: AbortSignal) {
   const item = (session.stores?.items ?? await listStores()).find((store) => store.id === id);
   lifetime.throwIfAborted();
   signal?.throwIfAborted();
-  if (!item || item.status === "disconnected") throw new Error("店铺已断开或无权访问");
-  if (item.status === "reauth_required") throw new Error(listingErrorMessage("listing_reauthorization"));
-  if (item.status === "refresh_unknown") throw new Error(listingErrorMessage("listing_refresh_unknown"));
-  if (item.status === "connected" && Date.parse(item.token_expires_at ?? "") > Date.now() + refreshAhead) return;
+  assertStoreCanRenew(item);
+  if (!session.unconfirmedChecks.has(id) && item.status === "connected" &&
+      Date.parse(item.token_expires_at ?? "") > Date.now() + refreshAhead) return;
 
-  const stamp = item.token_expires_at ?? item.updated_at;
-  let renewal = session.renewals.get(id);
-  if (renewal?.stamp !== stamp) {
-    const result = checkStoreConnection(id).then(() => {});
-    renewal = { stamp, result };
-    session.renewals.set(id, renewal);
-  }
+  const result = checkStoreConnection(id, false);
   if (!signal) {
-    await renewal.result;
+    await result;
   } else {
-    const result = renewal.result;
     await new Promise<void>((resolve, reject) => {
       const onAbort = () => reject(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
-      result.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+      result.then(() => resolve(), reject).finally(() => signal.removeEventListener("abort", onAbort));
     });
   }
   lifetime.throwIfAborted();

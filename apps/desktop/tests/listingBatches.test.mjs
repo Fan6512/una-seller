@@ -23,7 +23,7 @@ const hooks = registerHooks({
     return nextResolve(specifier, context);
   },
 });
-const { cachedStores, listStores, ensureStoreConnection, cachedListingPage, loadListingPage,
+const { cachedStores, listStores, checkStoreConnection, ensureStoreConnection, cachedListingPage, loadListingPage,
   disconnectStore, invalidateListingPages, storeRequest } = await import(storesURL);
 const { rejectSession } = await import(authURL);
 hooks.deregister();
@@ -156,24 +156,64 @@ test("store reads coalesce, then one detached renewal gates platform requests an
   ]);
 });
 
-test("transient, uncertain, and revoked checks stay distinct without repeated renewal or OAuth", async (t) => {
-  for (const [status, expected, finalStatus] of [
-    [0, /检查网络/, "token_expired"],
-    [409, /续签结果待确认/, "refresh_unknown"],
-    [403, /需要重新授权/, "reauth_required"],
+test("lost response is reconciled before a later retry or manual check", async (t) => {
+  for (const recovery of ["automatic", "manual", "already renewed", "timeout"]) {
+    rejectSession();
+    const calls = [];
+    let current = store;
+    const deadline = new AbortController();
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timer = t.mock.method(AbortSignal, "timeout", (ms) =>
+      recovery === "timeout" && ms === 25_000 ? deadline.signal : timeout(ms));
+    const fetch = t.mock.method(globalThis, "fetch", async (_url, { method, signal }) => {
+      calls.push(method);
+      if (method === "GET") return Response.json({ items: [current] });
+      if (calls.filter((call) => call === "POST").length === 1) {
+        if (recovery === "already renewed" || recovery === "timeout") current = freshStore();
+        if (recovery === "timeout") {
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            deadline.abort(new DOMException("deadline", "TimeoutError"));
+          });
+        }
+        throw new TypeError("Failed to fetch");
+      }
+      current = freshStore();
+      return Response.json({ status: "connected" });
+    });
+    await listStores();
+    if (recovery === "already renewed" || recovery === "timeout") {
+      await ensureStoreConnection(store.id);
+      assert.deepEqual(calls, ["GET", "POST", "GET"]);
+    } else {
+      await assert.rejects(ensureStoreConnection(store.id), /续签结果尚未确认/);
+      assert.deepEqual(calls, ["GET", "POST", "GET"]);
+      if (recovery === "manual") await checkStoreConnection(store.id);
+      else await ensureStoreConnection(store.id);
+      assert.deepEqual(calls, ["GET", "POST", "GET", "GET", "POST", "GET"]);
+    }
+    assert.equal(cachedStores()[0].status, "connected");
+    fetch.mock.restore();
+    timer.mock.restore();
+  }
+});
+
+test("terminal store states block automatic and manual rotation", async (t) => {
+  for (const [status, finalStatus, expected] of [
+    [409, "refresh_unknown", /续签状态待确认/],
+    [403, "reauth_required", /需要重新授权/],
   ]) {
     rejectSession();
     let posts = 0;
-    const fetch = t.mock.method(globalThis, "fetch", async (url, { method }) => {
+    const fetch = t.mock.method(globalThis, "fetch", async (_url, { method }) => {
       if (method === "GET") return Response.json({ items: [{ ...store, status: posts ? finalStatus : store.status }] });
-      assert.match(url, /\/connection-check$/);
       posts++;
-      if (!status) throw new TypeError("Failed to fetch");
       return Response.json({}, { status });
     });
     await listStores();
     await assert.rejects(ensureStoreConnection(store.id), expected);
-    await assert.rejects(ensureStoreConnection(store.id), status === 409 ? /续签状态待确认/ : expected);
+    await assert.rejects(ensureStoreConnection(store.id), expected);
+    await assert.rejects(checkStoreConnection(store.id), expected);
     assert.equal(posts, 1);
     assert.equal(cachedStores()[0].status, finalStatus);
     fetch.mock.restore();
