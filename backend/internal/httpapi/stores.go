@@ -81,6 +81,16 @@ func (a storeAPI) start(w http.ResponseWriter, r *http.Request) {
 // storeAction is a reusable ownership/status gate for store-scoped operations.
 // The platform Access Token never leaves Go, including on a successful check.
 func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
+	// Orders stay isolated from listing sync and desktop diagnostics.
+	orderPath := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/")
+	if len(orderPath) >= 2 && len(orderPath) <= 3 && orderPath[0] != "" && orderPath[1] == "orders" {
+		tail := ""
+		if len(orderPath) == 3 {
+			tail = orderPath[2]
+		}
+		a.orders(w, r, orderPath[0], tail)
+		return
+	}
 	descriptionParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/")
 	if len(descriptionParts) == 4 && descriptionParts[0] != "" && descriptionParts[1] == "published-listings" &&
 		descriptionParts[2] != "" && descriptionParts[3] == "description" {
