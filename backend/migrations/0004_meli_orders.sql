@@ -14,8 +14,19 @@ CREATE TABLE IF NOT EXISTS app.meli_orders (
     shipment_id text,
     order_items jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(order_items) = 'array'),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (store_id,site_id,logistic_type,order_id)
+    PRIMARY KEY (store_id,site_id,logistic_type,seller_id,order_id)
 );
+
+-- Upgrade the earlier Draft key so overlapping IDs can coexist across child sellers.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint
+        WHERE conrelid='app.meli_orders'::regclass AND conname='meli_orders_pkey'
+        AND pg_get_constraintdef(oid)='PRIMARY KEY (store_id, site_id, logistic_type, order_id)') THEN
+        ALTER TABLE app.meli_orders DROP CONSTRAINT meli_orders_pkey,
+            ADD PRIMARY KEY (store_id,site_id,logistic_type,seller_id,order_id);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS meli_orders_page_idx
 ON app.meli_orders (store_id,site_id,logistic_type,date_created DESC,order_id DESC);
@@ -40,7 +51,26 @@ CREATE TABLE IF NOT EXISTS app.meli_order_syncs (
 ALTER TABLE app.meli_order_syncs
     ADD COLUMN IF NOT EXISTS pending_order_ids text[] NOT NULL DEFAULT '{}',
     ADD COLUMN IF NOT EXISTS pending_page_count integer NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS pending_has_more boolean NOT NULL DEFAULT false;
+    ADD COLUMN IF NOT EXISTS pending_has_more boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS review_id uuid,
+    ADD COLUMN IF NOT EXISTS review_reason text CHECK (
+        (review_id IS NULL AND review_reason IS NULL) OR
+        (review_id IS NOT NULL AND review_reason IS NOT NULL
+            AND review_reason IN ('invalid_detail','detail_not_found') AND pending_order_ids[1] IS NOT NULL)
+    );
+
+CREATE TABLE IF NOT EXISTS app.meli_order_skips (
+    review_id uuid PRIMARY KEY,
+    store_id uuid NOT NULL REFERENCES app.meli_store_connections(id) ON DELETE CASCADE,
+    site_id text NOT NULL,
+    logistic_type text NOT NULL,
+    seller_id text NOT NULL,
+    order_id text NOT NULL CHECK (order_id ~ '^[0-9]{1,30}$'),
+    search_offset integer NOT NULL CHECK (search_offset >= 0),
+    reason text NOT NULL CHECK (reason IN ('invalid_detail','detail_not_found')),
+    skipped_at timestamptz NOT NULL DEFAULT now()
+);
 
 ALTER TABLE app.meli_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.meli_order_syncs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.meli_order_skips ENABLE ROW LEVEL SECURITY;

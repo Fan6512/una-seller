@@ -80,12 +80,14 @@ func containsBytes(data, fragment []byte) bool {
 }
 
 func TestOrderScopeAndStatusValidation(t *testing.T) {
-	for _, scope := range []OrderScope{{"CBT", ""}, {"MLB", ""}, {"mlb", "remote"}, {"MLB", "remote/sub"}} {
+	for _, scope := range []OrderScope{{"CBT", ""}, {"MLB", ""}, {"mlb", "remote"}, {"MLB", "remote/sub"}, {"ML1", "remote"},
+		{"ML A", "remote"}, {"M!A", "remote"}, {"MÉX", "remote"}, {"AA", "remote"}, {"ABCDEFGHI", "remote"}} {
 		if orderScopeValid(scope) {
 			t.Fatalf("accepted unsupported scope: %+v", scope)
 		}
 	}
-	if !orderScopeValid(OrderScope{Site: "MLB", Logistic: "fulfillment"}) {
+	if !orderScopeValid(OrderScope{Site: "MPE", Logistic: "fulfillment"}) ||
+		!orderScopeValid(OrderScope{Site: "SITEABCD", Logistic: "remote"}) {
 		t.Fatal("verified marketplace scope rejected")
 	}
 	if !ValidOrderStatus("paid") || !ValidOrderStatus("") || !ValidOrderStatus("payment_required") || !ValidOrderStatus("code2") ||
@@ -108,7 +110,11 @@ func TestOrderDetailRequiresConsistentSite(t *testing.T) {
 		{"conflicting context", `,"site_id":"MLB","context":{"site":"MLM"}`, false},
 		{"neither present", "", false},
 		{"context without site", `,"context":{"flows":["cbt"]}`, false},
-		{"null site", `,"site_id":null,"context":{"site":"MLB"}`, false},
+		{"null top level", `,"site_id":null,"context":{"site":"MLB"}`, true},
+		{"null context site", `,"site_id":"MLB","context":{"site":null}`, true},
+		{"both null", `,"site_id":null,"context":{"site":null}`, false},
+		{"invalid top level type", `,"site_id":123,"context":{"site":"MLB"}`, false},
+		{"null top level, wrong context", `,"site_id":null,"context":{"site":"MLM"}`, false},
 		{"empty context site", `,"site_id":"MLB","context":{"site":""}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,7 +238,7 @@ func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 	}
 	assertState(7, 1, "", false)
 	got, err = s.SyncOrders(ctx, owner, store, scope)
-	if err != nil || got != (OrderSyncResult{Saved: 1, Processed: 1, NextOffset: 2}) || searches.Load() != 2 {
+	if err != nil || got != (OrderSyncResult{Saved: 1, Processed: 1, NextOffset: 0}) || searches.Load() != 2 {
 		t.Fatalf("next page=%+v searches=%d error=%v", got, searches.Load(), err)
 	}
 	assertState(8, 0, "", true)
@@ -298,7 +304,7 @@ func TestOrderPostgresResetsCursorForNewSeller(t *testing.T) {
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/marketplace/orders/")
 		if newSearches.Load() != 0 {
-			// The same order ID must become readable even if the previous seller's version was newer.
+			// An overlapping order ID belongs to each seller's independent history.
 			fmt.Fprint(w, strings.ReplaceAll(orderTestDetail(id, "987655", "MPE"), "2026-11-01", "2026-10-31"))
 			return
 		}
@@ -339,6 +345,10 @@ func TestOrderPostgresResetsCursorForNewSeller(t *testing.T) {
 	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "201" || page.Items[0].LastUpdated.Day() != 31 {
 		t.Fatalf("unexpected new seller results, rows=%d error=%v", len(page.Items), err)
 	}
+	var retained int
+	if err = db.QueryRow(ctx, "SELECT count(*) FROM app.meli_orders WHERE store_id=$1::uuid AND seller_id='987654'", store).Scan(&retained); err != nil || retained != 3 {
+		t.Fatalf("old seller history count=%d error=%v", retained, err)
+	}
 	if _, err = s.GetOrder(ctx, owner, store, OrderScope{Site: "MLB", Logistic: "remote"}, "201"); !errors.Is(err, ErrOrderNotFound) {
 		t.Fatalf("order leaked to another site, got %v", err)
 	}
@@ -349,4 +359,157 @@ func TestOrderPostgresResetsCursorForNewSeller(t *testing.T) {
 
 func orderTestDetail(id, seller, site string) string {
 	return fmt.Sprintf(`{"id":%s,"seller":{"id":%s},"context":{"site":%q},"status":"payment_required","currency_id":"USD","total_amount":12.3400,"date_created":"2026-11-01T00:00:00Z","last_updated":"2026-11-01T01:00:00Z"}`, id, seller, site)
+}
+
+func TestOrderPostgresReviewAndSkip(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	const original = `[{ "user_id":987654,"site_id":"MLB","logistic_type":"remote"},{"user_id":987654,"site_id":"MPE","logistic_type":"remote"}]`
+	if _, err := db.Exec(ctx, "UPDATE app.meli_store_connections SET marketplaces=$2::jsonb,access_token_expires_at=now()+interval '30 minutes' WHERE id=$1::uuid", store, original); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	var firstFailure atomic.Int32
+	firstFailure.Store(http.StatusTooManyRequests)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		switch r.URL.Path {
+		case "/marketplace/orders/search":
+			if r.URL.Query().Get("site") == "MPE" {
+				fmt.Fprint(w, `{"results":[],"paging":{"total":0}}`)
+				return
+			}
+			switch r.URL.Query().Get("offset") {
+			case "0":
+				fmt.Fprint(w, `{"results":[{"orders":[{"id":101},{"id":102}]}],"paging":{"total":2}}`)
+			case "1":
+				fmt.Fprint(w, `{"results":[{"orders":[{"id":103},{"id":104}]}],"paging":{"total":2}}`)
+			default:
+				t.Error("unexpected offset")
+				w.WriteHeader(400)
+			}
+		case "/marketplace/orders/102":
+			switch status := firstFailure.Load(); status {
+			case 0:
+				fmt.Fprint(w, `{"invalid_json":`)
+			case -1:
+				<-r.Context().Done()
+			default:
+				w.WriteHeader(int(status))
+			}
+		case "/marketplace/orders/103":
+			w.WriteHeader(http.StatusNotFound)
+		case "/marketplace/orders/101", "/marketplace/orders/104":
+			fmt.Fprint(w, orderTestDetail(strings.TrimPrefix(r.URL.Path, "/marketplace/orders/"), "987654", "MLB"))
+		default:
+			t.Error("unexpected upstream request")
+			w.WriteHeader(400)
+		}
+	}))
+	defer server.Close()
+	s.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	const unknownReview = "00000000-0000-4000-8000-000000000001"
+	for _, transient := range []struct {
+		status int32
+		code   string
+	}{{429, "order_rate_limited"}, {503, "order_platform_unavailable"}, {-1, "order_timeout"}} {
+		firstFailure.Store(transient.status)
+		attempt, stop := context.WithTimeout(ctx, 500*time.Millisecond)
+		_, err := s.SyncOrders(attempt, owner, store, scope)
+		stop()
+		if OrderErrorCode(err) != transient.code {
+			t.Fatalf("expected %s, got %v", transient.code, err)
+		}
+		var flagged bool
+		if err = db.QueryRow(ctx, "SELECT review_id IS NOT NULL FROM app.meli_order_syncs WHERE store_id=$1::uuid", store).Scan(&flagged); err != nil || flagged {
+			t.Fatalf("transient failure was made skippable: flagged=%v err=%v", flagged, err)
+		}
+		if _, err = s.SkipOrder(ctx, owner, store, scope, "102", unknownReview, 0); !errors.Is(err, ErrOrderReviewConflict) {
+			t.Fatalf("transient failure skip got %v", err)
+		}
+	}
+
+	firstFailure.Store(0)
+	result, err := s.SyncOrders(ctx, owner, store, scope)
+	var review *OrderReview
+	if !errors.As(err, &review) || result.Saved != 1 || result.NextOffset != 0 ||
+		review.OrderID != "102" || review.Reason != "invalid_detail" || review.Offset != 0 || !validUUID(review.ReviewID) {
+		t.Fatalf("first review=%+v result=%+v error=%v", review, result, err)
+	}
+	if _, err = s.GetOrder(ctx, owner, store, scope, "101"); err != nil {
+		t.Fatalf("valid order prefix was not persisted: %v", err)
+	}
+	var pending string
+	var persistedOffset int
+	if err = db.QueryRow(ctx, `SELECT array_to_string(pending_order_ids,','),next_offset
+ FROM app.meli_order_syncs WHERE store_id=$1::uuid AND site_id='MLB'`, store).Scan(&pending, &persistedOffset); err != nil || pending != "102" || persistedOffset != 0 {
+		t.Fatalf("review did not preserve the pending row and offset: pending=%q offset=%d error=%v", pending, persistedOffset, err)
+	}
+	before := calls.Load()
+	var repeated *OrderReview
+	_, err = s.SyncOrders(ctx, owner, store, scope)
+	if !errors.As(err, &repeated) || *repeated != *review || calls.Load() != before {
+		t.Fatalf("unconfirmed review attempted to advance: %v", err)
+	}
+	if other, err := s.SyncOrders(ctx, owner, store, OrderScope{Site: "MPE", Logistic: "remote"}); err != nil || other.HasMore || other.NextOffset != 0 {
+		t.Fatalf("review blocked another site: %+v %v", other, err)
+	}
+
+	for _, invalid := range []struct {
+		owner, orderID string
+		offset         int
+	}{
+		{owner, "104", 0}, {owner, "102", 1}, {unknownReview, "102", 0},
+	} {
+		if _, err = s.SkipOrder(ctx, invalid.owner, store, scope, invalid.orderID, review.ReviewID, invalid.offset); !errors.Is(err, ErrOrderReviewConflict) {
+			t.Fatalf("invalid skip got %v", err)
+		}
+	}
+	if _, err = db.Exec(ctx, `UPDATE app.meli_store_connections
+ SET marketplaces=jsonb_set(marketplaces,'{0,user_id}','987655') WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SkipOrder(ctx, owner, store, scope, "102", review.ReviewID, 0); !errors.Is(err, ErrOrderReviewConflict) {
+		t.Fatalf("cross-seller skip got %v", err)
+	}
+	if _, err = db.Exec(ctx, "UPDATE app.meli_store_connections SET marketplaces=$2::jsonb WHERE id=$1::uuid", store, original); err != nil {
+		t.Fatal(err)
+	}
+	result, err = s.SkipOrder(ctx, owner, store, scope, "102", review.ReviewID, 0)
+	if err != nil || !result.HasMore || result.NextOffset != 1 {
+		t.Fatalf("skip should complete the first page: %+v %v", result, err)
+	}
+
+	_, err = s.SyncOrders(ctx, owner, store, scope)
+	var last *OrderReview
+	if !errors.As(err, &last) || last.OrderID != "103" || last.Reason != "detail_not_found" || last.Offset != 1 {
+		t.Fatalf("second page review=%+v error=%v", last, err)
+	}
+	if _, err = s.SkipOrder(ctx, owner, store, scope, "103", review.ReviewID, 1); !errors.Is(err, ErrOrderReviewConflict) {
+		t.Fatalf("old review ID applied to a new order: %v", err)
+	}
+	result, err = s.SkipOrder(ctx, owner, store, scope, "103", last.ReviewID, 1)
+	if err != nil || !result.HasMore || result.NextOffset != 1 {
+		t.Fatalf("skip advanced past unprocessed order: %+v %v", result, err)
+	}
+	if _, err = s.SkipOrder(ctx, owner, store, scope, "103", last.ReviewID, 1); !errors.Is(err, ErrOrderReviewConflict) {
+		t.Fatalf("skip replay got %v", err)
+	}
+	result, err = s.SyncOrders(ctx, owner, store, scope)
+	if err != nil || result.Saved != 1 || result.HasMore || result.NextOffset != 0 {
+		t.Fatalf("last batch=%+v error=%v", result, err)
+	}
+	var audit string
+	if err = db.QueryRow(ctx, `SELECT next_offset, (SELECT string_agg(order_id||':'||reason,',' ORDER BY order_id)
+ FROM app.meli_order_skips WHERE store_id=$1::uuid AND site_id='MLB' AND seller_id='987654')
+ FROM app.meli_order_syncs WHERE store_id=$1::uuid AND site_id='MLB'`, store).Scan(&persistedOffset, &audit); err != nil ||
+		persistedOffset != result.NextOffset || audit != "102:invalid_detail,103:detail_not_found" {
+		t.Fatalf("offset=%d audit=%q error=%v", persistedOffset, audit, err)
+	}
+	page, err := s.ListOrders(ctx, owner, store, scope, "", 0)
+	if err != nil || len(page.Items) != 2 || page.Items[0].ID != "104" || page.Items[1].ID != "101" {
+		t.Fatalf("skip lost valid details, page=%+v error=%v", page, err)
+	}
 }

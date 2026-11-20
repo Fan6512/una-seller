@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -22,7 +23,10 @@ var (
 	ErrOrderBusy                 = errors.New("order sync already running")
 	ErrOrderInvalidResponse      = errors.New("invalid order response")
 	ErrOrderAuthorizationChanged = errors.New("order authorization changed")
+	ErrOrderReviewConflict       = errors.New("order review no longer matches")
+	ErrOrderSkipInvalid          = errors.New("invalid order skip request")
 	ErrOrderNotFound             = errors.New("order not found")
+	orderSitePattern             = regexp.MustCompile(`^[A-Z]{3,8}$`)
 	orderNumberPattern           = regexp.MustCompile(`^[0-9]{1,30}$`)
 	orderAmountPattern           = regexp.MustCompile(`^[0-9]{1,16}(\.[0-9]{1,8})?$`)
 )
@@ -65,6 +69,15 @@ type OrderSyncResult struct {
 	NextOffset int  `json:"next_offset"`
 }
 
+type OrderReview struct {
+	OrderID  string `json:"order_id"`
+	ReviewID string `json:"review_id"`
+	Offset   int    `json:"offset"`
+	Reason   string `json:"reason"`
+}
+
+func (r *OrderReview) Error() string { return "order_needs_review" }
+
 type orderCursor struct {
 	LeaseID      string
 	From         time.Time
@@ -73,12 +86,12 @@ type orderCursor struct {
 	PendingIDs   []string
 	PendingCount int
 	PendingMore  bool
+	ReviewID     string
+	ReviewReason string
 }
 
 func orderScopeValid(scope OrderScope) bool {
-	return scope.Site != "" && scope.Site != "CBT" && scope.Logistic != "" &&
-		len(scope.Site) >= 3 && len(scope.Site) <= 8 && len(scope.Logistic) <= 40 &&
-		strings.ToUpper(scope.Site) == scope.Site && strings.TrimSpace(scope.Site) == scope.Site &&
+	return scope.Site != "CBT" && orderSitePattern.MatchString(scope.Site) && len(scope.Logistic) <= 40 &&
 		regexp.MustCompile(`^[a-z_]+$`).MatchString(scope.Logistic)
 }
 
@@ -166,16 +179,19 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 		!orderAmountPattern.MatchString(payload.TotalAmount.String()) {
 		return OrderRecord{}, ErrOrderInvalidResponse
 	}
-	if payload.SiteID == nil && payload.Context.Site == nil {
-		return OrderRecord{}, ErrOrderInvalidResponse
-	}
+	matchedSite := false
 	for _, field := range []json.RawMessage{payload.SiteID, payload.Context.Site} {
-		if field != nil {
-			var reportedSite string
-			if json.Unmarshal(field, &reportedSite) != nil || reportedSite == "" || reportedSite != site {
-				return OrderRecord{}, ErrOrderInvalidResponse
-			}
+		if field == nil || string(field) == "null" {
+			continue
 		}
+		var reportedSite string
+		if json.Unmarshal(field, &reportedSite) != nil || reportedSite == "" || reportedSite != site {
+			return OrderRecord{}, ErrOrderInvalidResponse
+		}
+		matchedSite = true
+	}
+	if !matchedSite {
+		return OrderRecord{}, ErrOrderInvalidResponse
 	}
 	created, err := time.Parse(time.RFC3339Nano, payload.DateCreated)
 	if err != nil {
@@ -232,6 +248,25 @@ const orderConnection = `SELECT c.id,c.status,m.value->>'user_id' AS child_id
    ON c.marketplaces_status='verified' AND m.value->>'site_id'=$3 AND m.value->>'logistic_type'=$4
  WHERE c.id=$1::uuid AND c.owner_user_id=$2::uuid`
 
+const orderSyncScope = ` FROM connection c
+ JOIN app.meli_order_syncs sync ON sync.store_id=c.id AND sync.seller_id=c.child_id
+ WHERE c.status<>'disconnected' AND sync.site_id=$3 AND sync.logistic_type=$4`
+
+func (s *Service) currentOrderReview(ctx context.Context, owner, store string, scope OrderScope) error {
+	var review OrderReview
+	err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+`)
+ SELECT sync.pending_order_ids[1],sync.review_id::text,sync.next_offset,sync.review_reason`+orderSyncScope+`
+ AND sync.review_id IS NOT NULL`, store, owner, scope.Site, scope.Logistic).
+		Scan(&review.OrderID, &review.ReviewID, &review.Offset, &review.Reason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return &review
+}
+
 func (s *Service) acquireOrderCursor(ctx context.Context, owner, store string, scope OrderScope, seller string) (orderCursor, error) {
 	var cursor orderCursor
 	err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+` FOR SHARE OF c)
@@ -250,11 +285,14 @@ ON CONFLICT (store_id,site_id,logistic_type) DO UPDATE
      last_synced_at=CASE WHEN sync.seller_id=EXCLUDED.seller_id THEN sync.last_synced_at END,
      pending_order_ids=CASE WHEN sync.seller_id<>EXCLUDED.seller_id THEN '{}' ELSE sync.pending_order_ids END,
      pending_page_count=CASE WHEN sync.seller_id<>EXCLUDED.seller_id THEN 0 ELSE sync.pending_page_count END,
-     pending_has_more=sync.seller_id=EXCLUDED.seller_id AND sync.pending_has_more
+     pending_has_more=sync.seller_id=EXCLUDED.seller_id AND sync.pending_has_more,
+     review_id=CASE WHEN sync.seller_id=EXCLUDED.seller_id THEN sync.review_id END,
+     review_reason=CASE WHEN sync.seller_id=EXCLUDED.seller_id THEN sync.review_reason END
  WHERE sync.lease_until IS NULL OR sync.lease_until<now()
-RETURNING lease_id::text,window_from,window_to,next_offset,pending_order_ids,pending_page_count,pending_has_more`,
+RETURNING lease_id::text,window_from,window_to,next_offset,pending_order_ids,pending_page_count,pending_has_more,
+ COALESCE(review_id::text,''),COALESCE(review_reason,'')`,
 		store, owner, scope.Site, scope.Logistic, seller).Scan(&cursor.LeaseID, &cursor.From, &cursor.To, &cursor.Offset,
-		&cursor.PendingIDs, &cursor.PendingCount, &cursor.PendingMore)
+		&cursor.PendingIDs, &cursor.PendingCount, &cursor.PendingMore, &cursor.ReviewID, &cursor.ReviewReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return orderCursor{}, ErrOrderBusy
 	}
@@ -274,6 +312,12 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 	if !orderScopeValid(scope) {
 		return OrderSyncResult{}, ErrSiteNotAuthorized
 	}
+	if !validUUID(store) {
+		return OrderSyncResult{}, ErrStoreNotFound
+	}
+	if err := s.currentOrderReview(ctx, owner, store, scope); err != nil {
+		return OrderSyncResult{}, err
+	}
 	auth, childID, err := s.RequireSiteConnection(ctx, owner, store, scope.Site, scope.Logistic)
 	if err != nil {
 		return OrderSyncResult{}, err
@@ -286,10 +330,15 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 		return OrderSyncResult{}, err
 	}
 	defer s.releaseOrderCursor(store, scope, cursor.LeaseID)
+	if cursor.ReviewID != "" {
+		return OrderSyncResult{}, &OrderReview{
+			OrderID: cursor.PendingIDs[0], ReviewID: cursor.ReviewID, Offset: cursor.Offset, Reason: cursor.ReviewReason,
+		}
+	}
 
 	fetchCtx, cancelFetch := context.WithTimeout(ctx, 15*time.Second)
 	defer cancelFetch()
-	ids, count, hasNextPage := cursor.PendingIDs, cursor.PendingCount, cursor.PendingMore
+	ids := cursor.PendingIDs
 	if len(ids) == 0 {
 		query := url.Values{
 			"seller.id":         {childID},
@@ -306,17 +355,25 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 			return OrderSyncResult{}, err
 		}
 		var total int
-		ids, total, count, err = parseOrderSearch(search, childID, cursor.Offset)
+		ids, total, cursor.PendingCount, err = parseOrderSearch(search, childID, cursor.Offset)
 		if err != nil {
 			return OrderSyncResult{}, err
 		}
-		hasNextPage = cursor.Offset+count < total
+		cursor.PendingMore = cursor.Offset+cursor.PendingCount < total
 	}
 	batchSize := min(orderDetailBatchSize, len(ids))
 	records := make([]OrderRecord, 0, batchSize)
 	for _, id := range ids[:batchSize] {
 		var raw json.RawMessage
-		_, err = s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw, nil)
+		status, err := s.listingGET(fetchCtx, auth.AccessToken, "/marketplace/orders/"+id, &raw, nil)
+		if status == http.StatusNotFound {
+			cursor.ReviewReason = "detail_not_found"
+			break
+		}
+		if errors.Is(err, ErrListingResponse) {
+			cursor.ReviewReason = "invalid_detail"
+			break
+		}
 		if err != nil {
 			// A provider timeout can leave a fetched prefix or a newly discovered page.
 			// Preserve it only while the caller's context is still active.
@@ -328,35 +385,35 @@ func (s *Service) SyncOrders(ctx context.Context, owner, store string, scope Ord
 		}
 		record, parseErr := parseOrderDetail(raw, id, childID, scope.Site)
 		if parseErr != nil {
-			return OrderSyncResult{}, parseErr
+			cursor.ReviewReason = "invalid_detail"
+			break
 		}
 		records = append(records, record)
 	}
 	if ctx.Err() != nil {
 		return OrderSyncResult{}, ctx.Err()
 	}
-	remaining := ids[len(records):]
-	pageComplete := len(remaining) == 0
-	result := OrderSyncResult{Saved: len(records), HasMore: !pageComplete || hasNextPage, NextOffset: cursor.Offset}
-	if pageComplete {
-		result.Processed = count
-		result.NextOffset += count
-		count = 0
-		hasNextPage = false
+	cursor.PendingIDs = ids[len(records):]
+	if cursor.ReviewReason != "" {
+		cursor.ReviewID = cursor.LeaseID
 	}
-	if err = s.saveOrderBatch(ctx, owner, store, scope, auth.SellerID, childID, cursor, records,
-		result.NextOffset, pageComplete && !result.HasMore, remaining, count, hasNextPage); err != nil {
+	result, err := s.saveOrderBatch(ctx, owner, store, scope, auth.SellerID, childID, cursor, records)
+	if err != nil {
 		return OrderSyncResult{}, err
+	}
+	if cursor.ReviewID != "" {
+		return result, &OrderReview{
+			OrderID: cursor.PendingIDs[0], ReviewID: cursor.ReviewID, Offset: result.NextOffset, Reason: cursor.ReviewReason,
+		}
 	}
 	return result, nil
 }
 
 func (s *Service) saveOrderBatch(ctx context.Context, owner, store string, scope OrderScope,
-	globalSeller, childSeller string, cursor orderCursor, records []OrderRecord, next int, windowComplete bool,
-	remaining []string, pendingCount int, pendingHasMore bool) error {
+	globalSeller, childSeller string, cursor orderCursor, records []OrderRecord) (OrderSyncResult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return err
+		return OrderSyncResult{}, err
 	}
 	defer tx.Rollback(ctx)
 	var seller, status, marketStatus string
@@ -365,12 +422,12 @@ func (s *Service) saveOrderBatch(ctx context.Context, owner, store string, scope
 WHERE id=$1::uuid AND owner_user_id=$2::uuid FOR SHARE`, store, owner).
 		Scan(&seller, &status, &marketStatus, &rawMarkets)
 	if err != nil {
-		return ErrOrderAuthorizationChanged
+		return OrderSyncResult{}, ErrOrderAuthorizationChanged
 	}
 	var markets []Marketplace
 	if json.Unmarshal(rawMarkets, &markets) != nil || seller != globalSeller ||
 		status != "connected" || marketStatus != "verified" {
-		return ErrOrderAuthorizationChanged
+		return OrderSyncResult{}, ErrOrderAuthorizationChanged
 	}
 	allowed := false
 	for _, m := range markets {
@@ -379,7 +436,7 @@ WHERE id=$1::uuid AND owner_user_id=$2::uuid FOR SHARE`, store, owner).
 		}
 	}
 	if !allowed {
-		return ErrOrderAuthorizationChanged
+		return OrderSyncResult{}, ErrOrderAuthorizationChanged
 	}
 	var offset int
 	var from, to time.Time
@@ -387,40 +444,110 @@ WHERE id=$1::uuid AND owner_user_id=$2::uuid FOR SHARE`, store, owner).
 WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND seller_id=$4 AND lease_id=$5::uuid AND lease_until>now() FOR UPDATE`,
 		store, scope.Site, scope.Logistic, childSeller, cursor.LeaseID).Scan(&offset, &from, &to)
 	if err != nil || offset != cursor.Offset || !from.Equal(cursor.From) || !to.Equal(cursor.To) {
-		return ErrOrderBusy
+		return OrderSyncResult{}, ErrOrderBusy
 	}
 	for _, rec := range records {
 		items, jsonErr := json.Marshal(rec.Items)
 		if jsonErr != nil {
-			return jsonErr
+			return OrderSyncResult{}, jsonErr
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO app.meli_orders
 (store_id,site_id,logistic_type,seller_id,order_id,pack_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,order_items)
 VALUES($1::uuid,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9::numeric,$10,$11,NULLIF($12,''),$13::jsonb)
-ON CONFLICT (store_id,site_id,logistic_type,order_id) DO UPDATE
-SET seller_id=EXCLUDED.seller_id,pack_id=EXCLUDED.pack_id,status=EXCLUDED.status,currency_id=EXCLUDED.currency_id,
+ON CONFLICT (store_id,site_id,logistic_type,seller_id,order_id) DO UPDATE
+SET pack_id=EXCLUDED.pack_id,status=EXCLUDED.status,currency_id=EXCLUDED.currency_id,
 total_amount=EXCLUDED.total_amount,date_created=EXCLUDED.date_created,
 last_updated=EXCLUDED.last_updated,shipment_id=EXCLUDED.shipment_id,
 order_items=EXCLUDED.order_items,updated_at=now()
-WHERE app.meli_orders.seller_id<>EXCLUDED.seller_id OR app.meli_orders.last_updated<=EXCLUDED.last_updated`,
+WHERE app.meli_orders.last_updated<=EXCLUDED.last_updated`,
 			store, scope.Site, scope.Logistic, childSeller, rec.ID, rec.PackID, rec.Status,
 			rec.CurrencyID, rec.TotalAmount, rec.DateCreated, rec.LastUpdated, rec.ShipmentID, string(items))
 		if err != nil {
-			return err
+			return OrderSyncResult{}, err
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE app.meli_order_syncs
-SET next_offset=CASE WHEN $6 THEN 0 ELSE $5 END,
- last_completed_to=CASE WHEN $6 THEN window_to ELSE last_completed_to END,
- window_from=CASE WHEN NOT $6 THEN window_from END,window_to=CASE WHEN NOT $6 THEN window_to END,
- pending_order_ids=$7,pending_page_count=$8,pending_has_more=$9,
- last_synced_at=now(),lease_id=NULL,lease_until=NULL
-WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND lease_id=$4::uuid`,
-		store, scope.Site, scope.Logistic, cursor.LeaseID, next, windowComplete, remaining, pendingCount, pendingHasMore)
+	result, err := updateOrderProgress(ctx, tx, store, scope, cursor)
 	if err != nil {
-		return err
+		return OrderSyncResult{}, err
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return OrderSyncResult{}, err
+	}
+	result.Saved = len(records)
+	return result, nil
+}
+
+// updateOrderProgress requires the caller to hold the sync row lock.
+func updateOrderProgress(ctx context.Context, tx pgx.Tx, store string, scope OrderScope, cursor orderCursor) (OrderSyncResult, error) {
+	pageComplete := len(cursor.PendingIDs) == 0
+	result := OrderSyncResult{HasMore: !pageComplete || cursor.PendingMore}
+	next := cursor.Offset
+	if pageComplete {
+		next += cursor.PendingCount
+		result.Processed = cursor.PendingCount
+		cursor.PendingCount = 0
+		cursor.PendingMore = false
+	}
+	err := tx.QueryRow(ctx, `UPDATE app.meli_order_syncs
+SET next_offset=CASE WHEN $5 THEN 0 ELSE $4 END,
+ last_completed_to=CASE WHEN $5 THEN window_to ELSE last_completed_to END,
+ window_from=CASE WHEN NOT $5 THEN window_from END,window_to=CASE WHEN NOT $5 THEN window_to END,
+ pending_order_ids=$6,pending_page_count=$7,pending_has_more=$8,
+ review_id=NULLIF($9,'')::uuid,review_reason=NULLIF($10,''),
+ last_synced_at=now(),lease_id=NULL,lease_until=NULL
+WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3
+RETURNING next_offset`,
+		store, scope.Site, scope.Logistic, next, !result.HasMore, cursor.PendingIDs, cursor.PendingCount, cursor.PendingMore,
+		cursor.ReviewID, cursor.ReviewReason).Scan(&result.NextOffset)
+	return result, err
+}
+
+func (s *Service) SkipOrder(ctx context.Context, owner, store string, scope OrderScope,
+	orderID, reviewID string, offset int) (OrderSyncResult, error) {
+	if !validUUID(store) {
+		return OrderSyncResult{}, ErrStoreNotFound
+	}
+	if !orderScopeValid(scope) {
+		return OrderSyncResult{}, ErrSiteNotAuthorized
+	}
+	if !orderNumber(orderID) || !validUUID(reviewID) || offset < 0 || offset > 1<<31-1 {
+		return OrderSyncResult{}, ErrOrderSkipInvalid
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	cursor := orderCursor{Offset: offset}
+	var seller, reason string
+	err = tx.QueryRow(ctx, `WITH connection AS (`+orderConnection+` FOR SHARE OF c)
+ SELECT sync.pending_order_ids,sync.pending_page_count,sync.pending_has_more,sync.review_reason,sync.seller_id`+orderSyncScope+`
+ AND sync.pending_order_ids[1]=$5 AND sync.review_id=$6::uuid AND sync.next_offset=$7
+ AND (sync.lease_until IS NULL OR sync.lease_until<now()) FOR UPDATE OF sync`,
+		store, owner, scope.Site, scope.Logistic, orderID, reviewID, offset).
+		Scan(&cursor.PendingIDs, &cursor.PendingCount, &cursor.PendingMore, &reason, &seller)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrderSyncResult{}, ErrOrderReviewConflict
+	}
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO app.meli_order_skips
+ (review_id,store_id,site_id,logistic_type,seller_id,order_id,search_offset,reason)
+ VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8)`,
+		reviewID, store, scope.Site, scope.Logistic, seller, orderID, offset, reason)
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	cursor.PendingIDs = cursor.PendingIDs[1:]
+	result, err := updateOrderProgress(ctx, tx, store, scope, cursor)
+	if err != nil {
+		return OrderSyncResult{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return OrderSyncResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) authorizeOrderRead(ctx context.Context, owner, store string, scope OrderScope) error {
@@ -528,7 +655,14 @@ func (s *Service) GetOrder(ctx context.Context, owner, store string,
 // A fixed, non-sensitive set of platform failure groups is enough for client UX.
 func OrderErrorCode(err error) string {
 	var platform ListingPlatformError
+	var review *OrderReview
 	switch {
+	case errors.As(err, &review):
+		return "order_needs_review"
+	case errors.Is(err, ErrOrderReviewConflict):
+		return "order_review_conflict"
+	case errors.Is(err, ErrOrderSkipInvalid):
+		return "order_skip_invalid"
 	case errors.Is(err, ErrStoreNotFound), errors.Is(err, ErrOrderNotFound):
 		return "order_not_found"
 	case errors.Is(err, ErrSiteNotAuthorized):
