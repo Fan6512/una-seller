@@ -24,9 +24,29 @@ const hooks = registerHooks({
   },
 });
 const { cachedStores, listStores, checkStoreConnection, ensureStoreConnection, cachedListingPage, loadListingPage,
-  disconnectStore, invalidateListingPages, storeRequest } = await import(storesURL);
-const { rejectSession } = await import(authURL);
+  disconnectStore, invalidateListingPages, storeRequest, readableStoreError, watchStoreList } = await import(storesURL);
+const { rejectSession, authLifetime } = await import(authURL);
 hooks.deregister();
+
+test("8-second timeout has an actionable Chinese message", () => {
+  assert.equal(readableStoreError(new DOMException("signal timed out", "TimeoutError"), "无法读取店铺"),
+    "请求超时，请检查网络后重试");
+  assert.equal(readableStoreError(new Error("已有中文错误"), "fallback"), "已有中文错误");
+  assert.equal(readableStoreError(null, "fallback"), "fallback");
+});
+
+test("cached reads and watchers are safe during synchronous session abort", () => {
+  const oldLifetime = authLifetime();
+  let observed = false;
+  oldLifetime.addEventListener("abort", () => {
+    observed = true;
+    assert.equal(cachedStores(), undefined);
+    assert.equal(cachedListingPage("/api/v1/stores/test/published-listings"), undefined);
+    assert.doesNotThrow(() => watchStoreList(() => {})());
+  }, { once: true });
+  rejectSession();
+  assert.equal(observed, true);
+});
 
 const batch = (offset) => ({
   saved: 4, processed: 5, skipped: 1, needs_review: 0, partial: 0,
