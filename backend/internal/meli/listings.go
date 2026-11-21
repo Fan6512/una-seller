@@ -827,6 +827,9 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	if strings.HasPrefix(path, "/marketplace/shipments/") && strings.HasSuffix(path, "/sla") {
+		req.Header.Set("x-format-new", "true")
+	}
 	var written atomic.Bool
 	if timing == nil {
 		timing = &listingGETTiming{}

@@ -11,7 +11,8 @@ const fixture = String.raw`
 import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import OrdersPage from "/src/OrdersPage.tsx";
+import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
+import { orderStatusLabel, shouldApplyOrderRefresh, shouldStopSLABatch } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -33,14 +34,28 @@ const stores = ["one", "two"].map((id) => ({
 const deferred = [];
 const purchaseRequests = [];
 const purchaseFilters = [];
-const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD" };
+const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD",
+  shipment_id: "87123456" };
+let slaFetchCount = 0;
 window.fetch = (path, options) => {
   const { pathname } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
+  if (pathname.endsWith("/orders/102/sla")) {
+    slaFetchCount++;
+    order.dispatch_deadline = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    order.dispatch_sla_status = "on_time";
+    order.dispatch_checked_at = new Date().toISOString();
+    return Promise.resolve(Response.json(order));
+  }
+  if (pathname.endsWith("/orders/102/refresh")) {
+    order.status = "partially_refunded";
+    return Promise.resolve(Response.json(order));
+  }
   if (pathname.endsWith("/orders")) {
     const filter = new URL(path, location.href).searchParams.get("purchase") ?? "";
     purchaseFilters.push(filter);
-    const linked = { ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16" };
+    const linked = { ...order, order_id: "103", shipment_id: "",
+      purchase_order_id: "12345678", purchase_cost_cny: "16" };
     const rows = filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked];
     return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: filter }));
   }
@@ -200,6 +215,56 @@ try {
   assert(sheet?.open, "purchase dialog closed unexpectedly");
   flushSync(() => document.querySelector('button[aria-label="关闭采购关联"]').click());
   await waitFor(() => !sheet.open, "purchase dialog did not close");
+
+  // Preserve both existing purchase filters and the new SLA/refund behavior.
+  assert(orderStatusLabel("partially_refunded") === "部分退款", "partial refund label missing");
+  assert(shouldApplyOrderRefresh("102", "102", false), "same order refresh must apply");
+  assert(!shouldApplyOrderRefresh("102", "103", false), "stale A must not replace selected B");
+  assert(!shouldApplyOrderRefresh("102", "102", true), "aborted request must not apply");
+  assert(shouldStopSLABatch(502, "order_platform_unavailable"), "upstream 502 must stop");
+  assert(shouldStopSLABatch(504, "order_timeout"), "timeout must stop");
+  assert(shouldStopSLABatch(429, "order_rate_limited"), "429 must stop");
+  assert(shouldStopSLABatch(0, ""), "network loss must stop");
+  assert(!shouldStopSLABatch(404, "order_sla_no_shipment"), "one no-shipment row may be skipped");
+  const now = Date.UTC(2026, 10, 21, 0, 0);
+  const sample = (hours, status = "on_time") => ({
+    ...order, status: "paid", dispatch_sla_status: status,
+    dispatch_deadline: new Date(now + hours * 3600_000).toISOString(),
+  });
+  assert(dispatchDeadlineLabel(sample(24), now, "remote").state === "neutral",
+    "24h must not be red");
+  assert(dispatchDeadlineLabel(sample(23.9), now, "remote").state === "late",
+    "under 24h must be red");
+  assert(dispatchDeadlineLabel(sample(0.5), now, "remote").countdown === "不足1小时",
+    "under 1h boundary lost");
+  assert(dispatchDeadlineLabel({ ...sample(72, "delayed"), dispatch_deadline: undefined },
+    now, "remote").countdown === "平台标记逾期", "official delay without date lost");
+  assert(dispatchDeadlineLabel(sample(72), now, "fulfillment").countdown === "不适用",
+    "fulfillment incorrectly displays SLA");
+  assert(slaFetchCount === 0, "SLA must not run automatically");
+  assert([...document.querySelectorAll("th")].filter((h) => h.textContent.trim()).length === 9,
+    "table columns must be 9 after purchase + dispatch merge");
+  assert([...document.querySelectorAll("td.orders-table-empty")].every((cell) => cell.colSpan === 9),
+    "empty-state colSpan should be 9");
+  const slaButton = () => [...document.querySelectorAll(".orders-tabs button")]
+    .find((item) => item.textContent.includes("更新本页发货截止"));
+  assert(slaButton()?.disabled, "fulfillment SLA control must be disabled");
+  select("站点和物流模式", "MLB|remote");
+  await waitFor(() => document.querySelector(".orders-id")?.textContent === "102" &&
+    Boolean(slaButton()) && !slaButton().disabled, "remote SLA control not ready");
+  flushSync(() => slaButton().click());
+  await waitFor(() => slaFetchCount === 1 &&
+    document.querySelector(".orders-dispatch")?.textContent.includes("剩余"),
+    "manual SLA refresh did not update list");
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
+    "real order detail modal did not open after purchase modal closed");
+  flushSync(() => [...document.querySelectorAll(".orders-detail-refresh")][0].click());
+  await waitFor(() => document.querySelector(".orders-detail-summary")?.textContent.includes("部分退款"),
+    "manual order refresh did not display refunded state");
+  assert(!document.querySelector(".orders-money-net") &&
+    ![...document.querySelectorAll("button")].some((item) => item.textContent === "订单设置"),
+    "nonexistent finance editor should not be visible");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";
