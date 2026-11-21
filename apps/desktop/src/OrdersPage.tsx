@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
 import {
-  getOrder, getOrderSyncState, listOrders, orderDate, orderMoney,
+  getOrder, getOrderSyncState, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderMoney,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderDispatchSLA, resetOrderCursor, skipOrder, syncOrders,
   shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, hasProcurement, orderVariationText,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
@@ -116,6 +116,8 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
   const [storeChoice, setStoreChoice] = useState("");
   const [scopeChoice, setScopeChoice] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [activeQuery, setActiveQuery] = useState("");
   const reloadStores = useCallback(async () => {
     setStoreRefreshing(true);
     setStoreError("");
@@ -142,24 +144,39 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
   const availableStores = useMemo(() =>
     stores.filter((store) => store.status !== "disconnected" &&
       store.marketplaces_status === "verified" && store.marketplaces.length > 0), [stores]);
-  const store = availableStores.find((item) => item.id === storeChoice) ?? availableStores[0];
-  const marketplaces = store?.marketplaces ?? [];
-  const scopeKey = marketplaces.some((m) => m.site_id + "|" + m.logistic_type === scopeChoice)
-    ? scopeChoice : marketplaces[0] ? marketplaces[0].site_id + "|" + marketplaces[0].logistic_type : "";
+  const allStores = storeChoice === "all";
+  const store = allStores ? undefined : availableStores.find((item) => item.id === storeChoice) ?? availableStores[0];
+  const marketplaces = useMemo(() => {
+    if (!allStores) return store?.marketplaces ?? [];
+    const unique = new Map<string, StoreConnection["marketplaces"][number]>();
+    for (const item of availableStores) for (const market of item.marketplaces)
+      unique.set(market.site_id + "|" + market.logistic_type, market);
+    return [...unique.values()];
+  }, [allStores, store, availableStores]);
+  const scopeKey = scopeChoice === "all" || allStores && scopeChoice === "" ? "all"
+    : marketplaces.some((m) => m.site_id + "|" + m.logistic_type === scopeChoice)
+      ? scopeChoice : marketplaces[0] ? marketplaces[0].site_id + "|" + marketplaces[0].logistic_type : "";
   const selectedMarket = marketplaces.find((m) => m.site_id + "|" + m.logistic_type === scopeKey);
   const scope = useMemo<OrderScope | null>(() => store && selectedMarket
     ? { storeId: store.id, site: selectedMarket.site_id, logistic: selectedMarket.logistic_type } : null,
     [store?.id, selectedMarket?.site_id, selectedMarket?.logistic_type]);
 
-  return <ScopedOrders key={JSON.stringify([scope, selectedMarket?.user_id])}
+  return <ScopedOrders key={JSON.stringify([scope, selectedMarket?.user_id, scopeKey, allStores])}
     scope={scope} scopeKey={scopeKey} store={store} stores={availableStores} storeError={storeError}
     statusFilter={statusFilter} setStatusFilter={setStatusFilter}
-    selectStore={(id) => { setStoreChoice(id); setScopeChoice(""); }} selectScope={setScopeChoice}
+    searchText={searchText} setSearchText={setSearchText} activeQuery={activeQuery} setActiveQuery={setActiveQuery}
+    storeFilter={allStores ? "all" : store?.id ?? ""}
+    siteFilter={scopeKey === "all" ? "*" : selectedMarket?.site_id ?? "*"}
+    logisticFilter={scopeKey === "all" ? "*" : selectedMarket?.logistic_type ?? "*"}
+    marketplaces={marketplaces}
+    selectStore={(id) => { setStoreChoice(id); setScopeChoice(id === "all" ? "all" : ""); }}
+    selectScope={setScopeChoice}
     beginSync={beginSync} installingUpdate={installingUpdate}
     reloadStores={reloadStores} storeRefreshing={storeRefreshing} />;
 }
 
 function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter, setStatusFilter,
+  searchText, setSearchText, activeQuery, setActiveQuery, storeFilter, siteFilter, logisticFilter, marketplaces,
   selectStore, selectScope, beginSync, installingUpdate, reloadStores, storeRefreshing }: {
   scope: OrderScope | null;
   scopeKey: string;
@@ -168,6 +185,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   storeError: string;
   statusFilter: string;
   setStatusFilter: (value: string) => void;
+  searchText: string;
+  setSearchText: (value: string) => void;
+  activeQuery: string;
+  setActiveQuery: (value: string) => void;
+  storeFilter: string;
+  siteFilter: string;
+  logisticFilter: string;
+  marketplaces: StoreConnection["marketplaces"];
   selectStore: (id: string) => void;
   selectScope: (key: string) => void;
   beginSync: BeginSync;
@@ -175,8 +200,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   reloadStores: () => Promise<void>;
   storeRefreshing: boolean;
 }) {
-  const marketplaces = store?.marketplaces ?? [];
-  const [searchText, setSearchText] = useState("");
   const [purchaseLink, setPurchaseLink] = useState<"" | "linked" | "unlinked">("");
   const [offset, setOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
@@ -193,6 +216,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [detail, setDetail] = useState<OrderRecord | null>(null);
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedRowScope, setSelectedRowScope] = useState<OrderScope | null>(null);
+  const [purchaseRowScope, setPurchaseRowScope] = useState<OrderScope | null>(null);
   const [running, setRunning] = useState(false);
   const [slaBusy, setSLABusy] = useState(false);
   const [slaProgress, setSLAProgress] = useState("");
@@ -267,8 +292,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         !window.confirm("采购信息尚未保存，确定关闭采购窗口吗？")) return;
     setPurchaseSelectedId("");
   };
-  const openPurchase = (id: string) => {
+  const openPurchase = (id: string, targetScope: OrderScope | null = scope) => {
     setSelectedId("");
+    setPurchaseRowScope(targetScope);
     setPurchaseSelectedId(id);
   };
   useLayoutEffect(() => {
@@ -299,15 +325,28 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
   useEffect(() => {
     const controller = new AbortController();
-    if (!scope) {
+    const global = !scope || activeQuery !== "";
+    if (!storeFilter || !stores.length) {
       setPage({ items: [], has_more: false });
       setLoading(false);
       return () => controller.abort();
     }
     setLoading(true);
     setListError("");
-    void listOrders(scope, statusFilter, purchaseLink, offset, controller.signal).then((value) => {
-      if (!controller.signal.aborted) setPage(value);
+    const requestedSite = /^\\d{1,30}$/.test(activeQuery) ? "*" : siteFilter;
+    const read = global
+      ? searchOrders(storeFilter, requestedSite, global ? (requestedSite === "*" ? "*" : logisticFilter) : logisticFilter,
+          activeQuery, statusFilter, purchaseLink, offset, controller.signal)
+      : listOrders(scope, statusFilter, purchaseLink, offset, controller.signal);
+    void read.then((value) => {
+      if (controller.signal.aborted) return;
+      if (global && /^\\d{1,30}$/.test(activeQuery) && scopeKey !== "all" &&
+        value.items.some((record) => record.site_id !== siteFilter ||
+          record.logistic_type !== logisticFilter)) {
+        selectScope("all");
+        return;
+      }
+      setPage(value);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       setListError(displayError(error));
@@ -316,7 +355,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset, nonce]);
+  }, [scope?.storeId, scope?.site, scope?.logistic, storeFilter, siteFilter, logisticFilter,
+    stores.length, activeQuery, scopeKey, statusFilter, purchaseLink, offset, nonce]);
 
   useEffect(() => {
     const controller = new AbortController();
