@@ -158,8 +158,10 @@ function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyC
         </div>
       </div>
 
-      <WorkingDraftEditor key={product.id} collectionId={product.id}
-        sourceTitle={product.title} sourceDescription={product.description} onDirtyChange={onDraftDirtyChange} />
+      {product.own_product_id
+        ? <p className="converted-draft-hint" role="status">此商品已通过并移入产品箱，原整理工作稿现为只读归档。请切换到「产品箱」修改商品资料。</p>
+        : <WorkingDraftEditor key={product.id} collectionId={product.id}
+            sourceTitle={product.title} sourceDescription={product.description} onDirtyChange={onDraftDirtyChange} />}
 
       {product.collection_warnings.length > 0 && (
         <details className="capture-notice">
@@ -303,6 +305,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     if(draftDirty) {setApproveNotice("请先保存当前商品的整理工作稿，再执行通过。");return;}
     setApproving(true);setApproveNotice("");
     let success=0;
+    let already=0;
     const errors:string[]=[];
     const failed=new Set<string>();
     for(const id of checked) {
@@ -310,8 +313,9 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         // Read the revision immediately before POST; unknown saves are never
         // retried automatically and a concurrent edit is rejected by the API.
         const {draft}=await getWorkingDraft(id,new AbortController().signal);
-        await approveCollection(id,draft?.revision??0,new AbortController().signal);
-        success++;
+        const result=await approveCollection(id,draft?.revision??0,new AbortController().signal);
+        if(result.result==="created")success++;
+        else if(result.result==="already_approved")already++;
       } catch(e) {
         failed.add(id);
         const item=items.find(x=>x.id===id);
@@ -319,9 +323,9 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
       }
     }
     setChecked(failed);
-    setApproveNotice(`已转入 ${success} 件；${failed.size} 件未确认。`+(errors.length?" "+errors.join("；"):""));
+    setApproveNotice(`本次新转入 ${success} 件；此前已转入 ${already} 件；${failed.size} 件未确认。`+(errors.length?" "+errors.join("；"):""));
     setApproving(false);
-    if(success>0)reload();
+    if(success>0||already>0)reload();
   };
   const reload = () => {
     detailCache.current.clear();
@@ -512,7 +516,9 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         </div>
         {workspaceTab==="products"? <OwnProductsPage onDirtyChange={setOwnDirty} /> : <>
         <div className="workbench-approval">
-          <label><input type="checkbox" checked={showTransferred} onChange={e=>{if(draftDirty&&!leavingDirty())return;setShowTransferred(e.target.checked);setOffset(0);setChecked(new Set());}} /> 包含已转入来源</label>
+          <label><input type="checkbox" checked={showTransferred}
+            onClick={e=>{if(draftDirty&&!leavingDirty())e.preventDefault();}}
+            onChange={e=>{setShowTransferred(e.target.checked);setOffset(0);setChecked(new Set());}} /> 包含已转入来源</label>
           <span>已勾选 {checked.size} 件</span>
           <button type="button" className="primary-button" disabled={!checked.size||approving||draftDirty} onClick={()=>void approveSelected()}>{approving?"转入中…":"通过并移入产品箱"}</button>
         </div>
@@ -550,6 +556,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
                         <strong title={item.title}>{item.title}</strong>
                         <small>{formatMoney(item.price,item.currency)}</small>
                         <small>{siteName(item.source_platform,item.source_site)} · {formatShortDate(item.last_collected_at)}</small>
+                        {item.own_product_id && <span className="converted-card-label">已转入产品箱</span>}
                         {item.collection_status!=="complete"&&<CapturePill status={item.collection_status}/>}
                       </button>
                     </article>
