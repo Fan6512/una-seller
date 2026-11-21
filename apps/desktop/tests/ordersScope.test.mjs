@@ -100,6 +100,8 @@ try {
   const filter = (label) => [...document.querySelectorAll(".orders-procurement-toolbar button")]
     .find((item) => item.textContent === label);
   await waitFor(() => filter("待关联"), "purchase filter unavailable");
+  assert([...document.querySelectorAll(".orders-heading-actions button")]
+    .some((btn) => btn.textContent === "补全本页主图"), "explicit image backfill missing");
   flushSync(() => filter("待关联").click());
   await waitFor(() => purchaseFilters.includes("unlinked") &&
     document.querySelector(".orders-purchase-cell button")?.textContent === "关联采购",

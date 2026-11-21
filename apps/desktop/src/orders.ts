@@ -49,6 +49,7 @@ export class OrderRequestError extends Error {
 const messages: Record<string, string> = {
   order_purchase_conflict: "采购关联已被修改，请重新读取后再保存。",
   order_purchase_filter_invalid: "采购关联筛选无效，请选择全部、待关联或已关联。",
+  order_image_unavailable: "官方未返回可信的商品主图；请先在已刊登商品中同步该商品。",
   order_unavailable: "订单服务暂不可用，请稍后重新读取。",
   order_not_found: "当前订单不存在，或此店铺无权访问。",
   order_scope_required: "请先选择已验证的站点和物流类型。",
@@ -115,6 +116,13 @@ export function listOrders(scope: OrderScope, status: string, purchaseLink: "" |
     }
     return page;
   });
+}
+// A user-clicked, read-only official item query which only caches a trusted image URL.
+export function refreshOrderImage(scope: OrderScope, id: string, signal?: AbortSignal) {
+  if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
+  return storeRequest<OrderRecord>(pathWithTail(scope, id + "/image-refresh"), "POST",
+    signal ? AbortSignal.any([signal, AbortSignal.timeout(25_000)]) : AbortSignal.timeout(25_000),
+    false, undefined, orderErrorLabel);
 }
 export function getOrder(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
 import {
   getOrder, getOrderSyncState, listOrders, orderDate, orderMoney, orderStatusLabel,
-  OrderRequestError, resetOrderCursor, skipOrder, syncOrders,
+  OrderRequestError, refreshOrderImage, resetOrderCursor, skipOrder, syncOrders,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
@@ -132,6 +132,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [nonce, setNonce] = useState(0);
   const [page, setPage] = useState<OrderPage>({ items: [], has_more: false });
   const [loading, setLoading] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
   const [listError, setListError] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [purchaseSelectedId, setPurchaseSelectedId] = useState("");
@@ -157,6 +158,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [purchaseError, setPurchaseError] = useState("");
   const [purchaseMessage, setPurchaseMessage] = useState("");
   const syncAbort = useRef<AbortController | null>(null);
+  const imageAbort = useRef<AbortController | null>(null);
 
   const reviewAbort = useRef<AbortController | null>(null);
   const purchaseRequest = useRef<AbortController | null>(null);
@@ -165,6 +167,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
   useLayoutEffect(() => () => {
     syncAbort.current?.abort();
+    imageAbort.current?.abort();
     reviewAbort.current?.abort();
   }, []);
 
@@ -316,6 +319,44 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         item.item_id.toLowerCase().includes(needle)));
   }, [page.items, searchText]);
 
+  useEffect(() => () => { imageAbort.current?.abort(); }, 
+    [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
+  const refreshPageImages = async () => {
+    if (!scope || imageBusy || running || installingUpdate || loading) return;
+    const snapshot = page.items.filter((order) =>
+      order.order_items.some((item) => !item.image_url)).slice(0, 5);
+    if (!snapshot.length) {
+      setNotice("本页已有可用主图，或平台未返回商品明细。");
+      return;
+    }
+    const controller = new AbortController();
+    imageAbort.current = controller;
+    setImageBusy(true);
+    let completed = 0;
+    try {
+      for (const order of snapshot) {
+        if (controller.signal.aborted) break;
+        try {
+          const updated = await refreshOrderImage(scope, order.order_id, controller.signal);
+          if (controller.signal.aborted) break;
+          setPage((previous) => ({ ...previous, items: previous.items.map((item) =>
+            item.order_id === updated.order_id ? updated : item) }));
+          completed++;
+        } catch (error) {
+          if (controller.signal.aborted) break;
+          setNotice("已补全 " + completed + " 笔订单图片；之后停止：" + displayError(error) +
+            "。不自动重试，请核对服务端版本和官方刊登权限。");
+          return;
+        }
+      }
+      if (!controller.signal.aborted) {
+        setNotice("本次尝试补全 " + completed + " 笔订单的主图。剩余缺图可再次点击；不存在可信图片时仍显示暂无图片。");
+      }
+    } finally {
+      if (imageAbort.current === controller) imageAbort.current = null;
+      if (!controller.signal.aborted) setImageBusy(false);
+    }
+  };
   const selectStatus = (value: string) => {
     setStatusFilter(value);
     setOffset(0);
@@ -446,6 +487,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <button className="refresh-button" type="button" onClick={() => void reloadStores()}
             disabled={storeRefreshing || running}>{storeRefreshing ? "读取店铺中…" : "刷新店铺状态"}</button>
           <button className="refresh-button" type="button" onClick={loadRows} disabled={loading || running}>刷新订单</button>
+          <button className="refresh-button" type="button" disabled={!scope || imageBusy || loading || running}
+            onClick={() => void refreshPageImages()}>{imageBusy ? "补图中…" : "补全本页主图"}</button>
           {running ? (
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
           ) : (
