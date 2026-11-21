@@ -9,6 +9,7 @@ export type OrderLine = {
   title: string;
   variation_id?: string;
   image_url?: string;
+  variation_attributes?: { name: string; value_name: string }[];
   quantity: number;
   unit_price: string;
   currency_id: string;
@@ -100,6 +101,21 @@ export function orderStatusLabel(status: string) {
   };
   return labels[status] || status || "未知状态";
 }
+// Platform payment status is authoritative; procurement is a separate manually verified fact.
+// Shipment ID and dispatch SLA cannot establish "shipped" or "delivered".
+export function displayOrderStatus(order: OrderRecord) {
+  return orderStatusLabel(order.status);
+}
+export function hasProcurement(order: OrderRecord) {
+  return Boolean(order.purchase_order_id || order.purchase_tracking_number);
+}
+export function orderVariationText(line?: OrderLine) {
+  const attributes = line?.variation_attributes?.filter((attr) => attr.name && attr.value_name)
+    .map((attr) => attr.name + ":" + attr.value_name);
+  if (attributes?.length) return attributes.join(" · ");
+  return line?.variation_id ? "变体 " + line.variation_id + "（属性未返回）" : "";
+}
+
 export function orderDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN", {
@@ -107,8 +123,11 @@ export function orderDate(value: string) {
   });
 }
 export function orderMoney(value: string, currency: string) {
-  if (!/^\d{1,16}(\.\d{1,8})?$/.test(value)) return value + " " + currency;
-  return currency + " " + value;
+  const symbols: Record<string, string> = {
+    USD: "$", BRL: "R$", MXN: "MX$", ARS: "AR$", CLP: "CLP$", CNY: "¥",
+  };
+  const prefix = currency + (symbols[currency] ? " " + symbols[currency] : "") + " ";
+  return prefix + value;
 }
 export const ORDER_READ_TIMEOUT_MS = 8_000;
 export const ORDER_WRITE_TIMEOUT_MS = 25_000;

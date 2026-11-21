@@ -12,7 +12,8 @@ import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
-import { orderStatusLabel, shouldApplyOrderRefresh, shouldStopSLABatch } from "/src/orders.ts";
+import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
+  shouldApplyOrderRefresh, shouldStopSLABatch } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -91,7 +92,7 @@ const takePurchase = async (method) => {
 };
 const openPurchase = async () => {
   await waitFor(() => document.querySelector(".orders-id"), "order unavailable");
-  flushSync(() => document.querySelector(".orders-purchase-cell button").click());
+  flushSync(() => document.querySelector(".orders-row-purchase").click());
   await waitFor(() => document.querySelector("dialog.orders-purchase-modal")?.open,
     "purchase action did not open its own compact dialog");
   assert(!document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
@@ -115,18 +116,26 @@ try {
   const filter = (label) => [...document.querySelectorAll(".orders-procurement-toolbar button")]
     .find((item) => item.textContent === label);
   await waitFor(() => filter("待关联"), "purchase filter unavailable");
+  const actions = document.querySelector(".orders-row-actions");
+  await waitFor(() => document.querySelector(".orders-row-actions"), "direct row actions missing");
+  assert([...document.querySelector(".orders-row-actions").querySelectorAll("button")]
+    .map((b) => b.textContent).join("|") === "订单详情|采购",
+    "purchase must be directly below order details, not inside details modal");
   assert([...document.querySelectorAll(".orders-heading-actions button")]
     .some((btn) => btn.textContent === "补全本页主图"), "explicit image backfill missing");
   flushSync(() => filter("待关联").click());
   await waitFor(() => purchaseFilters.includes("unlinked") &&
-    document.querySelector(".orders-purchase-cell button")?.textContent === "关联采购",
-    "unlinked filter or purchase CTA missing");
+    document.querySelector(".orders-row-purchase")?.textContent === "采购",
+    "unlinked row must expose direct purchase CTA");
   flushSync(() => filter("已关联").click());
   await waitFor(() => purchaseFilters.includes("linked") &&
-    document.querySelector(".orders-purchase-cell strong")?.textContent === "已关联",
-    "linked filter or purchase label missing");
-  assert(document.querySelector(".orders-purchase-cell")?.textContent.includes("采购成本 ¥16"),
-    "linked purchase cost missing");
+    document.querySelector(".orders-row-purchase")?.textContent === "编辑采购",
+    "linked row must expose edit purchase CTA");
+  assert(document.querySelector(".orders-row-cost")?.textContent.includes("¥16"),
+    "linked procurement cost must remain visible on the list");
+  assert(document.querySelector(".orders-status")?.textContent === "已付款" &&
+    document.querySelector(".orders-purchase-badge")?.textContent === "已采购",
+    "official paid status must remain distinct from procurement");
   flushSync(() => filter("全部").click());
   await waitFor(() => purchaseFilters.at(-1) === "", "clear purchase filter not sent");
   for (const [field, value, response] of [
@@ -218,6 +227,18 @@ try {
 
   // Preserve both existing purchase filters and the new SLA/refund behavior.
   assert(orderStatusLabel("partially_refunded") === "部分退款", "partial refund label missing");
+  assert(displayOrderStatus({ ...order, purchase_order_id: "12345678" }) === "已付款",
+    "purchase link must not replace the official paid label");
+  assert(hasProcurement({ ...order, purchase_order_id: "12345678" }), "purchase badge predicate incorrect");
+  assert(!hasProcurement(order), "unlinked order must not be marked procured");
+  assert(orderVariationText({ item_id: "MLM111", title: "", variation_id: "998" }) ===
+    "变体 998（属性未返回）", "variation ID fallback missing");
+  assert(orderVariationText({ item_id: "MLM111", title: "",
+    variation_attributes: [{ name: "Color", value_name: "Amarillo" }] }) ===
+    "Color:Amarillo", "official variation attributes missing");
+  assert(orderVariationText({ item_id: "MLM111", title: "" }) === "", "absent variation must not render noise");
+  assert(orderMoney("12", "BRL") === "BRL R$ 12", "BRL symbol regresssed");
+  assert(orderMoney("23.78", "USD") === "USD $ 23.78", "USD currency symbol regresssed");
   assert(shouldApplyOrderRefresh("102", "102", false), "same order refresh must apply");
   assert(!shouldApplyOrderRefresh("102", "103", false), "stale A must not replace selected B");
   assert(!shouldApplyOrderRefresh("102", "102", true), "aborted request must not apply");
@@ -242,10 +263,10 @@ try {
   assert(dispatchDeadlineLabel(sample(72), now, "fulfillment").countdown === "不适用",
     "fulfillment incorrectly displays SLA");
   assert(slaFetchCount === 0, "SLA must not run automatically");
-  assert([...document.querySelectorAll("th")].filter((h) => h.textContent.trim()).length === 9,
-    "table columns must be 9 after purchase + dispatch merge");
-  assert([...document.querySelectorAll("td.orders-table-empty")].every((cell) => cell.colSpan === 9),
-    "empty-state colSpan should be 9");
+  assert([...document.querySelectorAll("th")].filter((h) => h.textContent.trim()).length === 8,
+    "table columns must be 8 after moving purchase action");
+  assert([...document.querySelectorAll("td.orders-table-empty")].every((cell) => cell.colSpan === 8),
+    "empty-state colSpan should be 8");
   const slaButton = () => [...document.querySelectorAll(".orders-tabs button")]
     .find((item) => item.textContent.includes("更新本页发货截止"));
   assert(slaButton()?.disabled, "fulfillment SLA control must be disabled");

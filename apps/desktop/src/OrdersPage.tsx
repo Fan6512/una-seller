@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
 import {
-  getOrder, getOrderSyncState, listOrders, orderDate, orderMoney, orderStatusLabel,
+  getOrder, getOrderSyncState, listOrders, orderDate, orderMoney,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderDispatchSLA, resetOrderCursor, skipOrder, syncOrders,
-  shouldApplyOrderRefresh, shouldStopSLABatch,
+  shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, hasProcurement, orderVariationText,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
@@ -198,6 +198,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [slaProgress, setSLAProgress] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  useEffect(() => {
+    if (!notice.startsWith("本次尝试补全")) return;
+    const timer = window.setTimeout(() => setNotice((current) => current === notice ? "" : current), 8000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const [review, setReview] = useState<OrderReview | null>(null);
   const [progress, setProgress] = useState<OrderProgress | null>(null);
   const [syncState, setSyncState] = useState<OrderSyncState | null>(null);
@@ -690,13 +695,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         <label>站点 / 物流模式
           <select aria-label="站点和物流模式" value={scopeKey} onChange={(event) => selectScope(event.target.value)}>
             {marketplaces.map((market) => <option key={market.site_id + market.logistic_type} value={market.site_id + "|" + market.logistic_type}>
-              {(SITE_NAMES[market.site_id] ?? market.site_id) + " · " + market.logistic_type}
+              {(SITE_NAMES[market.site_id] ?? market.site_id) + " · " +
+                (market.logistic_type === "remote" ? "自发货" : market.logistic_type === "fulfillment" ? "海外仓" : market.logistic_type)}
             </option>)}
           </select>
         </label>
-        <label className="orders-filter-search">搜索订单或商品
+        <label className="orders-filter-search">搜索订单或商品标题
           <span className="orders-search-inner">
-            <input type="search" value={searchText} placeholder="订单号 / Pack ID / 商品名称（本页）"
+            <input type="search" value={searchText} placeholder="销售订单号 / 商品标题（当前页）"
               onChange={(event) => setSearchText(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter") searchOrder(); }} />
             <button type="button" onClick={searchOrder} title="输入完整数字订单号可跨页查找">查订单</button>
@@ -727,7 +733,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           </button>
         </div>
         <div className="orders-procurement-toolbar" role="group" aria-label="1688采购关联筛选">
-          <strong>1688 采购</strong>
+          <strong>采购</strong>
           {([
             { value: "", label: "全部" },
             { value: "unlinked", label: "待关联" },
@@ -746,8 +752,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         </div>}
         {(notice || syncState?.can_reset) && <div className="orders-notice" role="status">
           <span>{notice || "当前存在可重新扫描的服务器同步窗口。"}</span>
-          {syncState?.can_reset && !review && !running &&
-            <button type="button" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
+          <div className="orders-notice-actions">
+            {syncState?.can_reset && !review && !running &&
+              <button type="button" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
+            {notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button>}
+          </div>
         </div>}
         {review && <div className="orders-review" role="alert">
           <div>
@@ -767,44 +776,52 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <div className="orders-table-scroll">
               <table className="orders-table">
                 <thead><tr>
-                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>1688 采购关联</th><th>付款状态</th><th title="采购快递和国际段是两种不同运单；Shipment ID 只是内部记录号">采购 / 平台物流</th><th>发货倒计时</th><th>下单时间</th><th>操作</th>
+                  <th>订单信息</th><th>商品标题 / 规格</th><th>销售金额</th><th>订单状态</th><th>采购 / 平台物流</th><th>发货倒计时</th><th>下单时间</th><th>操作</th>
                 </tr></thead>
                 <tbody>
-                  {loading && page.items.length === 0 && <tr><td colSpan={9} className="orders-table-empty">正在读取订单…</td></tr>}
-                  {!loading && visibleOrders.length === 0 && <tr><td colSpan={9} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
+                  {loading && page.items.length === 0 && <tr><td colSpan={8} className="orders-table-empty">正在读取订单…</td></tr>}
+                  {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
                   {visibleOrders.map((order) => <tr key={order.order_id} className={selectedId === order.order_id ? "selected" : ""}>
                     <td><button type="button" className="orders-id" onClick={() => openOrder(order.order_id)}>{order.order_id}</button>
                       <span className="orders-subline">{(store?.nickname || store?.seller_id || "店铺").trim().slice(0, 12)}（{SITE_NAMES[scope?.site ?? ""] ?? scope?.site}） · {scope?.logistic === "remote" ? "自发货" : scope?.logistic === "fulfillment" ? "海外仓" : scope?.logistic}</span>
-                      {order.pack_id && <span className="orders-subline">组合包：{order.pack_id}</span>}
                     </td>
                     <td className="orders-product-cell">
                       <div className="orders-product-preview">
                         <ProductThumbnail src={order.order_items[0]?.image_url} title={order.order_items[0]?.title || ""} />
                         <div className="orders-product-info">
-                          <span className="orders-product-title">{order.order_items[0]?.title || "平台未返回商品标题"}</span>
-                          <span className="orders-subline">
+                          <span className="orders-product-title" title={order.order_items[0]?.title || "平台未返回商品标题"}>{order.order_items[0]?.title || "平台未返回商品标题"}</span>
+                          <span className="orders-product-meta">
                             {order.order_items.length > 1 ? order.order_items.length + " 个商品行 · " : ""}
-                            {orderCount(order)} 件 · {order.order_items[0]?.variation_id ? "变体 " + order.order_items[0].variation_id : order.order_items[0]?.item_id || "无 SKU 信息"}
+                            {orderCount(order)} 件 · {order.order_items[0]?.item_id || "商品 ID 未返回"}
                           </span>
+                          {orderVariationText(order.order_items[0]) && <span className="orders-product-spec"
+                            title="官方订单尚未返回可读规格时，仅保留变体 ID">
+                            {orderVariationText(order.order_items[0])}
+                          </span>}
                         </div>
                       </div>
                     </td>
-                    <td><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong></td>
-                    <td className="orders-purchase-cell">
-                      {order.purchase_order_id ? <>
-                        <strong>已关联</strong><span title={order.purchase_order_id}>{order.purchase_order_id}</span>
-                        <small>{order.purchase_cost_cny != null ? "采购成本 ¥" + order.purchase_cost_cny : "采购成本待补录"}</small>
-                      </> : <button className="orders-table-action" type="button" onClick={() => openPurchase(order.order_id)}>关联采购</button>}
+                    <td className="orders-money-cell"><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong>
+                      <small title="净收益待官方结算费用数据，尚未核算">净收益：—</small>
+                      <small title="利润待实际采购成本、费用和汇率核算">利润：—</small>
                     </td>
-                    <td><span className={"orders-status " + safeOrderStatus(order.status)}>{orderStatusLabel(order.status)}</span></td>
+                    <td><span className={"orders-status " + safeOrderStatus(order.status)}>{displayOrderStatus(order)}</span>
+                      {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
+                    </td>
                     <td className="orders-shipping-refs">
                       <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
                       <span><small>平台运单</small>待官方读取</span>
-                      {order.shipment_id && <span className="orders-muted" title="Shipment ID 是内部物流记录，不是快递运单号">Shipment ID：{order.shipment_id}</span>}
                     </td>
                     <td><DispatchCountdown order={order} now={clockNow} logistic={scope?.logistic ?? ""} /></td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
-                    <td><button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button></td>
+                    <td><div className="orders-row-actions">
+                      <button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button>
+                      <button className="orders-table-action orders-row-purchase" type="button"
+                        onClick={() => openPurchase(order.order_id)}>{order.purchase_order_id ? "编辑采购" : "采购"}</button>
+                      {order.purchase_order_id && <small className="orders-row-cost">
+                        成本：{order.purchase_cost_cny == null ? "待补录" : "¥" + order.purchase_cost_cny}
+                      </small>}
+                    </div></td>
                   </tr>)}
                 </tbody>
               </table>
@@ -836,7 +853,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {detailError && <p className="orders-alert" role="alert">{detailError}</p>}
             {detail && <>
               <div className="orders-detail-summary">
-                <span className={"orders-status " + safeOrderStatus(detail.status)}>{orderStatusLabel(detail.status)}</span>
+                <span className={"orders-status " + safeOrderStatus(detail.status)}>{displayOrderStatus(detail)}</span>
+                {hasProcurement(detail) && <small className="orders-purchase-badge">已采购</small>}
                 <strong>{orderMoney(detail.total_amount, detail.currency_id)}</strong>
                 <small>下单：{orderDate(detail.date_created)}</small>
                 <small>更新：{orderDate(detail.last_updated)}</small>
@@ -859,25 +877,25 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <h3>订单与物流</h3>
                 <dl className="orders-detail-fields">
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
-                  <dt>组合包编号（Pack ID）</dt><dd>{detail.pack_id || "—"} <small>同次购买关联订单的组合编号，并非快递运单</small></dd>
-                  <dt>物流模式</dt><dd>{scope?.logistic ?? "—"}</dd>
+                  <dt>物流模式</dt><dd>{scope?.logistic === "remote" ? "自发货" : scope?.logistic === "fulfillment" ? "海外仓" : scope?.logistic ?? "—"}</dd>
                   <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
                   <dt>平台运单号</dt><dd>待官方 Shipment 接口查询</dd>
-                  <dt>平台物流记录号</dt><dd>{detail.shipment_id || "未返回"} <small>（Shipment ID，并非运单号）</small></dd>
                   <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, scope?.logistic).date}
                     {dispatchDeadlineLabel(detail, clockNow, scope?.logistic).hint &&
                       <small> · {dispatchDeadlineLabel(detail, clockNow, scope?.logistic).hint}</small>}</dd>
                 </dl>
-                <p className="orders-muted">此处的 Shipment ID 并非物流运单号；当前订单 API 不含追踪状态、收件人地址、电话或面单，不能据此认定订单已发货。</p>
+                <p className="orders-muted">平台运单及签收信息尚未读取，不会将内部物流记录或发货截止时间视为已发货、已签收。</p>
               </section>
               <section className="orders-detail-block">
                 <div className="orders-detail-block-title">
-                  <h3>1688 采购关联</h3>
+                  <h3>采购</h3>
                   <button type="button" className="orders-table-action"
                     onClick={() => openPurchase(detail.order_id)}>
-                    {detail.purchase_order_id ? "编辑采购关联" : "关联采购"}</button>
+                    {detail.purchase_order_id ? "编辑采购" : "采购"}</button>
                 </div>
-                <p className="orders-muted">采购单：{detail.purchase_order_id || "待关联"}；货代签收和采购快递需要另行核实。</p>
+                <p className="orders-muted">采购单：{detail.purchase_order_id || "待关联"}；采购成本：{
+                  detail.purchase_cost_cny == null ? "待补录" : "¥" + detail.purchase_cost_cny
+                }（CNY）；货代签收及采购快递状态需另行核实。</p>
               </section>
               <section className="orders-detail-block">
                 <h3>订单履约流程</h3>
