@@ -106,17 +106,17 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     </div>
     <p>这里是转产品库前的暂存稿，原始采集标题、描述和图片不会被覆盖。</p>
     <label>商品标题
-      <input value={fields.title} disabled={loadState !== "ready" || saving}
+      <input value={fields.title} readOnly={loadState !== "ready" || saving}
         onChange={(e) => change("title", e.target.value)} />
       <small>{titleCount} / 500 字符</small>
     </label>
     <label>整理后的商品描述
-      <textarea rows={5} value={fields.description} disabled={loadState !== "ready" || saving}
+      <textarea rows={5} value={fields.description} readOnly={loadState !== "ready" || saving}
         onChange={(e) => change("description", e.target.value)} />
       <small>{descriptionCount} / 20000 字符</small>
     </label>
     <label>供应商 / 规格 / 包装等整理备注（仅内部使用，不直接刊登）
-      <textarea rows={3} value={fields.notes} disabled={loadState !== "ready" || saving}
+      <textarea rows={3} value={fields.notes} readOnly={loadState !== "ready" || saving}
         onChange={(e) => change("notes", e.target.value)} />
       <small>{notesCount} / 5000 字符</small>
     </label>

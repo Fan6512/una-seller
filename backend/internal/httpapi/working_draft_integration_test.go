@@ -125,7 +125,9 @@ func TestWorkingDraftOwnerAndRecaptureIsolation(t *testing.T) {
 	if w := call(owner, http.MethodGet, ""); w.Code != http.StatusOK {
 		t.Fatalf("large Chinese draft lost: %d", w.Code)
 	} else {
-		var result struct{ Draft *collections.WorkingDraft `json:"draft"` }
+		var result struct {
+			Draft *collections.WorkingDraft `json:"draft"`
+		}
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Draft == nil ||
 			len([]rune(result.Draft.Description)) != 20000 || result.Draft.Revision != 3 {
 			t.Fatalf("large draft readback failed: %v", err)
@@ -136,8 +138,12 @@ func TestWorkingDraftOwnerAndRecaptureIsolation(t *testing.T) {
 	request := func(method, payload, mime, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(payload))
 		r.Header.Set("Authorization", "Bearer synthetic-session")
-		if mime != "" { r.Header.Set("Content-Type", mime) }
-		if origin != "" { r.Header.Set("Origin", origin) }
+		if mime != "" {
+			r.Header.Set("Content-Type", mime)
+		}
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
 		w := httptest.NewRecorder()
 		untrusted.ServeHTTP(w, r)
 		return w
