@@ -7,8 +7,11 @@ export type ListingVariant = {
   currency: string;
   image_urls: string[];
 };
+export type LocalizedTitles = { en: string; es: string; pt: string };
+export type TitleLanguage = keyof LocalizedTitles;
 export type ListingFields = {
-  category_site: string;
+  titles: LocalizedTitles;
+  category_site: string; // deprecated persisted field; never used to select a listing site
   category_id: string;
   category_path: string;
   brand: string;
@@ -33,16 +36,14 @@ export type ListingSource = {
   bullet_points: string[];
 };
 
-const siteDefaultPrices = [
-  { site:"MLB",price:"",currency:"BRL" },
-  { site:"MLM",price:"",currency:"MXN" },
-];
+const siteDefaultPrices: ListingFields["site_prices"] = []; // selected only at listing time
 export const SITE_NAMES:Record<string,string> = {
   MLB:"巴西",MLM:"墨西哥",MLA:"阿根廷",MLC:"智利",MCO:"哥伦比亚",
 };
 
-export function initialListingFields(saved?: Partial<ListingFields> | null, source?: ListingSource): ListingFields {
+export function initialListingFields(saved?: Partial<ListingFields> | null, source?: ListingSource, capturedTitle = ""): ListingFields {
   const defaults: ListingFields = {
+    titles: titlesFromSource(capturedTitle),
     category_site:"",category_id:"",category_path:"",brand:"",model:"",
     seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"",
     weight_g:"",length_cm:"",width_cm:"",height_cm:"",
@@ -59,7 +60,8 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
     }))??[],
   };
   if(!saved)return defaults;
-  const result:ListingFields={...defaults,...saved};
+  const result:ListingFields={...defaults,...saved,
+    titles:saved.titles ? {...defaults.titles,...saved.titles} : defaults.titles};
   result.site_prices=saved.site_prices!==undefined?saved.site_prices.map(p=>({...p})):defaults.site_prices;
   result.bullet_points=saved.bullet_points?.slice()??defaults.bullet_points;
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
@@ -67,11 +69,36 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,attributes:{...v.attributes},image_urls:v.image_urls.slice()}));
   return result;
 }
+export function detectTitleLanguage(title:string): TitleLanguage | "uncertain" {
+  const text=title.toLowerCase().normalize("NFC");
+  if (/[ñ¿¡]/u.test(text)) return "es";
+  if (/[ãõç]/u.test(text)) return "pt";
+  const words=text.match(/[\p{L}]+/gu)??[];
+  const spanish=new Set(["con","sin","para","mujer","hombre","niños","baño","zapatos","cuidado","juguete","herramienta","talla","impermeable","pantalones","lavable"]);
+  const portuguese=new Set(["com","sem","para","mulher","homem","crianças","banheiro","sapatos","cuidados","brinquedo","ferramenta","tamanho","impermeável","calças","lavável","não"]);
+  const english=new Set(["with","for","women","men","kids","bathroom","shoes","care","toy","tool","size","waterproof","pants","washable","and","set"]);
+  const score=(set:Set<string>)=>words.reduce((n,w)=>n+(set.has(w)?1:0),0);
+  const es=score(spanish),pt=score(portuguese),en=score(english);
+  if(es>pt && es>en) return "es";
+  if(pt>es && pt>en) return "pt";
+  if(en>es && en>pt) return "en";
+  return "uncertain";
+}
+export function titlesFromSource(title:string):LocalizedTitles {
+  const language=detectTitleLanguage(title);
+  return {en:language==="en"||language==="uncertain"?title:"",es:language==="es"?title:"",pt:language==="pt"?title:""};
+}
+export function preferredTitle(titles:LocalizedTitles):string {
+  return titles.en.trim() || titles.es.trim() || titles.pt.trim();
+}
 const isMoney=(v:string)=>v===""||/^(0|[1-9][0-9]{0,15})(\.[0-9]{1,4})?$/.test(v);
 const isDecimal=(v:string,max:number,integer:boolean)=>v===""||
   (new RegExp(integer?"^[0-9]+$":"^[0-9]+(?:\\.[0-9]+)?$").test(v)&&
     Number(v)>0&&Number(v)<=max);
 export function validateListingFields(v:ListingFields):string {
+  if(Object.values(v.titles).some(t=>Array.from(t).length>500))return "单个语言标题不能超过 500 字符";
+  if(!preferredTitle(v.titles))return "请至少填写一个语言的商品标题";
+  if(v.category_id && !/^CBT[0-9]{1,15}$/.test(v.category_id))return "请填写 CBT 通用类目 ID，站点类目应在上传时选择";
   if(v.category_path.length>400||v.category_id.length>60||v.brand.length>120||
     v.model.length>120||v.seller_sku.length>120||v.gtin.length>50) return "类目或基础属性过长";
   if(!isMoney(v.purchase_price)||v.site_prices.some(p=>!isMoney(p.price)))return "采购价或站点售价格式不正确，最多保留四位小数";
