@@ -24,6 +24,8 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 	api := collectionAPI{store: store, verifier: verifier}
 	mux.HandleFunc("/api/v1/collections", api.collections)
 	mux.HandleFunc("/api/v1/collections/", api.detail)
+  mux.HandleFunc("/api/v1/products", api.ownProducts)
+  mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
 	var storeService *meli.Service
 	if len(stores) != 0 {
 		storeService = stores[0]
@@ -34,7 +36,7 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 	mux.HandleFunc("/api/v1/stores/", s.storeAction)
 	mux.HandleFunc(meli.CallbackPath, s.callback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") {
+		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") || strings.HasPrefix(r.URL.Path, "/api/v1/products") {
 			// Chrome MV3 IDs are per-install; only accept syntactically valid
 			// extension origins, and only for the collection API. Store and OAuth
 			// routes stay Tauri-only. API access still requires a Bearer token.
@@ -50,7 +52,8 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 				}
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
-				if strings.HasPrefix(r.URL.Path, "/api/v1/collections") && allowedAppOrigin(origin) {
+				if (strings.HasPrefix(r.URL.Path, "/api/v1/collections") && allowedAppOrigin(origin)) ||
+          strings.HasPrefix(r.URL.Path, "/api/v1/products") {
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				} else {
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -248,7 +251,8 @@ func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid query")
 			return
 		}
-		items, err := a.store.List(r.Context(), ownerID, q, limit, offset)
+		inboxOnly:=r.URL.Query().Get("inbox")=="1"
+    items, err := a.store.ListWithInboxFilter(r.Context(), ownerID, q, limit, offset, inboxOnly)
 		if err != nil {
 			writeError(w, 500, "collections unavailable")
 			return
@@ -264,6 +268,12 @@ func (a collectionAPI) detail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if strings.HasSuffix(r.URL.Path, "/approve") {
+    id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/collections/"), "/approve")
+    if !collections.ValidUserID(id) {writeError(w,404,"collection not found");return}
+    a.approveCollection(w,r,ownerID,id)
+    return
+  }
 	if strings.HasSuffix(r.URL.Path, "/working-draft") {
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/collections/"), "/working-draft")
 		if !collections.ValidUserID(id) {
