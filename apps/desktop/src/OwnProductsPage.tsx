@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatMoney } from "./collections";
-import { getOwnProduct, getOwnProductPage, updateOwnProduct, type OwnProduct, type OwnProductSummary } from "./ownProducts";
+import { getOwnProduct, getOwnProductPage, updateOwnProduct, OWN_PRODUCT_PAGE_SIZE, ProductRequestError, type OwnProduct, type OwnProductSummary } from "./ownProducts";
+import { emptyProductPageFallback, productSaveNeedsReadback } from "./workbenchRules";
 
 type Editor = Pick<OwnProduct, "title" | "description" | "notes">;
 const BLANK:Editor={title:"",description:"",notes:""};
@@ -8,6 +9,8 @@ const count=(value:string)=>Array.from(value).length;
 
 export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (dirty:boolean)=>void }) {
   const [query,setQuery]=useState("");
+  const [queryDraft,setQueryDraft]=useState("");
+  const [composing,setComposing]=useState(false);
   const [offset,setOffset]=useState(0);
   const [reload,setReload]=useState(0);
   const [items,setItems]=useState<OwnProductSummary[]>([]);
@@ -24,12 +27,29 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
   const [unknown,setUnknown]=useState(false);
   const dirty=!!product&&(fields.title!==product.title||fields.description!==product.description||fields.notes!==product.notes);
   useEffect(()=>onDirtyChange?.(dirty),[dirty,onDirtyChange]);
+  useEffect(()=>()=>onDirtyChange?.(false),[onDirtyChange]);
+  useEffect(()=>{
+    if(composing)return;
+    const normalized=queryDraft.trim();
+    if(normalized===query)return;
+    const timer=window.setTimeout(()=>{
+      if(dirty&&!window.confirm("搜索会切换商品并丢弃未保存修改，确定继续吗？")){
+        setQueryDraft(query);
+        return;
+      }
+      setQuery(normalized);
+      setOffset(0);
+    },280);
+    return ()=>window.clearTimeout(timer);
+  },[queryDraft,composing,query,dirty]);
   useEffect(()=>{
     const c=new AbortController();
     setLoading(true);
     setListError("");
     void getOwnProductPage(query,offset,c.signal).then(page=>{
       if(c.signal.aborted)return;
+      const previous=emptyProductPageFallback(offset,page.items.length,OWN_PRODUCT_PAGE_SIZE);
+      if(previous!==null){setOffset(previous);return;}
       setItems(page.items);setHasMore(page.hasMore);
       setSelected(prev=>page.items.some(p=>p.id===prev)?prev:page.items[0]?.id??null);
     }).catch(e=>{if(!c.signal.aborted){setListError(e instanceof Error?e.message:"产品箱读取失败");setItems([]);setSelected(null);}})
@@ -64,26 +84,27 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
     try {
       const {product:next}=await updateOwnProduct(product.id,{...fields,revision:product.revision},new AbortController().signal);
       setProduct(next);setFields({title:next.title,description:next.description,notes:next.notes});
-      setItems(old=>old.map(x=>x.id===next.id?{...x,title:next.title,updated_at:next.updated_at}:x));
+      setItems(old=>old.map(x=>x.id===next.id?{...x,title:next.title,updated_at:next.updated_at}:x)
+        .sort((a,b)=>b.updated_at.localeCompare(a.updated_at)||b.id.localeCompare(a.id)));
       setStatus("已保存到产品箱，重启后可恢复");
     } catch(e) {
       const message=e instanceof Error?e.message:"保存失败";
       setStatus(message);
       // A timeout or 202 may have committed. Do not replay stale revision.
-      if(!message.includes("409")&&!message.includes("另一窗口"))setUnknown(true);
+      const code=e instanceof ProductRequestError?e.status:undefined;
+      if(productSaveNeedsReadback(code))setUnknown(true);
     } finally {setSaving(false);}
   };
   const valid=fields.title.trim().length>0&&count(fields.title)<=500&&count(fields.description)<=20000&&count(fields.notes)<=5000;
-  const chooseSearch=(value:string)=>{
-    if(dirty&&!window.confirm("搜索将切换商品，丢弃未保存内容。确定继续吗？"))return;
-    setQuery(value);setOffset(0);
-  };
-
   return <div className="workspace">
     <section className="list-pane" aria-label="产品箱商品卡片">
       <div className="list-toolbar">
         <label className="search-box">
-          <input type="search" placeholder="搜索产品箱" value={query} onChange={e=>chooseSearch(e.target.value)} aria-label="搜索产品箱" />
+          <input type="search" placeholder="搜索产品箱" value={queryDraft} maxLength={200}
+            onChange={e=>setQueryDraft(e.target.value)}
+            onCompositionStart={()=>setComposing(true)}
+            onCompositionEnd={e=>{setComposing(false);setQueryDraft(e.currentTarget.value);}}
+            aria-label="搜索产品箱" />
         </label>
         <div className="list-meta"><span>{loading?"读取中…":listError?"读取失败":"已整理产品"}</span><span>{items.length} 件（当前页）</span></div>
       </div>
@@ -100,9 +121,9 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
             </button>
           </article>)}
         </div>}
-      {items.length>0&&<div className="list-footer"><span>第 {Math.floor(offset/24)+1} 页</span>
-        <div className="page-actions"><button disabled={loading||offset===0||dirty} onClick={()=>setOffset(Math.max(0,offset-24))}>上一页</button>
-          <button disabled={loading||!hasMore||dirty} onClick={()=>setOffset(offset+24)}>下一页</button></div></div>}
+      {(items.length>0||offset>0)&&<div className="list-footer"><span>第 {Math.floor(offset/OWN_PRODUCT_PAGE_SIZE)+1} 页</span>
+        <div className="page-actions"><button disabled={loading||offset===0||dirty} onClick={()=>setOffset(Math.max(0,offset-OWN_PRODUCT_PAGE_SIZE))}>上一页</button>
+          <button disabled={loading||!hasMore||dirty} onClick={()=>setOffset(offset+OWN_PRODUCT_PAGE_SIZE)}>下一页</button></div></div>}
     </section>
     <section className="detail-pane" aria-label="产品箱编辑详情">
       {detailError?<p className="workspace-feedback" role="alert">{detailError}<button onClick={refresh}>重新加载</button></p>
