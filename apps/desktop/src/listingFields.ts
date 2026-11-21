@@ -60,7 +60,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   };
   if(!saved)return defaults;
   const result:ListingFields={...defaults,...saved};
-  result.site_prices=saved.site_prices?.length?saved.site_prices.map(p=>({...p})):defaults.site_prices;
+  result.site_prices=saved.site_prices!==undefined?saved.site_prices.map(p=>({...p})):defaults.site_prices;
   result.bullet_points=saved.bullet_points?.slice()??defaults.bullet_points;
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
