@@ -1,4 +1,5 @@
 import { getAccessToken, rejectSession } from "./auth";
+import type { ListingFields } from "./listingFields";
 
 export type CaptureStatus = "complete" | "partial";
 export const PAGE_SIZE = 24;
@@ -137,9 +138,11 @@ export type CollectionWorkingDraft = {
   title: string;
   description: string;
   notes: string;
+  listing_fields: Partial<ListingFields>;
   updated_at: string;
 };
 export type WorkingDraftInput = Pick<CollectionWorkingDraft, "title" | "description" | "notes"> & {
+  listing_fields?: ListingFields;
   expected_revision: number;
 };
 
