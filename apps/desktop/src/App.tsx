@@ -3,7 +3,8 @@ import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
 import StoresPage from "./StoresPage";
-import { checkStoreConnection, listStores, watchStoreList, type StoreConnection } from "./stores";
+import { cachedStores, checkStoreConnection, listStores, watchStoreList } from "./stores";
+import { checkStoresOnLogin, storeHealthFromList, type StoreHealth } from "./storeLoginCheck";
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
@@ -14,18 +15,6 @@ import {
 } from "./collections";
 
 type ServiceStatus = "checking" | "online" | "offline";
-type StoreHealth = { status: "checking" | "connected" | "attention" | "empty"; message: string };
-
-// The result is scoped to this authenticated desktop session. It is not a
-// promise that Mercado Libre will accept every future API request.
-function storeHealthFromList(items: StoreConnection[]): StoreHealth {
-  if (!items.length) return { status: "empty", message: "未添加店铺，点击前往设置" };
-  const needsAttention = items.some((item) =>
-    item.status !== "connected" || item.marketplaces_status !== "verified");
-  return needsAttention
-    ? { status: "attention", message: "有店铺需要重新授权或核实站点，请在设置中处理" }
-    : { status: "connected", message: items.length + " 个店铺连接状态已核实" };
-}
 type IconName = "search" | "refresh" | "box" | "image" | "external" | "left" | "right" | "warning";
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
@@ -243,6 +232,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   const [storeHealth, setStoreHealth] = useState<StoreHealth>({
     status: "checking", message: "正在核实店铺连接状态",
   });
+  const failedStoreChecks = useRef(new Set<string>());
   const [service, setService] = useState<ServiceStatus>("checking");
   const [serviceError, setServiceError] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
@@ -262,43 +252,27 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const detailCache = useRef(new Map<string, { value: CollectionDetail; savedAt: number }>());
 
-  // Exactly one background connection check after sign-in/session restoration.
-  // Do not block the workspace or request a fresh login on a network failure.
-  // checkStoreConnection reuses Go's server-side OAuth and token rotation gate.
+  // One nonblocking verification round per authenticated workspace mount.
+  // A later plain GET must never turn a failed POST verification green.
   useEffect(() => {
     let active = true;
     let finished = false;
     const unwatch = watchStoreList((items) => {
-      if (active && finished) setStoreHealth(storeHealthFromList(items));
+      if (active && finished) setStoreHealth(storeHealthFromList(items, failedStoreChecks.current));
     });
-    void (async () => {
-      try {
-        const initial = await listStores(true);
-        if (!active) return;
-        const targets = initial.filter((item) => item.status !== "disconnected");
-        const checks = await Promise.allSettled(
-          targets.map((item) => checkStoreConnection(item.id, false)),
-        );
-        if (!active) return;
-        const latest = await listStores(true);
-        if (!active) return;
-        finished = true;
-        if (checks.some((result) => result.status === "rejected")) {
-          setStoreHealth({
-            status: "attention", message: "部分店铺连接检查未成功，请进入设置查看或重新验证",
-          });
-        } else {
-          setStoreHealth(storeHealthFromList(latest));
-        }
-      } catch {
-        if (active) {
-          finished = true;
-          setStoreHealth({
-            status: "attention", message: "店铺连接状态暂时无法确认，请检查网络或进入设置重试",
-          });
-        }
-      }
-    })();
+    void checkStoresOnLogin(listStores, checkStoreConnection).then(({ health, failedStoreIds }) => {
+      if (!active) return;
+      failedStoreChecks.current = failedStoreIds;
+      finished = true;
+      setStoreHealth(health);
+    }).catch(() => {
+      if (!active) return;
+      finished = true;
+      failedStoreChecks.current.add("__initial_read_failed__");
+      setStoreHealth({
+        status: "attention", message: "店铺连接状态暂时无法确认，请检查网络或进入设置重试",
+      });
+    });
     return () => { active = false; unwatch(); };
   }, []);
 
@@ -470,7 +444,12 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />
             {diagnosticsEnabled && <DevelopmentDiagnostics />}
           </>}
-          {settingsSection === "stores" && <StoresPage />}
+          {settingsSection === "stores" && <StoresPage onConnectionChecked={(id) => {
+            failedStoreChecks.current.delete(id);
+            failedStoreChecks.current.delete("__initial_read_failed__");
+            const latest = cachedStores();
+            if (latest) setStoreHealth(storeHealthFromList(latest, failedStoreChecks.current));
+          }} />}
         </>}
         {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
