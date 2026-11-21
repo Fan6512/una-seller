@@ -16,26 +16,28 @@ func (a storeAPI) predictCBTCategory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if origin:=r.Header.Get("Origin"); origin!="" && !allowedAppOrigin(origin) {
-		writeError(w,http.StatusForbidden,"origin not allowed")
+	if origin := r.Header.Get("Origin"); origin != "" && !allowedAppOrigin(origin) {
+		writeError(w, http.StatusForbidden, "origin not allowed")
 		return
 	}
-	owner, ok:=a.requireOwner(w,r)
-	if !ok {return}
-	title:=strings.TrimSpace(r.URL.Query().Get("q"))
-	items,err:=a.service.PredictCBTCategories(r.Context(),owner,title)
-	if errors.Is(err,meli.ErrCBTPredictorInput) {
-		writeError(w,http.StatusBadRequest,"edit the English title before requesting category recommendations")
+	owner, ok := a.requireOwner(w, r)
+	if !ok {
 		return
 	}
-	if errors.Is(err,meli.ErrCBTPredictorStore) {
-		writeError(w,http.StatusConflict,"connect a Mercado Libre store to use the official CBT category predictor")
+	title := strings.TrimSpace(r.URL.Query().Get("q"))
+	items, err := a.service.PredictCBTCategories(r.Context(), owner, title)
+	if errors.Is(err, meli.ErrCBTPredictorInput) {
+		writeError(w, http.StatusBadRequest, "edit the English title before requesting category recommendations")
 		return
 	}
-	if err!=nil {
-		writeError(w,http.StatusBadGateway,"official CBT category recommendations unavailable; choose category manually")
+	if errors.Is(err, meli.ErrCBTPredictorStore) {
+		writeError(w, http.StatusConflict, "connect a Mercado Libre store to use the official CBT category predictor")
 		return
 	}
-	w.Header().Set("Cache-Control","no-store")
-	writeJSON(w,http.StatusOK,map[string]any{"items":items,"source":"mercado_libre_cbt","confirmed":false})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "official CBT category recommendations unavailable; choose category manually")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "source": "mercado_libre_cbt", "confirmed": false})
 }
