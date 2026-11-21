@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getWorkingDraft, isDraftConflict, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
+import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
 
 type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes">;
 type LoadState = "loading" | "ready" | "error";
@@ -99,7 +99,9 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       if (!controller.signal.aborted) {
         // A timed-out PUT may have committed. Never blindly retry the same revision.
         if (!isDraftRejected(e)) setLoadState("error");
-        setError(isDraftConflict(e)
+        setError(isDraftConverted(e)
+          ? "商品已在另一窗口转入产品箱，原工作稿停止编辑。请先复制当前修改，再到「工作台 → 产品箱」编辑商品。"
+          : isDraftConflict(e)
           ? "工作稿已被其他窗口或上一次提交修改（409），本次没有覆盖服务器内容。请复制需要保留的文本，再重新加载。"
           : isDraftRejected(e)
             ? "服务器拒绝保存（请求格式或长度不符合要求），内容没有写入。请修改后重新保存。"
@@ -141,6 +143,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       onClick={refreshDraft}>重新加载工作稿</button>}
     <button type="button" className="primary-button" onClick={() => void save()}
       disabled={!valid || loadState !== "ready" || saving || !dirty}>{saving ? "保存中…" : "保存整理工作稿"}</button>
-    <p className="working-draft-hint">下一阶段才会将工作稿复制为独立产品库草稿；当前不会自动刊登。</p>
+    <p className="working-draft-hint">保存工作稿后可以选择「通过」，转入产品箱继续修改；不会自动刊登。</p>
   </section>;
 }
