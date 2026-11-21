@@ -13,25 +13,25 @@ import (
 )
 
 type OwnProduct struct {
-	ID              string    `json:"id"`
-	SourceProductID *string   `json:"source_product_id"`
-	SourcePlatform  string    `json:"source_platform"`
-	SourceSite      string    `json:"source_site"`
-	SourceURL       string    `json:"source_url"`
-	SourceTitle     string    `json:"source_title"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description"`
-	Notes           string    `json:"notes"`
-	Price           *string   `json:"price"`
-	Currency        *string   `json:"currency"`
-	Category        *string   `json:"category"`
-	BulletPoints    []string  `json:"bullet_points"`
-	Images          []Image   `json:"images"`
-	Variants        []Variant `json:"variants"`
-	ListingFields    ListingFields `json:"listing_fields"`
-	Revision        int64     `json:"revision"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              string        `json:"id"`
+	SourceProductID *string       `json:"source_product_id"`
+	SourcePlatform  string        `json:"source_platform"`
+	SourceSite      string        `json:"source_site"`
+	SourceURL       string        `json:"source_url"`
+	SourceTitle     string        `json:"source_title"`
+	Title           string        `json:"title"`
+	Description     string        `json:"description"`
+	Notes           string        `json:"notes"`
+	Price           *string       `json:"price"`
+	Currency        *string       `json:"currency"`
+	Category        *string       `json:"category"`
+	BulletPoints    []string      `json:"bullet_points"`
+	Images          []Image       `json:"images"`
+	Variants        []Variant     `json:"variants"`
+	ListingFields   ListingFields `json:"listing_fields"`
+	Revision        int64         `json:"revision"`
+	CreatedAt       time.Time     `json:"created_at"`
+	UpdatedAt       time.Time     `json:"updated_at"`
 }
 
 type OwnProductSummary struct {
@@ -47,11 +47,11 @@ type OwnProductSummary struct {
 }
 
 type OwnProductEdit struct {
-	Title            string `json:"title"`
-	Description      string `json:"description"`
-	Notes            string `json:"notes"`
+	Title            string         `json:"title"`
+	Description      string         `json:"description"`
+	Notes            string         `json:"notes"`
 	ListingFields    *ListingFields `json:"listing_fields,omitempty"`
-	ExpectedRevision int64  `json:"expected_revision"`
+	ExpectedRevision int64          `json:"expected_revision"`
 }
 
 func (in OwnProductEdit) Validate() error {
