@@ -252,7 +252,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
 
   async function removeCollection(product: CollectionDetail) {
     if (deletingId) return;
-    if (!window.confirm("确定永久删除采集商品“" + product.title + "”吗？图片和规格采集记录也将删除，此操作不可撤销。")) return;
+    if (!window.confirm("确定永久删除采集商品“" + product.title + "”吗？采集图片、规格以及该商品尚未转库的人工整理工作稿都会一并永久删除，无法恢复。")) return;
     setDeletingId(product.id);
     setDeleteError(null);
     try {
