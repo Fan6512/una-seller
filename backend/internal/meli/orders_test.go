@@ -729,7 +729,7 @@ func TestOrderPageReusesScopedPublishedThumbnail(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := OrderScope{Site: "MLB", Logistic: "remote"}
-	page, err := svc.ListOrders(ctx, owner, store, scope, "", 0)
+	page, err := svc.ListOrders(ctx, owner, store, scope, "", "", 0)
 	if err != nil || len(page.Items) != 1 || len(page.Items[0].Items) != 1 ||
 		page.Items[0].Items[0].ImageURL != url {
 		t.Fatalf("scoped thumbnail is missing: page=%+v err=%v", page, err)
