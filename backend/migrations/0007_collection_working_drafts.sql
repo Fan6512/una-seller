@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS app.collection_working_drafts (
     title text NOT NULL CHECK (char_length(title) BETWEEN 1 AND 500),
     description text NOT NULL DEFAULT '' CHECK (char_length(description) <= 20000),
     notes text NOT NULL DEFAULT '' CHECK (char_length(notes) <= 5000),
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 1),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS collection_working_drafts_owner_idx
