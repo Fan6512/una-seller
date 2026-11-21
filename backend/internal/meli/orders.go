@@ -2,6 +2,7 @@ package meli
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,20 +57,24 @@ type OrderLine struct {
 }
 
 type OrderRecord struct {
-	ID          string      `json:"order_id"`
-	PackID      string      `json:"pack_id,omitempty"`
-	Status      string      `json:"status"`
-	CurrencyID  string      `json:"currency_id"`
-	TotalAmount string      `json:"total_amount"`
-	DateCreated time.Time   `json:"date_created"`
-	LastUpdated time.Time   `json:"last_updated"`
-	ShipmentID  string      `json:"shipment_id,omitempty"`
-	Items       []OrderLine `json:"order_items"`
+	ID                     string      `json:"order_id"`
+	PackID                 string      `json:"pack_id,omitempty"`
+	Status                 string      `json:"status"`
+	CurrencyID             string      `json:"currency_id"`
+	TotalAmount            string      `json:"total_amount"`
+	DateCreated            time.Time   `json:"date_created"`
+	LastUpdated            time.Time   `json:"last_updated"`
+	ShipmentID             string      `json:"shipment_id,omitempty"`
+	Items                  []OrderLine `json:"order_items"`
+	PurchaseOrderID        string      `json:"purchase_order_id,omitempty"`
+	PurchaseCostCNY        *string     `json:"purchase_cost_cny,omitempty"`
+	PurchaseTrackingNumber string      `json:"purchase_tracking_number,omitempty"`
 }
 
 type OrderPage struct {
-	Items   []OrderRecord `json:"items"`
-	HasMore bool          `json:"has_more"`
+	Items          []OrderRecord `json:"items"`
+	HasMore        bool          `json:"has_more"`
+	PurchaseFilter string        `json:"purchase_filter"`
 }
 
 type OrderSyncResult struct {
@@ -784,25 +789,37 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
           ELSE '{}'::jsonb END ORDER BY line.pos)
    FROM jsonb_array_elements(o.order_items) WITH ORDINALITY AS line(value,pos)
    LEFT JOIN LATERAL (
-     SELECT NULLIF(p.details->>'secure_thumbnail','') AS url
+     SELECT COALESCE(NULLIF(p.details->>'secure_thumbnail',''),
+       NULLIF(p.details->'pictures'->0->>'secure_url',''),
+       NULLIF(p.details->'pictures'->0->>'url','')) AS url
      FROM app.meli_published_listings p
      WHERE p.store_id=o.store_id AND p.site_id=o.site_id
        AND p.logistic_type=o.logistic_type AND p.listing_id=line.value->>'item_id'
        AND p.details->>'seller_id'=o.seller_id
      LIMIT 1
    ) AS image ON true
- ), '[]'::jsonb)
+ ), '[]'::jsonb),
+ COALESCE(p.purchase_order_id,''),
+ CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
+ COALESCE(p.purchase_tracking_number,'')
  FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
+ LEFT JOIN app.meli_order_purchases p
+   ON p.store_id=o.store_id AND p.site_id=o.site_id AND p.logistic_type=o.logistic_type
+   AND p.seller_id=o.seller_id AND p.order_id=o.order_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4`
 
 func scanOrder(rows pgx.Rows) (OrderRecord, error) {
 	var o OrderRecord
 	var items []byte
+	var cost sql.NullString
 	err := rows.Scan(&o.ID, &o.PackID, &o.Status, &o.CurrencyID, &o.TotalAmount,
-		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items)
+		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost, &o.PurchaseTrackingNumber)
 	if err == nil {
 		err = json.Unmarshal(items, &o.Items)
+	}
+	if cost.Valid {
+		o.PurchaseCostCNY = &cost.String
 	}
 	// Only the official Mercado Libre image CDN can render in the desktop app.
 	for i := range o.Items {
@@ -829,21 +846,24 @@ func orderImageURLAllowed(raw string) bool {
 }
 
 func (s *Service) ListOrders(ctx context.Context, owner, store string,
-	scope OrderScope, status string, offset int) (OrderPage, error) {
-	if !orderScopeValid(scope) || offset < 0 || offset > 100000 || len(status) > 80 {
+	scope OrderScope, status, purchaseLink string, offset int) (OrderPage, error) {
+	if !orderScopeValid(scope) || offset < 0 || offset > 100000 ||
+		!ValidOrderStatus(status) || !ValidPurchaseLinkFilter(purchaseLink) {
 		return OrderPage{}, ErrOrderInvalidResponse
 	}
 	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
 		return OrderPage{}, err
 	}
 	rows, err := s.db.Query(ctx, orderSelect+` AND ($5='' OR o.status=$5)
-ORDER BY o.date_created DESC,o.order_id DESC LIMIT $6 OFFSET $7`,
-		store, owner, scope.Site, scope.Logistic, status, orderPageSize+1, offset)
+ AND ($8='' OR ($8='linked' AND p.purchase_order_id IS NOT NULL)
+   OR ($8='unlinked' AND p.purchase_order_id IS NULL))
+ ORDER BY o.date_created DESC,o.order_id DESC LIMIT $6 OFFSET $7`,
+		store, owner, scope.Site, scope.Logistic, status, orderPageSize+1, offset, purchaseLink)
 	if err != nil {
 		return OrderPage{}, err
 	}
 	defer rows.Close()
-	page := OrderPage{Items: []OrderRecord{}}
+	page := OrderPage{Items: []OrderRecord{}, PurchaseFilter: purchaseLink}
 	for rows.Next() {
 		o, e := scanOrder(rows)
 		if e != nil {
@@ -930,6 +950,10 @@ func OrderErrorCode(err error) string {
 	}
 }
 
+// Purchase filtering happens before paging.
+func ValidPurchaseLinkFilter(value string) bool {
+	return value == "" || value == "linked" || value == "unlinked"
+}
 func ValidOrderStatus(status string) bool {
 	return status == "" || (len(status) <= 80 &&
 		strings.IndexFunc(status, func(c rune) bool {

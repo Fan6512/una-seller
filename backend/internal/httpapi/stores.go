@@ -83,6 +83,10 @@ func (a storeAPI) start(w http.ResponseWriter, r *http.Request) {
 func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 	// Orders stay isolated from listing sync and desktop diagnostics.
 	orderPath := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/")
+	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && orderPath[3] == "image-refresh" {
+		a.orderImageRefresh(w, r, orderPath[0], orderPath[2])
+		return
+	}
 	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && orderPath[3] == "purchase" {
 		a.orderPurchase(w, r, orderPath[0], orderPath[2])
 		return

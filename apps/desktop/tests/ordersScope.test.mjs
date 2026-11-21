@@ -32,13 +32,23 @@ const stores = ["one", "two"].map((id) => ({
 }));
 const deferred = [];
 const purchaseRequests = [];
+const purchaseFilters = [];
 const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD" };
 window.fetch = (path, options) => {
   const { pathname } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
-  if (pathname.endsWith("/orders")) return Promise.resolve(Response.json({ items: [order], has_more: false }));
+  if (pathname.endsWith("/orders")) {
+    const filter = new URL(path, location.href).searchParams.get("purchase") ?? "";
+    purchaseFilters.push(filter);
+    const linked = { ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16" };
+    const rows = filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked];
+    return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: filter }));
+  }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
   if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json(order));
+  if (pathname.endsWith("/orders/103")) return Promise.resolve(Response.json({
+    ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16",
+  }));
   if (pathname.endsWith("/purchase")) {
     return new Promise((resolve) => purchaseRequests.push({ resolve, ...options }));
   }
@@ -66,9 +76,11 @@ const takePurchase = async (method) => {
 };
 const openPurchase = async () => {
   await waitFor(() => document.querySelector(".orders-id"), "order unavailable");
-  flushSync(() => document.querySelector(".orders-id").click());
-  await waitFor(() => document.querySelector("dialog.orders-modal")?.open,
-    "order details did not open in a modal sheet");
+  flushSync(() => document.querySelector(".orders-purchase-cell button").click());
+  await waitFor(() => document.querySelector("dialog.orders-purchase-modal")?.open,
+    "purchase action did not open its own compact dialog");
+  assert(!document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
+    "purchase and order-details must not share a dialog");
   return takePurchase("GET");
 };
 const review = { order_id: "102", review_id: "fixture", offset: 3, reason: "invalid_detail" };
@@ -85,6 +97,23 @@ try {
   createRoot(document.querySelector("main")).render(React.createElement(OrdersPage, {
     installingUpdate: false, beginSync() { active++; return () => active--; },
   }));
+  const filter = (label) => [...document.querySelectorAll(".orders-procurement-toolbar button")]
+    .find((item) => item.textContent === label);
+  await waitFor(() => filter("待关联"), "purchase filter unavailable");
+  assert([...document.querySelectorAll(".orders-heading-actions button")]
+    .some((btn) => btn.textContent === "补全本页主图"), "explicit image backfill missing");
+  flushSync(() => filter("待关联").click());
+  await waitFor(() => purchaseFilters.includes("unlinked") &&
+    document.querySelector(".orders-purchase-cell button")?.textContent === "关联采购",
+    "unlinked filter or purchase CTA missing");
+  flushSync(() => filter("已关联").click());
+  await waitFor(() => purchaseFilters.includes("linked") &&
+    document.querySelector(".orders-purchase-cell strong")?.textContent === "已关联",
+    "linked filter or purchase label missing");
+  assert(document.querySelector(".orders-purchase-cell")?.textContent.includes("采购成本 ¥16"),
+    "linked purchase cost missing");
+  flushSync(() => filter("全部").click());
+  await waitFor(() => purchaseFilters.at(-1) === "", "clear purchase filter not sent");
   for (const [field, value, response] of [
     ["订单店铺", "two", reviewResponse()],
     ["站点和物流模式", "MLB|fulfillment", Response.json(progress)],
@@ -106,7 +135,8 @@ try {
   select("订单店铺", "one");
   const currentRead = await openPurchase();
   const purchase = { order_id: "102", purchase_order_id: "12345678", cost_cny: "16",
-    source: "manual", updated_at: "2026-11-20T00:00:00.123456Z" };
+    source: "manual", warehouse_address: "", purchase_tracking_number: "",
+    updated_at: "2026-11-20T00:00:00.123456Z" };
   currentRead.resolve(Response.json({ purchase }));
   staleRead.resolve(Response.json({ purchase: { ...purchase, purchase_order_id: "87654321" } }));
   const save = () => purchaseButton("保存采购关联");
@@ -116,6 +146,8 @@ try {
   const conflict = await takePurchase("POST");
   const submitted = JSON.parse(conflict.body);
   assert(submitted.purchase_order_id === purchase.purchase_order_id, "previous purchase read entered current form");
+  assert(submitted.warehouse_address === "" && submitted.purchase_tracking_number === "",
+    "compact purchase form must submit explicit forwarding fields");
   assert(submitted.updated_at === purchase.updated_at, "save did not send the full version");
   conflict.resolve(Response.json({ error: "order_purchase_conflict" }, { status: 409 }));
   const reread = () => purchaseButton("重新读取采购关联");
@@ -164,10 +196,10 @@ try {
   await waitFor(() => [...document.querySelectorAll(".orders-filter-note")]
     .some((item) => item.textContent.includes("当前店铺") && item.textContent.includes("已连接")),
     "successful token renewal left the expired banner visible");
-  const sheet = document.querySelector("dialog.orders-modal");
-  assert(sheet?.open, "order sheet closed unexpectedly during purchase workflow");
-  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
-  await waitFor(() => !sheet.open, "order sheet did not close");
+  const sheet = document.querySelector("dialog.orders-purchase-modal");
+  assert(sheet?.open, "purchase dialog closed unexpectedly");
+  flushSync(() => document.querySelector('button[aria-label="关闭采购关联"]').click());
+  await waitFor(() => !sheet.open, "purchase dialog did not close");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";

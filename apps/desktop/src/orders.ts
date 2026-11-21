@@ -23,8 +23,11 @@ export type OrderRecord = {
   last_updated: string;
   shipment_id?: string;
   order_items: OrderLine[];
+  purchase_order_id?: string;
+  purchase_cost_cny?: string | null;
+  purchase_tracking_number?: string;
 };
-export type OrderPage = { items: OrderRecord[]; has_more: boolean };
+export type OrderPage = { items: OrderRecord[]; has_more: boolean; purchase_filter?: string };
 export type OrderProgress = { saved: number; processed: number; has_more: boolean; next_offset: number };
 export type OrderSyncState = { next_offset: number; can_reset: boolean; review?: OrderReview };
 export type OrderReview = { order_id: string; review_id: string; offset: number; reason: string };
@@ -45,6 +48,8 @@ export class OrderRequestError extends Error {
 
 const messages: Record<string, string> = {
   order_purchase_conflict: "采购关联已被修改，请重新读取后再保存。",
+  order_purchase_filter_invalid: "采购关联筛选无效，请选择全部、待关联或已关联。",
+  order_image_unavailable: "官方未返回可信的商品主图；请先在已刊登商品中同步该商品。",
   order_unavailable: "订单服务暂不可用，请稍后重新读取。",
   order_not_found: "当前订单不存在，或此店铺无权访问。",
   order_scope_required: "请先选择已验证的站点和物流类型。",
@@ -96,13 +101,28 @@ function pathWithTail(scope: OrderScope, tail: string) {
   return "/api/v1/stores/" + encodeURIComponent(scope.storeId) + "/orders/" + encodeURIComponent(tail) +
     "?" + new URLSearchParams({ site: scope.site, logistic_type: scope.logistic }).toString();
 }
-export function listOrders(scope: OrderScope, status: string, offset: number, signal?: AbortSignal) {
+export function listOrders(scope: OrderScope, status: string, purchaseLink: "" | "linked" | "unlinked",
+  offset: number, signal?: AbortSignal) {
   const query = new URLSearchParams({
     site: scope.site, logistic_type: scope.logistic, offset: String(offset),
   });
   if (status) query.set("status", status);
+  if (purchaseLink) query.set("purchase", purchaseLink);
   return orderRead<OrderPage>("/api/v1/stores/" + encodeURIComponent(scope.storeId) +
-    "/orders?" + query.toString(), signal);
+    "/orders?" + query.toString(), signal).then((page) => {
+    if (purchaseLink && (page.purchase_filter !== purchaseLink ||
+      page.items.some((order) => Boolean(order.purchase_order_id) !== (purchaseLink === "linked")))) {
+      throw new Error("服务端版本不支持采购筛选，或返回了不一致的关联结果。请先升级 Go 服务端再刷新订单。");
+    }
+    return page;
+  });
+}
+// A user-clicked, read-only official item query which only caches a trusted image URL.
+export function refreshOrderImage(scope: OrderScope, id: string, signal?: AbortSignal) {
+  if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
+  return storeRequest<OrderRecord>(pathWithTail(scope, id + "/image-refresh"), "POST",
+    signal ? AbortSignal.any([signal, AbortSignal.timeout(25_000)]) : AbortSignal.timeout(25_000),
+    false, undefined, orderErrorLabel);
 }
 export function getOrder(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");

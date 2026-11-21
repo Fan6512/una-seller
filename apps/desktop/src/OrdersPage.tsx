@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
 import {
   getOrder, getOrderSyncState, listOrders, orderDate, orderMoney, orderStatusLabel,
-  OrderRequestError, resetOrderCursor, skipOrder, syncOrders,
+  OrderRequestError, refreshOrderImage, resetOrderCursor, skipOrder, syncOrders,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
@@ -127,13 +127,17 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 }) {
   const marketplaces = store?.marketplaces ?? [];
   const [searchText, setSearchText] = useState("");
+  const [purchaseLink, setPurchaseLink] = useState<"" | "linked" | "unlinked">("");
   const [offset, setOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
   const [page, setPage] = useState<OrderPage>({ items: [], has_more: false });
   const [loading, setLoading] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
   const [listError, setListError] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [purchaseSelectedId, setPurchaseSelectedId] = useState("");
   const detailDialogRef = useRef<HTMLDialogElement>(null);
+  const purchaseDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<OrderRecord | null>(null);
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
@@ -147,10 +151,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [purchase, setPurchase] = useState<OrderPurchase | null>(null);
   const [purchaseNumber, setPurchaseNumber] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
+  const [warehouseAddress, setWarehouseAddress] = useState("");
+  const [warehouseOptions, setWarehouseOptions] = useState<string[]>([]);
+  const [purchaseTracking, setPurchaseTracking] = useState("");
   const [purchaseBusy, setPurchaseBusy] = useState(false);
   const [purchaseError, setPurchaseError] = useState("");
   const [purchaseMessage, setPurchaseMessage] = useState("");
   const syncAbort = useRef<AbortController | null>(null);
+  const imageAbort = useRef<AbortController | null>(null);
 
   const reviewAbort = useRef<AbortController | null>(null);
   const purchaseRequest = useRef<AbortController | null>(null);
@@ -159,16 +167,24 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
   useLayoutEffect(() => () => {
     syncAbort.current?.abort();
+    imageAbort.current?.abort();
     reviewAbort.current?.abort();
   }, []);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
-  const closeOrder = () => {
+  const closeOrder = () => setSelectedId("");
+  const closePurchase = () => {
     if (purchaseBusy) return;
     if (purchaseReady && (purchaseNumber !== (purchase?.purchase_order_id ?? "") ||
-        purchaseCost !== (purchase?.cost_cny ?? "")) &&
-        !window.confirm("采购信息尚未保存，确定关闭订单详情吗？")) return;
+        purchaseCost !== (purchase?.cost_cny ?? "") ||
+        warehouseAddress !== (purchase?.warehouse_address ?? "") ||
+        purchaseTracking !== (purchase?.purchase_tracking_number ?? "")) &&
+        !window.confirm("采购信息尚未保存，确定关闭采购窗口吗？")) return;
+    setPurchaseSelectedId("");
+  };
+  const openPurchase = (id: string) => {
     setSelectedId("");
+    setPurchaseSelectedId(id);
   };
   useLayoutEffect(() => {
     const dialog = detailDialogRef.current;
@@ -176,6 +192,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     if (selectedId && !dialog.open) dialog.showModal();
     if (!selectedId && dialog.open) dialog.close();
   }, [selectedId]);
+  useLayoutEffect(() => {
+    const dialog = purchaseDialogRef.current;
+    if (!dialog) return;
+    if (purchaseSelectedId && !dialog.open) dialog.showModal();
+    if (!purchaseSelectedId && dialog.open) dialog.close();
+  }, [purchaseSelectedId]);
   // Server cursor and Review survive page refresh and process restarts.
   useEffect(() => {
     const controller = new AbortController();
@@ -199,7 +221,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
     setLoading(true);
     setListError("");
-    void listOrders(scope, statusFilter, offset, controller.signal).then((value) => {
+    void listOrders(scope, statusFilter, purchaseLink, offset, controller.signal).then((value) => {
       if (!controller.signal.aborted) setPage(value);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
@@ -209,7 +231,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [scope?.storeId, scope?.site, scope?.logistic, statusFilter, offset, nonce]);
+  }, [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset, nonce]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -238,34 +260,45 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setPurchase(null);
     setPurchaseNumber("");
     setPurchaseCost("");
+    setWarehouseAddress("");
+    setPurchaseTracking("");
+    setWarehouseOptions([]);
     setPurchaseError("");
     setPurchaseMessage("");
-    if (!scope || !selectedId) return () => controller.abort();
-    void loadPurchase(scope, selectedId, controller.signal).then((value) => {
+    if (!scope || !purchaseSelectedId) return () => controller.abort();
+    void loadPurchase(scope, purchaseSelectedId, controller.signal).then((value) => {
       if (controller.signal.aborted) return;
       setPurchase(value.purchase);
       setPurchaseNumber(value.purchase?.purchase_order_id ?? "");
       setPurchaseCost(value.purchase?.cost_cny ?? "");
+      setWarehouseAddress(value.purchase?.warehouse_address ?? "");
+      setPurchaseTracking(value.purchase?.purchase_tracking_number ?? "");
+      setWarehouseOptions(value.warehouse_addresses ?? []);
       setPurchaseReady(true);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setPurchaseError(displayError(error));
     });
     return () => controller.abort();
-  }, [scope, selectedId, purchaseReload]);
+  }, [scope, purchaseSelectedId, purchaseReload]);
 
   const savePurchaseInfo = async () => {
     const signal = purchaseRequest.current?.signal;
-    if (!scope || !selectedId || !purchaseReady || purchaseBusy || !purchaseNumber || !signal) return;
+    if (!scope || !purchaseSelectedId || !purchaseReady || purchaseBusy || !purchaseNumber || !signal) return;
     setPurchaseBusy(true);
     setPurchaseError("");
     setPurchaseMessage("");
     try {
-      const result = await savePurchase(scope, selectedId, purchaseNumber.trim(), purchaseCost.trim(), purchase?.updated_at ?? null, signal);
+      const result = await savePurchase(scope, purchaseSelectedId, purchaseNumber.trim(), purchaseCost.trim(),
+        purchase?.updated_at ?? null, signal, warehouseAddress.trim(), purchaseTracking.trim());
       if (signal.aborted) return;
       setPurchase(result);
       setPurchaseNumber(result.purchase_order_id);
       setPurchaseCost(result.cost_cny ?? "");
-      setPurchaseMessage("采购信息已保存。后续优先接入 1688 官方买家授权与订单金额查询。");
+      setWarehouseAddress(result.warehouse_address ?? "");
+      setPurchaseTracking(result.purchase_tracking_number ?? "");
+      setNotice("采购关联已保存，金额为人工录入；未自动推送至货代仓。");
+      setPurchaseSelectedId("");
+      loadRows();
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof OrderRequestError && error.status === 409) setPurchaseReady(false);
@@ -280,11 +313,50 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     if (!needle) return page.items;
     return page.items.filter((order) =>
       order.order_id.includes(needle) || order.pack_id?.includes(needle) ||
+      order.purchase_order_id?.includes(needle) ||
       order.shipment_id?.includes(needle) ||
       order.order_items.some((item) => item.title.toLowerCase().includes(needle) ||
         item.item_id.toLowerCase().includes(needle)));
   }, [page.items, searchText]);
 
+  useEffect(() => () => { imageAbort.current?.abort(); }, 
+    [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
+  const refreshPageImages = async () => {
+    if (!scope || imageBusy || running || installingUpdate || loading) return;
+    const snapshot = page.items.filter((order) =>
+      order.order_items.some((item) => !item.image_url)).slice(0, 5);
+    if (!snapshot.length) {
+      setNotice("本页已有可用主图，或平台未返回商品明细。");
+      return;
+    }
+    const controller = new AbortController();
+    imageAbort.current = controller;
+    setImageBusy(true);
+    let completed = 0;
+    try {
+      for (const order of snapshot) {
+        if (controller.signal.aborted) break;
+        try {
+          const updated = await refreshOrderImage(scope, order.order_id, controller.signal);
+          if (controller.signal.aborted) break;
+          setPage((previous) => ({ ...previous, items: previous.items.map((item) =>
+            item.order_id === updated.order_id ? updated : item) }));
+          completed++;
+        } catch (error) {
+          if (controller.signal.aborted) break;
+          setNotice("已补全 " + completed + " 笔订单图片；之后停止：" + displayError(error) +
+            "。不自动重试，请核对服务端版本和官方刊登权限。");
+          return;
+        }
+      }
+      if (!controller.signal.aborted) {
+        setNotice("本次尝试补全 " + completed + " 笔订单的主图。剩余缺图可再次点击；不存在可信图片时仍显示暂无图片。");
+      }
+    } finally {
+      if (imageAbort.current === controller) imageAbort.current = null;
+      if (!controller.signal.aborted) setImageBusy(false);
+    }
+  };
   const selectStatus = (value: string) => {
     setStatusFilter(value);
     setOffset(0);
@@ -415,6 +487,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <button className="refresh-button" type="button" onClick={() => void reloadStores()}
             disabled={storeRefreshing || running}>{storeRefreshing ? "读取店铺中…" : "刷新店铺状态"}</button>
           <button className="refresh-button" type="button" onClick={loadRows} disabled={loading || running}>刷新订单</button>
+          <button className="refresh-button" type="button" disabled={!scope || imageBusy || loading || running}
+            onClick={() => void refreshPageImages()}>{imageBusy ? "补图中…" : "补全本页主图"}</button>
           {running ? (
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
           ) : (
@@ -472,6 +546,19 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           </button>)}
           <span className="orders-tabs-meta">本页 {page.items.length} 笔 · 每页 {PAGE_SIZE} 笔</span>
         </div>
+        <div className="orders-procurement-toolbar" role="group" aria-label="1688采购关联筛选">
+          <strong>1688 采购</strong>
+          {([
+            { value: "", label: "全部" },
+            { value: "unlinked", label: "待关联" },
+            { value: "linked", label: "已关联" },
+          ] as const).map((item) => <button type="button" key={item.value}
+            aria-pressed={purchaseLink === item.value}
+            onClick={() => { setPurchaseLink(item.value); setOffset(0); setSearchText(""); }}>
+            {item.label}
+          </button>)}
+          <span>按数据库关联状态筛选 · 不代表厂家已发货</span>
+        </div>
 
         {running && <div className="orders-notice" role="status">
           正在同步：已完成 {completedBatches} 批，本次已保存 {progress?.saved ?? 0} 笔。
@@ -500,15 +587,15 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <div className="orders-table-scroll">
               <table className="orders-table">
                 <thead><tr>
-                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>付款状态</th><th title="平台配送记录标识，不代表已发货，也不等于快递运单号">平台物流</th><th>下单时间</th><th>操作</th>
+                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>1688 采购关联</th><th>付款状态</th><th title="采购快递和国际段是两种不同运单；Shipment ID 只是内部记录号">采购 / 平台物流</th><th>下单时间</th><th>操作</th>
                 </tr></thead>
                 <tbody>
-                  {loading && page.items.length === 0 && <tr><td colSpan={7} className="orders-table-empty">正在读取订单…</td></tr>}
-                  {!loading && visibleOrders.length === 0 && <tr><td colSpan={7} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
+                  {loading && page.items.length === 0 && <tr><td colSpan={8} className="orders-table-empty">正在读取订单…</td></tr>}
+                  {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
                   {visibleOrders.map((order) => <tr key={order.order_id} className={selectedId === order.order_id ? "selected" : ""}>
                     <td><button type="button" className="orders-id" onClick={() => openOrder(order.order_id)}>{order.order_id}</button>
-                      <span className="orders-subline">{SITE_NAMES[scope?.site ?? ""] ?? scope?.site} · {scope?.logistic}</span>
-                      {order.pack_id && <span className="orders-subline">Pack：{order.pack_id}</span>}
+                      <span className="orders-subline">{(store?.nickname || store?.seller_id || "店铺").trim().slice(0, 12)}（{SITE_NAMES[scope?.site ?? ""] ?? scope?.site}） · {scope?.logistic === "remote" ? "自发货" : scope?.logistic === "fulfillment" ? "海外仓" : scope?.logistic}</span>
+                      {order.pack_id && <span className="orders-subline">组合包：{order.pack_id}</span>}
                     </td>
                     <td className="orders-product-cell">
                       <div className="orders-product-preview">
@@ -523,8 +610,18 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       </div>
                     </td>
                     <td><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong></td>
+                    <td className="orders-purchase-cell">
+                      {order.purchase_order_id ? <>
+                        <strong>已关联</strong><span title={order.purchase_order_id}>{order.purchase_order_id}</span>
+                        <small>{order.purchase_cost_cny != null ? "采购成本 ¥" + order.purchase_cost_cny : "采购成本待补录"}</small>
+                      </> : <button className="orders-table-action" type="button" onClick={() => openPurchase(order.order_id)}>关联采购</button>}
+                    </td>
                     <td><span className={"orders-status " + safeOrderStatus(order.status)}>{orderStatusLabel(order.status)}</span></td>
-                    <td>{order.shipment_id ? <span className="orders-tracking" title="仅表示已关联平台物流记录，不代表已发货"><small>Shipment ID</small>{order.shipment_id}</span> : <span className="orders-muted">暂无平台物流记录</span>}</td>
+                    <td className="orders-shipping-refs">
+                      <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
+                      <span><small>平台运单</small>待官方读取</span>
+                      {order.shipment_id && <span className="orders-muted" title="Shipment ID 是内部物流记录，不是快递运单号">Shipment ID：{order.shipment_id}</span>}
+                    </td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
                     <td><button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button></td>
                   </tr>)}
@@ -545,7 +642,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <div className="orders-detail" aria-label="订单详情">
               <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[scope?.site ?? ""] ?? scope?.site}</small>
                 <h2 id="orders-detail-title">{selectedId || "订单详情"}</h2></div>
-                <button type="button" aria-label="关闭订单详情" disabled={purchaseBusy} onClick={closeOrder}>×</button>
+                <button type="button" aria-label="关闭订单详情" onClick={closeOrder}>×</button>
               </header>
               <div className="orders-modal-scroll">
             {detailLoading && <p className="orders-detail-loading">正在读取最新订单详情…</p>}
@@ -575,38 +672,25 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <h3>订单与物流</h3>
                 <dl className="orders-detail-fields">
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
-                  <dt>Pack ID</dt><dd>{detail.pack_id || "—"}</dd>
+                  <dt>组合包编号（Pack ID）</dt><dd>{detail.pack_id || "—"} <small>同次购买关联订单的组合编号，并非快递运单</small></dd>
                   <dt>物流模式</dt><dd>{scope?.logistic ?? "—"}</dd>
-                  <dt>平台物流记录号</dt><dd>{detail.shipment_id || "未返回"} <small>（Shipment ID）</small></dd>
+                  <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
+                  <dt>平台运单号</dt><dd>待官方 Shipment 接口查询</dd>
+                  <dt>平台物流记录号</dt><dd>{detail.shipment_id || "未返回"} <small>（Shipment ID，并非运单号）</small></dd>
                 </dl>
                 <p className="orders-muted">此处的 Shipment ID 并非物流运单号；当前订单 API 不含追踪状态、收件人地址、电话或面单，不能据此认定订单已发货。</p>
               </section>
-              <section className="orders-detail-block orders-purchase-block">
-                <div className="orders-detail-block-title"><h3>1688 采购关联</h3><span>{purchase ? "已关联" : "待关联"}</span></div>
-                <p>先保存实际 1688 采购单号与人民币成本。后续优先通过 1688 买家账号授权读取订单金额及采购物流；浏览器插件仅作授权接口不可用时的备选，不会虚构利润。</p>
-                <div className="orders-purchase-form">
-                  <label>1688 采购订单号
-                    <input type="text" inputMode="numeric" maxLength={40} placeholder="输入 1688 采购单号"
-                      value={purchaseNumber} disabled={!purchaseReady || purchaseBusy} onChange={(event) => setPurchaseNumber(event.target.value)}
-                      aria-label="1688 采购订单号" />
-                  </label>
-                  <label>采购总金额 CNY（可选）
-                    <input type="text" inputMode="decimal" maxLength={20} placeholder="例如 16.50，可稍后补录"
-                      value={purchaseCost} disabled={!purchaseReady || purchaseBusy} onChange={(event) => setPurchaseCost(event.target.value)}
-                      aria-label="人民币采购总金额" />
-                  </label>
-                  {purchaseError && <p className="orders-alert" role="alert">{purchaseError}</p>}
-                  {purchaseMessage && <p className="orders-purchase-success" role="status">{purchaseMessage}</p>}
-                  <div className="orders-purchase-actions">
-                    <button type="button" className="orders-main-button" disabled={!purchaseReady || purchaseBusy || !/^\d{8,40}$/.test(purchaseNumber)}
-                      onClick={() => void savePurchaseInfo()}>{purchaseBusy ? "保存中…" : "保存采购关联"}</button>
-                    {!purchaseReady && purchaseError && <button type="button"
-                      onClick={() => setPurchaseReload((n) => n + 1)}>重新读取采购关联</button>}
-                    <a href="https://www.1688.com/" target="_blank" rel="noopener noreferrer">打开 1688</a>
-                  </div>
-                  {purchase && <p className="orders-purchase-state">已保存采购单：{purchase.purchase_order_id}
-                    {purchase.cost_cny !== null ? " · 人民币 ¥" + purchase.cost_cny : " · 金额待获取"}</p>}
+              <section className="orders-detail-block">
+                <div className="orders-detail-block-title">
+                  <h3>1688 采购关联</h3>
+                  <button type="button" className="orders-table-action"
+                    onClick={() => openPurchase(detail.order_id)}>
+                    {detail.purchase_order_id ? "编辑采购关联" : "关联采购"}</button>
                 </div>
+                <p className="orders-muted">采购单：{detail.purchase_order_id || "待关联"}；货代签收和采购快递需要另行核实。</p>
+              </section>
+              <section className="orders-detail-block">
+                <h3>订单履约流程</h3>
                 <div className="orders-purchase-followup">
                   <strong>采购代发货流程 · 两张订单关联</strong>
                   <span>一张是美客多买家的销售订单，一张是向 1688 厂家采购的订单。中间由货代仓接收，再交接官方或指定承运商扫描发货。</span>
@@ -622,13 +706,71 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   </ol>
                   <span>货代仓签收、官方物流接收、买家签收是三个不同事件；当前没有实时状态数据时不显示为已完成。</span>
                 </div>
-                <button type="button" disabled className="orders-shipping-disabled">提交发货（接口待接入）</button>
               </section>
             </>}
               </div>
             </div>
           </dialog>
         </div>
+        <dialog ref={purchaseDialogRef} className="orders-modal orders-purchase-modal"
+          aria-label="1688采购关联" onCancel={(event) => { event.preventDefault(); closePurchase(); }}
+          onClose={() => { if (purchaseSelectedId) setPurchaseSelectedId(""); }}>
+          <header className="orders-detail-head">
+            <div><small>手动采购信息 · 不自动推送货代仓</small>
+              <h2>关联 1688 采购</h2></div>
+            <button type="button" aria-label="关闭采购关联" disabled={purchaseBusy}
+              onClick={closePurchase}>×</button>
+          </header>
+          <div className="orders-purchase-compact">
+            <p className="orders-muted">美客多订单：{purchaseSelectedId}</p>
+            <p className="orders-muted">填写实际货代仓和采购运单；仅保存关联，不会向货小易自动推单。</p>
+            <div className="orders-purchase-form">
+              <label>货代仓收货地址
+                <select aria-label="货代仓地址选择" disabled={!purchaseReady || purchaseBusy}
+                  value={warehouseOptions.includes(warehouseAddress) ? warehouseAddress : warehouseAddress ? "custom" : ""}
+                  onChange={(event) => setWarehouseAddress(event.target.value === "custom" ? "" : event.target.value)}>
+                  <option value="">不指定仓库</option>
+                  {warehouseOptions.map((address) => <option key={address} value={address}>{address}</option>)}
+                  <option value="custom">手动录入新地址</option>
+                </select>
+                <input type="text" maxLength={300} aria-label="货代仓收货地址"
+                  placeholder="填写仓库收货地址，保存后供下次选择"
+                  value={warehouseAddress} disabled={!purchaseReady || purchaseBusy}
+                  onChange={(event) => setWarehouseAddress(event.target.value)} />
+              </label>
+              <label>1688 采购订单号
+                <input type="text" inputMode="numeric" maxLength={40}
+                  placeholder="填写实际采购单号" aria-label="1688 采购订单号"
+                  value={purchaseNumber} disabled={!purchaseReady || purchaseBusy}
+                  onChange={(event) => setPurchaseNumber(event.target.value)} />
+              </label>
+              <label>采购金额 CNY（可选）
+                <input type="text" inputMode="decimal" maxLength={20}
+                  placeholder="例如 16.50" aria-label="人民币采购总金额"
+                  value={purchaseCost} disabled={!purchaseReady || purchaseBusy}
+                  onChange={(event) => setPurchaseCost(event.target.value)} />
+              </label>
+              <label>国内采购快递单号（可选）
+                <input type="text" maxLength={80} aria-label="国内采购运单号"
+                  placeholder="厂家发货后填写实际快递单号"
+                  value={purchaseTracking} disabled={!purchaseReady || purchaseBusy}
+                  onChange={(event) => setPurchaseTracking(event.target.value)} />
+              </label>
+              {purchaseError && <p className="orders-alert" role="alert">{purchaseError}</p>}
+              {purchaseMessage && <p className="orders-purchase-success" role="status">{purchaseMessage}</p>}
+              {purchase && <p className="orders-purchase-state">已关联：{purchase.purchase_order_id}
+                {purchase.cost_cny !== null ? " · ¥" + purchase.cost_cny : " · 金额待补"}</p>}
+              <div className="orders-purchase-actions">
+                <button type="button" className="orders-main-button"
+                  disabled={!purchaseReady || purchaseBusy || !/^\d{8,40}$/.test(purchaseNumber)}
+                  onClick={() => void savePurchaseInfo()}>{purchaseBusy ? "保存中…" : "保存采购关联"}</button>
+                {!purchaseReady && purchaseError && <button type="button"
+                  onClick={() => setPurchaseReload((n) => n + 1)}>重新读取采购关联</button>}
+                <button type="button" disabled={purchaseBusy} onClick={closePurchase}>取消</button>
+              </div>
+            </div>
+          </div>
+        </dialog>
       </>}
     </div>
   );
