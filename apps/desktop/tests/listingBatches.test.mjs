@@ -4,6 +4,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import ts from "typescript";
 import { runListingBatches } from "../src/listingBatches.ts";
+import { checkStoresOnLogin, storeHealthFromList } from "../src/storeLoginCheck.ts";
 
 const storesURL = new URL("../src/stores.ts", import.meta.url).href;
 const diagnosticsSource = readFileSync(new URL("../src/DevelopmentDiagnostics.tsx", import.meta.url), "utf8");
@@ -391,4 +392,49 @@ test("an expired login does not replay a POST", async (t) => {
   const fetch = t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 401 }));
   await assert.rejects(storeRequest(mlm, "POST", undefined, true), /确认状态后重新发起/);
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+
+test("login verifies each eligible store once and preserves a failed verification warning", async () => {
+  const initial = [
+    { id: "one", status: "connected", marketplaces_status: "verified" },
+    { id: "two", status: "token_expired", marketplaces_status: "verified" },
+  ];
+  const fresh = initial.map((item) => ({ ...item, status: "connected" }));
+  const reads = [];
+  const checks = [];
+  const result = await checkStoresOnLogin(
+    async (force) => { reads.push(force); return reads.length === 1 ? initial : fresh; },
+    async (id, manual) => {
+      checks.push([id, manual]);
+      if (id === "two") throw new Error("network error");
+    },
+  );
+  assert.deepEqual(reads, [true, true], "only the initial and final store GETs are needed");
+  assert.deepEqual(checks, [["one", false], ["two", false]], "one automatic POST per eligible store");
+  assert.equal(result.health.status, "attention", "an ambiguous check must not show connected");
+  assert.deepEqual([...result.failedStoreIds], ["two"]);
+  assert.equal(storeHealthFromList(fresh, result.failedStoreIds).status, "attention",
+    "later plain GETs must not override a failed connection check");
+  result.failedStoreIds.delete("two"); // confirmed manual check for this store
+  assert.equal(storeHealthFromList(fresh, result.failedStoreIds).status, "connected",
+    "only a successful recheck should clear the warning");
+});
+
+test("login leaves terminal/absent stores alone instead of attempting OAuth rotation", async () => {
+  const states = [
+    { id: "reauth", status: "reauth_required", marketplaces_status: "verified" },
+    { id: "uncertain", status: "refresh_unknown", marketplaces_status: "verified" },
+    { id: "disconnected", status: "disconnected", marketplaces_status: "verified" },
+  ];
+  let reads = 0;
+  let postCalls = 0;
+  const result = await checkStoresOnLogin(async () => { reads++; return states; }, async () => { postCalls++; });
+  assert.equal(reads, 1);
+  assert.equal(postCalls, 0);
+  assert.equal(result.health.status, "attention");
+  assert.equal(result.failedStoreIds.size, 0);
+  const empty = await checkStoresOnLogin(async () => [], async () => { postCalls++; });
+  assert.equal(empty.health.status, "empty");
+  assert.equal(postCalls, 0);
 });
