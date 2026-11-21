@@ -63,7 +63,7 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 		} else if errors.Is(err, collections.ErrDraftConverted) {
 			writeJSON(w, http.StatusConflict, map[string]string{
 				"error": "working draft is read-only after product-box approval; edit the product instead",
-				"code": "WORKING_DRAFT_CONVERTED",
+				"code":  "WORKING_DRAFT_CONVERTED",
 			})
 		} else if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, http.StatusConflict, "working draft updated; reload before saving")
