@@ -83,3 +83,15 @@
 @media (max-width: 700px) {
   .product-card-grid { max-height: 420px; min-height: 200px; }
 }
+
+/* Converted source is not an editable work draft anymore. */
+.converted-draft-hint {
+  margin: 18px 0; padding: 15px 18px; border-radius: 10px;
+  border: 1px solid #c9d8f1; background: #f4f8ff;
+  color: #335887; font-size: 13px; line-height: 1.7;
+}
+.converted-card-label {
+  display: inline-flex; align-items: center; align-self: start;
+  border-radius: 999px; background: #eaf3ff; color: #345f9f;
+  padding: 3px 9px; font-size: 11px; font-weight: 700;
+}
