@@ -18,10 +18,10 @@ var cbtCategoryID = regexp.MustCompile(`^CBT[0-9]{1,15}$`)
 // CBTCategorySuggestion is a suggestion, not a validated marketplace listing
 // category. User must confirm and site-specific fields are checked at upload.
 type CBTCategorySuggestion struct {
-	CategoryID string `json:"category_id"`
+	CategoryID   string `json:"category_id"`
 	CategoryName string `json:"category_name"`
-	DomainID string `json:"domain_id"`
-	DomainName string `json:"domain_name"`
+	DomainID     string `json:"domain_id"`
+	DomainName   string `json:"domain_name"`
 }
 
 func (s *Service) PredictCBTCategories(ctx context.Context, owner, editedEnglishTitle string) ([]CBTCategorySuggestion, error) {
@@ -33,27 +33,42 @@ func (s *Service) PredictCBTCategories(ctx context.Context, owner, editedEnglish
 	readCtx, cancel := context.WithTimeout(ctx, 9*time.Second)
 	defer cancel()
 	stores, err := s.List(readCtx, owner)
-	if err != nil {return nil,err}
-	var storeID string
-	for _,store:= range stores {
-		if store.Status=="connected" {storeID=store.ID;break}
+	if err != nil {
+		return nil, err
 	}
-	if storeID=="" {return nil,ErrCBTPredictorStore}
+	var storeID string
+	for _, store := range stores {
+		if store.Status == "connected" {
+			storeID = store.ID
+			break
+		}
+	}
+	if storeID == "" {
+		return nil, ErrCBTPredictorStore
+	}
 	auth, err := s.RequireStoreConnection(readCtx, owner, storeID)
-	if err!=nil{return nil,err}
+	if err != nil {
+		return nil, err
+	}
 	var raw []CBTCategorySuggestion
 	// Global Selling official CBT predictor: no country/marketplace selection,
 	// no mutation, no access token or supplier information returned to desktop.
-	_,err=s.listingGET(readCtx,auth.AccessToken,
-		"/marketplace/domain_discovery/search?q="+url.QueryEscape(title),&raw,nil)
-	if err!=nil{return nil,err}
-	suggestions:=make([]CBTCategorySuggestion,0,8)
-	seen:=make(map[string]bool)
-	for _,item:=range raw {
-		if !cbtCategoryID.MatchString(item.CategoryID)||seen[item.CategoryID] {continue}
-		seen[item.CategoryID]=true
-		suggestions=append(suggestions,item)
-		if len(suggestions)==8 {break}
+	_, err = s.listingGET(readCtx, auth.AccessToken,
+		"/marketplace/domain_discovery/search?q="+url.QueryEscape(title), &raw, nil)
+	if err != nil {
+		return nil, err
 	}
-	return suggestions,nil
+	suggestions := make([]CBTCategorySuggestion, 0, 8)
+	seen := make(map[string]bool)
+	for _, item := range raw {
+		if !cbtCategoryID.MatchString(item.CategoryID) || seen[item.CategoryID] {
+			continue
+		}
+		seen[item.CategoryID] = true
+		suggestions = append(suggestions, item)
+		if len(suggestions) == 8 {
+			break
+		}
+	}
+	return suggestions, nil
 }
