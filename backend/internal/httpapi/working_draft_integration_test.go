@@ -157,7 +157,7 @@ func TestWorkingDraftOwnerAndRecaptureIsolation(t *testing.T) {
 	if w := request(http.MethodPut, `{"title":"hello","unknown":1}`, "application/json", ""); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown key should be 400: %d", w.Code)
 	}
-	if w := request(http.MethodPut, strings.Repeat("x", (256<<10)+1), "application/json", ""); w.Code != http.StatusRequestEntityTooLarge {
+	if w := request(http.MethodPut, `{"title":"A","description":"`+strings.Repeat("x", (256<<10)+1)+`","notes":"","expected_revision":3}`, "application/json", ""); w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized body should be 413: %d", w.Code)
 	}
 	if w := request(http.MethodPost, "", "", ""); w.Code != http.StatusMethodNotAllowed ||
