@@ -8,6 +8,8 @@ export type OrderPurchase = {
   purchase_order_id: string;
   cost_cny: string | null;
   source: "manual" | "extension";
+  warehouse_address?: string;
+  purchase_tracking_number?: string;
   updated_at: string;
 };
 
@@ -19,15 +21,21 @@ function purchasePath(scope: OrderScope, orderId: string) {
 }
 
 export async function loadPurchase(scope: OrderScope, orderId: string, signal?: AbortSignal) {
-  return orderRead<{ purchase: OrderPurchase | null }>(purchasePath(scope, orderId), signal);
+  return orderRead<{ purchase: OrderPurchase | null; warehouse_addresses?: string[] }>(purchasePath(scope, orderId), signal);
 }
 
 // Explicit user action only. Do not automatically repeat a POST after ambiguous network failure.
 export async function savePurchase(scope: OrderScope, orderId: string, purchaseId: string,
-  costCNY: string, updatedAt: string | null, signal: AbortSignal) {
+  costCNY: string, updatedAt: string | null, signal: AbortSignal, warehouse = "", tracking = "") {
   if (!/^\d{8,40}$/.test(purchaseId)) throw new Error("1688 采购订单号应为 8–40 位数字");
   if (costCNY && !/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/.test(costCNY)) {
     throw new Error("采购金额应为非负人民币金额，最多保留两位小数");
+  }
+  if (warehouse.length > 300 || /[\r\n\0]/.test(warehouse)) {
+    throw new Error("货代仓地址最长 300 字，不能包含换行");
+  }
+  if (tracking && !/^[A-Za-z0-9][A-Za-z0-9_/-]{2,79}$/.test(tracking)) {
+    throw new Error("国内采购运单号应为 3–80 位字母、数字、横线或斜线");
   }
   const diagnostic = beginRequestDiagnostic(purchasePath(scope, orderId), "POST");
   const lifetime = authLifetime();
@@ -48,7 +56,8 @@ export async function savePurchase(scope: OrderScope, orderId: string, purchaseI
     response = await fetch(apiBase + purchasePath(scope, orderId), {
       method: "POST", cache: "no-store", signal: timedSignal,
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ purchase_order_id: purchaseId, cost_cny: costCNY, updated_at: updatedAt }),
+      body: JSON.stringify({ purchase_order_id: purchaseId, cost_cny: costCNY,
+        warehouse_address: warehouse, purchase_tracking_number: tracking, updated_at: updatedAt }),
     });
     diagnostic?.("response_headers", response);
   } catch (error) {

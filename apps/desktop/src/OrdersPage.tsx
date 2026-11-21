@@ -150,6 +150,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [purchase, setPurchase] = useState<OrderPurchase | null>(null);
   const [purchaseNumber, setPurchaseNumber] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
+  const [warehouseAddress, setWarehouseAddress] = useState("");
+  const [warehouseOptions, setWarehouseOptions] = useState<string[]>([]);
+  const [purchaseTracking, setPurchaseTracking] = useState("");
   const [purchaseBusy, setPurchaseBusy] = useState(false);
   const [purchaseError, setPurchaseError] = useState("");
   const [purchaseMessage, setPurchaseMessage] = useState("");
@@ -170,7 +173,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const closePurchase = () => {
     if (purchaseBusy) return;
     if (purchaseReady && (purchaseNumber !== (purchase?.purchase_order_id ?? "") ||
-        purchaseCost !== (purchase?.cost_cny ?? "")) &&
+        purchaseCost !== (purchase?.cost_cny ?? "") ||
+        warehouseAddress !== (purchase?.warehouse_address ?? "") ||
+        purchaseTracking !== (purchase?.purchase_tracking_number ?? "")) &&
         !window.confirm("采购信息尚未保存，确定关闭采购窗口吗？")) return;
     setPurchaseSelectedId("");
   };
@@ -252,6 +257,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setPurchase(null);
     setPurchaseNumber("");
     setPurchaseCost("");
+    setWarehouseAddress("");
+    setPurchaseTracking("");
+    setWarehouseOptions([]);
     setPurchaseError("");
     setPurchaseMessage("");
     if (!scope || !purchaseSelectedId) return () => controller.abort();
@@ -260,6 +268,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       setPurchase(value.purchase);
       setPurchaseNumber(value.purchase?.purchase_order_id ?? "");
       setPurchaseCost(value.purchase?.cost_cny ?? "");
+      setWarehouseAddress(value.purchase?.warehouse_address ?? "");
+      setPurchaseTracking(value.purchase?.purchase_tracking_number ?? "");
+      setWarehouseOptions(value.warehouse_addresses ?? []);
       setPurchaseReady(true);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setPurchaseError(displayError(error));
@@ -274,11 +285,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setPurchaseError("");
     setPurchaseMessage("");
     try {
-      const result = await savePurchase(scope, purchaseSelectedId, purchaseNumber.trim(), purchaseCost.trim(), purchase?.updated_at ?? null, signal);
+      const result = await savePurchase(scope, purchaseSelectedId, purchaseNumber.trim(), purchaseCost.trim(),
+        purchase?.updated_at ?? null, signal, warehouseAddress.trim(), purchaseTracking.trim());
       if (signal.aborted) return;
       setPurchase(result);
       setPurchaseNumber(result.purchase_order_id);
       setPurchaseCost(result.cost_cny ?? "");
+      setWarehouseAddress(result.warehouse_address ?? "");
+      setPurchaseTracking(result.purchase_tracking_number ?? "");
       setNotice("采购关联已保存，金额为人工录入；未自动推送至货代仓。");
       setPurchaseSelectedId("");
       loadRows();
@@ -561,7 +575,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                     </td>
                     <td><span className={"orders-status " + safeOrderStatus(order.status)}>{orderStatusLabel(order.status)}</span></td>
                     <td className="orders-shipping-refs">
-                      <span><small>采购运单</small>待同步</span>
+                      <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
                       <span><small>平台运单</small>待官方读取</span>
                       {order.shipment_id && <span className="orders-muted" title="Shipment ID 是内部物流记录，不是快递运单号">Shipment ID：{order.shipment_id}</span>}
                     </td>
@@ -617,7 +631,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
                   <dt>组合包编号（Pack ID）</dt><dd>{detail.pack_id || "—"} <small>同次购买关联订单的组合编号，并非快递运单</small></dd>
                   <dt>物流模式</dt><dd>{scope?.logistic ?? "—"}</dd>
-                  <dt>采购快递运单</dt><dd>待同步</dd>
+                  <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
                   <dt>平台运单号</dt><dd>待官方 Shipment 接口查询</dd>
                   <dt>平台物流记录号</dt><dd>{detail.shipment_id || "未返回"} <small>（Shipment ID，并非运单号）</small></dd>
                 </dl>
@@ -666,8 +680,21 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           </header>
           <div className="orders-purchase-compact">
             <p className="orders-muted">美客多订单：{purchaseSelectedId}</p>
-            <p className="orders-muted">发货仓库地址：待配置货代仓，当前只记录采购单与人民币金额。</p>
+            <p className="orders-muted">填写实际货代仓和采购运单；仅保存关联，不会向货小易自动推单。</p>
             <div className="orders-purchase-form">
+              <label>货代仓收货地址
+                <select aria-label="货代仓地址选择" disabled={!purchaseReady || purchaseBusy}
+                  value={warehouseOptions.includes(warehouseAddress) ? warehouseAddress : warehouseAddress ? "custom" : ""}
+                  onChange={(event) => setWarehouseAddress(event.target.value === "custom" ? "" : event.target.value)}>
+                  <option value="">不指定仓库</option>
+                  {warehouseOptions.map((address) => <option key={address} value={address}>{address}</option>)}
+                  <option value="custom">手动录入新地址</option>
+                </select>
+                <input type="text" maxLength={300} aria-label="货代仓收货地址"
+                  placeholder="填写仓库收货地址，保存后供下次选择"
+                  value={warehouseAddress} disabled={!purchaseReady || purchaseBusy}
+                  onChange={(event) => setWarehouseAddress(event.target.value)} />
+              </label>
               <label>1688 采购订单号
                 <input type="text" inputMode="numeric" maxLength={40}
                   placeholder="填写实际采购单号" aria-label="1688 采购订单号"
@@ -679,6 +706,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   placeholder="例如 16.50" aria-label="人民币采购总金额"
                   value={purchaseCost} disabled={!purchaseReady || purchaseBusy}
                   onChange={(event) => setPurchaseCost(event.target.value)} />
+              </label>
+              <label>国内采购快递单号（可选）
+                <input type="text" maxLength={80} aria-label="国内采购运单号"
+                  placeholder="厂家发货后填写实际快递单号"
+                  value={purchaseTracking} disabled={!purchaseReady || purchaseBusy}
+                  onChange={(event) => setPurchaseTracking(event.target.value)} />
               </label>
               {purchaseError && <p className="orders-alert" role="alert">{purchaseError}</p>}
               {purchaseMessage && <p className="orders-purchase-success" role="status">{purchaseMessage}</p>}
