@@ -67,6 +67,8 @@ const takePurchase = async (method) => {
 const openPurchase = async () => {
   await waitFor(() => document.querySelector(".orders-id"), "order unavailable");
   flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector("dialog.orders-modal")?.open,
+    "order details did not open in a modal sheet");
   return takePurchase("GET");
 };
 const review = { order_id: "102", review_id: "fixture", offset: 3, reason: "invalid_detail" };
@@ -162,6 +164,10 @@ try {
   await waitFor(() => [...document.querySelectorAll(".orders-filter-note")]
     .some((item) => item.textContent.includes("当前店铺") && item.textContent.includes("已连接")),
     "successful token renewal left the expired banner visible");
+  const sheet = document.querySelector("dialog.orders-modal");
+  assert(sheet?.open, "order sheet closed unexpectedly during purchase workflow");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  await waitFor(() => !sheet.open, "order sheet did not close");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";

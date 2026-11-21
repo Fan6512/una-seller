@@ -35,6 +35,26 @@ function orderCount(order: OrderRecord) {
 function safeOrderStatus(status: string) {
   return status === "paid" ? "paid" : status === "cancelled" ? "cancelled" : "other";
 }
+function trustedOrderImage(src?: string) {
+  if (!src) return false;
+  try {
+    const uri = new URL(src);
+    return uri.protocol === "https:" &&
+      (uri.hostname === "mlstatic.com" || uri.hostname.endsWith(".mlstatic.com"));
+  } catch { return false; }
+}
+function ProductThumbnail({ src, title, size = "list" }: {
+  src?: string; title: string; size?: "list" | "detail";
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  return <span className={"orders-image orders-image-" + size}>
+    {trustedOrderImage(src) && !failed
+      ? <img src={src} loading="lazy" decoding="async" referrerPolicy="no-referrer"
+          alt={title ? "商品主图：" + title : "商品主图"} onError={() => setFailed(true)} />
+      : <span className="orders-image-placeholder" aria-label="暂无商品主图">暂无图片</span>}
+  </span>;
+}
 
 export default function OrdersPage({ beginSync, installingUpdate }: {
   beginSync: BeginSync;
@@ -113,6 +133,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const detailDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<OrderRecord | null>(null);
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
@@ -142,6 +163,19 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   }, []);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
+  const closeOrder = () => {
+    if (purchaseBusy) return;
+    if (purchaseReady && (purchaseNumber !== (purchase?.purchase_order_id ?? "") ||
+        purchaseCost !== (purchase?.cost_cny ?? "")) &&
+        !window.confirm("采购信息尚未保存，确定关闭订单详情吗？")) return;
+    setSelectedId("");
+  };
+  useLayoutEffect(() => {
+    const dialog = detailDialogRef.current;
+    if (!dialog) return;
+    if (selectedId && !dialog.open) dialog.showModal();
+    if (!selectedId && dialog.open) dialog.close();
+  }, [selectedId]);
   // Server cursor and Review survive page refresh and process restarts.
   useEffect(() => {
     const controller = new AbortController();
@@ -461,12 +495,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         </div>}
 
         {listError && <p className="orders-alert" role="alert">{listError}</p>}
-        <div className={"orders-main-layout " + (selectedId ? "detail-open" : "")}>
+        <div className="orders-main-layout">
           <section className="orders-list-panel" aria-label="订单列表">
             <div className="orders-table-scroll">
               <table className="orders-table">
                 <thead><tr>
-                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>付款状态</th><th>美客多 Shipment</th><th>下单时间</th><th>操作</th>
+                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>付款状态</th><th title="平台配送记录标识，不代表已发货，也不等于快递运单号">平台物流</th><th>下单时间</th><th>操作</th>
                 </tr></thead>
                 <tbody>
                   {loading && page.items.length === 0 && <tr><td colSpan={7} className="orders-table-empty">正在读取订单…</td></tr>}
@@ -477,17 +511,22 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       {order.pack_id && <span className="orders-subline">Pack：{order.pack_id}</span>}
                     </td>
                     <td className="orders-product-cell">
-                      <span className="orders-product-title">{order.order_items[0]?.title || "平台未返回商品标题"}</span>
-                      <span className="orders-subline">
-                        {order.order_items.length > 1 ? order.order_items.length + " 个商品行 · " : ""}
-                        {orderCount(order)} 件 · {order.order_items[0]?.variation_id ? "变体 " + order.order_items[0].variation_id : order.order_items[0]?.item_id || "无 SKU 信息"}
-                      </span>
+                      <div className="orders-product-preview">
+                        <ProductThumbnail src={order.order_items[0]?.image_url} title={order.order_items[0]?.title || ""} />
+                        <div className="orders-product-info">
+                          <span className="orders-product-title">{order.order_items[0]?.title || "平台未返回商品标题"}</span>
+                          <span className="orders-subline">
+                            {order.order_items.length > 1 ? order.order_items.length + " 个商品行 · " : ""}
+                            {orderCount(order)} 件 · {order.order_items[0]?.variation_id ? "变体 " + order.order_items[0].variation_id : order.order_items[0]?.item_id || "无 SKU 信息"}
+                          </span>
+                        </div>
+                      </div>
                     </td>
                     <td><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong></td>
                     <td><span className={"orders-status " + safeOrderStatus(order.status)}>{orderStatusLabel(order.status)}</span></td>
-                    <td>{order.shipment_id ? <span className="orders-tracking">{order.shipment_id}</span> : <span className="orders-muted">无 Shipment ID</span>}</td>
+                    <td>{order.shipment_id ? <span className="orders-tracking" title="仅表示已关联平台物流记录，不代表已发货"><small>Shipment ID</small>{order.shipment_id}</span> : <span className="orders-muted">暂无平台物流记录</span>}</td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
-                    <td><button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>查看详情</button></td>
+                    <td><button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button></td>
                   </tr>)}
                 </tbody>
               </table>
@@ -499,10 +538,16 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             </div>
           </section>
 
-          {selectedId && <aside className="orders-detail" aria-label="订单详情">
-            <header className="orders-detail-head"><div><small>订单详情</small><h2>{selectedId}</h2></div>
-              <button type="button" aria-label="关闭订单详情" onClick={() => setSelectedId("")}>×</button>
-            </header>
+          <dialog ref={detailDialogRef} className="orders-modal" aria-labelledby="orders-detail-title"
+            onCancel={(event) => { event.preventDefault(); closeOrder(); }}
+            onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}
+            onClose={() => { if (selectedId) setSelectedId(""); }}>
+            <div className="orders-detail" aria-label="订单详情">
+              <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[scope?.site ?? ""] ?? scope?.site}</small>
+                <h2 id="orders-detail-title">{selectedId || "订单详情"}</h2></div>
+                <button type="button" aria-label="关闭订单详情" disabled={purchaseBusy} onClick={closeOrder}>×</button>
+              </header>
+              <div className="orders-modal-scroll">
             {detailLoading && <p className="orders-detail-loading">正在读取最新订单详情…</p>}
             {detailError && <p className="orders-alert" role="alert">{detailError}</p>}
             {detail && <>
@@ -517,10 +562,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 {detail.order_items.length === 0 && <p className="orders-muted">平台未返回商品明细。</p>}
                 {detail.order_items.map((line, i) =>
                   <div className="orders-line-item" key={line.item_id + ":" + (line.variation_id ?? "") + ":" + i}>
-                    <strong>{line.title || line.item_id}</strong>
-                    <small>商品 ID：{line.item_id}</small>
-                    {line.variation_id && <small>变体 ID：{line.variation_id}</small>}
-                    <span>{orderMoney(line.unit_price, line.currency_id)} × {line.quantity}</span>
+                    <ProductThumbnail src={line.image_url} title={line.title || line.item_id} size="detail" />
+                    <div className="orders-line-content">
+                      <strong>{line.title || line.item_id}</strong>
+                      <small>商品 ID：{line.item_id}</small>
+                      {line.variation_id && <small>变体 ID：{line.variation_id}</small>}
+                      <span>{orderMoney(line.unit_price, line.currency_id)} × {line.quantity}</span>
+                    </div>
                   </div>)}
               </section>
               <section className="orders-detail-block">
@@ -529,7 +577,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
                   <dt>Pack ID</dt><dd>{detail.pack_id || "—"}</dd>
                   <dt>物流模式</dt><dd>{scope?.logistic ?? "—"}</dd>
-                  <dt>平台 Shipment ID</dt><dd>{detail.shipment_id || "未返回"}</dd>
+                  <dt>平台物流记录号</dt><dd>{detail.shipment_id || "未返回"} <small>（Shipment ID）</small></dd>
                 </dl>
                 <p className="orders-muted">此处的 Shipment ID 并非物流运单号；当前订单 API 不含追踪状态、收件人地址、电话或面单，不能据此认定订单已发货。</p>
               </section>
@@ -577,7 +625,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <button type="button" disabled className="orders-shipping-disabled">提交发货（接口待接入）</button>
               </section>
             </>}
-          </aside>}
+              </div>
+            </div>
+          </dialog>
         </div>
       </>}
     </div>

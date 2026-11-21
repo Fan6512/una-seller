@@ -8,6 +8,7 @@ export type OrderLine = {
   item_id: string;
   title: string;
   variation_id?: string;
+  image_url?: string;
   quantity: number;
   unit_price: string;
   currency_id: string;

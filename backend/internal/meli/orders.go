@@ -52,6 +52,7 @@ type OrderLine struct {
 	Quantity    int    `json:"quantity"`
 	UnitPrice   string `json:"unit_price"`
 	CurrencyID  string `json:"currency_id"`
+	ImageURL    string `json:"image_url,omitempty"`
 }
 
 type OrderRecord struct {
@@ -776,7 +777,21 @@ func (s *Service) authorizeOrderRead(ctx context.Context, owner, store string, s
 // Recheck the current mapping in the same statement that reads cached orders.
 const orderSelect = `WITH connection AS (` + orderConnection + `)
  SELECT o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
- trim_scale(o.total_amount)::text,o.date_created,o.last_updated,COALESCE(o.shipment_id,''),o.order_items
+ trim_scale(o.total_amount)::text,o.date_created,o.last_updated,COALESCE(o.shipment_id,''),
+ COALESCE((
+   SELECT jsonb_agg(line.value ||
+     CASE WHEN image.url IS NOT NULL THEN jsonb_build_object('image_url',image.url)
+          ELSE '{}'::jsonb END ORDER BY line.pos)
+   FROM jsonb_array_elements(o.order_items) WITH ORDINALITY AS line(value,pos)
+   LEFT JOIN LATERAL (
+     SELECT NULLIF(p.details->>'secure_thumbnail','') AS url
+     FROM app.meli_published_listings p
+     WHERE p.store_id=o.store_id AND p.site_id=o.site_id
+       AND p.logistic_type=o.logistic_type AND p.listing_id=line.value->>'item_id'
+       AND p.details->>'seller_id'=o.seller_id
+     LIMIT 1
+   ) AS image ON true
+ ), '[]'::jsonb)
  FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4`
@@ -789,7 +804,28 @@ func scanOrder(rows pgx.Rows) (OrderRecord, error) {
 	if err == nil {
 		err = json.Unmarshal(items, &o.Items)
 	}
+	// Only the official Mercado Libre image CDN can render in the desktop app.
+	for i := range o.Items {
+		if !orderImageURLAllowed(o.Items[i].ImageURL) {
+			o.Items[i].ImageURL = ""
+		}
+	}
 	return o, err
+}
+
+func orderImageURLAllowed(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	if len(raw) > 2048 {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "mlstatic.com" || strings.HasSuffix(host, ".mlstatic.com")
 }
 
 func (s *Service) ListOrders(ctx context.Context, owner, store string,

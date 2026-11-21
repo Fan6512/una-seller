@@ -688,3 +688,60 @@ func TestOrderPostgresReviewAndSkip(t *testing.T) {
 		t.Fatalf("duplicate Skip audit count=%d error=%v", skipCount, err)
 	}
 }
+
+func TestOrderImageURLRestriction(t *testing.T) {
+	for _, test := range []struct {
+		url  string
+		want bool
+	}{
+		{"https://http2.mlstatic.com/D_123-I.jpg", true},
+		{"https://cbt-s2-p.mlstatic.com/abc.jpg", true},
+		{"http://http2.mlstatic.com/D_123-I.jpg", false},
+		{"https://fake-mlstatic.com/image.jpg", false},
+		{"https://mlstatic.com.evil.example/image", false},
+		{"javascript:alert(1)", false},
+		{"https://some-user@http2.mlstatic.com/image.jpg", false},
+	} {
+		if got := orderImageURLAllowed(test.url); got != test.want {
+			t.Errorf("image URL allowed=%t wanted=%t for %q", got, test.want, test.url)
+		}
+	}
+}
+
+func TestOrderPageReusesScopedPublishedThumbnail(t *testing.T) {
+	svc, db, owner, store := setupRefreshTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	const orderItem = "MLB100012345"
+	const orderLines = `[{"item_id":"MLB100012345","title":"Test item","quantity":1,"unit_price":"12.5","currency_id":"BRL"}]`
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+	 (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,
+	  date_created,last_updated,order_items)
+	 VALUES ($1::uuid,'MLB','remote','987654','10001','paid','BRL',12.5,now(),now(),$2::jsonb)`,
+		store, orderLines); err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://http2.mlstatic.com/D_123-I.jpg"
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_published_listings
+	 (store_id,site_id,logistic_type,listing_id,details)
+	 VALUES ($1::uuid,'MLB','remote',$2,'{"seller_id":987654,"secure_thumbnail":"https://http2.mlstatic.com/D_123-I.jpg"}'::jsonb)`,
+		store, orderItem); err != nil {
+		t.Fatal(err)
+	}
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	page, err := svc.ListOrders(ctx, owner, store, scope, "", 0)
+	if err != nil || len(page.Items) != 1 || len(page.Items[0].Items) != 1 ||
+		page.Items[0].Items[0].ImageURL != url {
+		t.Fatalf("scoped thumbnail is missing: page=%+v err=%v", page, err)
+	}
+	// A different child seller cannot attach its thumbnail to our order.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_published_listings SET details=
+	 '{"seller_id":987655,"secure_thumbnail":"https://http2.mlstatic.com/D_123-I.jpg"}'::jsonb
+	 WHERE store_id=$1::uuid AND listing_id=$2`, store, orderItem); err != nil {
+		t.Fatal(err)
+	}
+	order, err := svc.GetOrder(ctx, owner, store, scope, "10001")
+	if err != nil || len(order.Items) != 1 || order.Items[0].ImageURL != "" {
+		t.Fatalf("cross-seller image leaked: order=%+v err=%v", order, err)
+	}
+}
