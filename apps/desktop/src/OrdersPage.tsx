@@ -333,14 +333,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
     setLoading(true);
     setListError("");
-    const requestedSite = /^\\d{1,30}$/.test(activeQuery) ? "*" : siteFilter;
+    const requestedSite = /^\d{1,30}$/.test(activeQuery) ? "*" : siteFilter;
     const read = global
-      ? searchOrders(storeFilter, requestedSite, global ? (requestedSite === "*" ? "*" : logisticFilter) : logisticFilter,
+      ? searchOrders(storeFilter, requestedSite, requestedSite === "*" ? "*" : logisticFilter,
           activeQuery, statusFilter, purchaseLink, offset, controller.signal)
       : listOrders(scope, statusFilter, purchaseLink, offset, controller.signal);
     void read.then((value) => {
       if (controller.signal.aborted) return;
-      if (global && /^\\d{1,30}$/.test(activeQuery) && scopeKey !== "all" &&
+      if (global && /^\d{1,30}$/.test(activeQuery) && scopeKey !== "all" &&
         value.items.some((record) => record.site_id !== siteFilter ||
           record.logistic_type !== logisticFilter)) {
         selectScope("all");
@@ -362,12 +362,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     const controller = new AbortController();
     setDetail(null);
     setDetailError("");
-    if (!scope || !selectedId) {
+    const target = selectedRowScope ?? scope;
+    if (!target || !selectedId) {
       setDetailLoading(false);
       return () => controller.abort();
     }
     setDetailLoading(true);
-    void getOrder(scope, selectedId, controller.signal).then((result) => {
+    void getOrder(target, selectedId, controller.signal).then((result) => {
       if (!controller.signal.aborted) setDetail(result);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setDetailError(displayError(error));
@@ -375,7 +376,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setDetailLoading(false);
     });
     return () => controller.abort();
-  }, [scope?.storeId, scope?.site, scope?.logistic, selectedId, nonce]);
+  }, [scope?.storeId, scope?.site, scope?.logistic,
+    selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic, selectedId, nonce]);
 
   useLayoutEffect(() => {
     const controller = new AbortController();
@@ -390,8 +392,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setWarehouseOptions([]);
     setPurchaseError("");
     setPurchaseMessage("");
-    if (!scope || !purchaseSelectedId) return () => controller.abort();
-    void loadPurchase(scope, purchaseSelectedId, controller.signal).then((value) => {
+    const target = purchaseRowScope ?? scope;
+    if (!target || !purchaseSelectedId) return () => controller.abort();
+    void loadPurchase(target, purchaseSelectedId, controller.signal).then((value) => {
       if (controller.signal.aborted) return;
       setPurchase(value.purchase);
       setPurchaseNumber(value.purchase?.purchase_order_id ?? "");
@@ -404,10 +407,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setPurchaseError(displayError(error));
     });
     return () => controller.abort();
-  }, [scope, purchaseSelectedId, purchaseReload]);
+  }, [scope, purchaseRowScope?.storeId, purchaseRowScope?.site, purchaseRowScope?.logistic,
+    purchaseSelectedId, purchaseReload]);
 
   const refreshSelectedOrder = async () => {
-    if (!scope || !selectedId || refreshingOrder || running) return;
+    const target = selectedRowScope ?? scope;
+    if (!target || !selectedId || refreshingOrder || running) return;
     const id = selectedId;
     const controller = new AbortController();
     orderRefreshAbort.current?.abort();
@@ -415,12 +420,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setRefreshingOrder(true);
     setDetailError("");
     try {
-      const fresh = await refreshOneOrder(scope, id, controller.signal);
+      const fresh = await refreshOneOrder(target, id, controller.signal);
       if (controller.signal.aborted) return;
       if (shouldApplyOrderRefresh(id, selectedIdRef.current, controller.signal.aborted)) setDetail(fresh);
       setNotice("已从 Mercado Libre 重新读取订单 " + id + " 的最新状态。退款金额与最终净回款仍需单独核账。");
       setPage((previous) => ({ ...previous, items: previous.items.map((record) =>
-        record.order_id === fresh.order_id ? fresh : record) }));
+        record.order_id === fresh.order_id && orderRecordKey(record, scope) ===
+          orderRecordKey(fresh, target) ? { ...record, ...fresh } : record) }));
     } catch (error) {
       if (!controller.signal.aborted) setDetailError(displayError(error));
     } finally {
@@ -431,12 +437,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
   const savePurchaseInfo = async () => {
     const signal = purchaseRequest.current?.signal;
-    if (!scope || !purchaseSelectedId || !purchaseReady || purchaseBusy || !purchaseNumber || !signal) return;
+    const target = purchaseRowScope ?? scope;
+    if (!target || !purchaseSelectedId || !purchaseReady || purchaseBusy || !purchaseNumber || !signal) return;
     setPurchaseBusy(true);
     setPurchaseError("");
     setPurchaseMessage("");
     try {
-      const result = await savePurchase(scope, purchaseSelectedId, purchaseNumber.trim(), purchaseCost.trim(),
+      const result = await savePurchase(target, purchaseSelectedId, purchaseNumber.trim(), purchaseCost.trim(),
         purchase?.updated_at ?? null, signal, warehouseAddress.trim(), purchaseTracking.trim());
       if (signal.aborted) return;
       setPurchase(result);
@@ -456,21 +463,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
   };
 
-  const visibleOrders = useMemo(() => {
-    const needle = searchText.trim().toLowerCase();
-    if (!needle) return page.items;
-    return page.items.filter((order) =>
-      order.order_id.includes(needle) || order.pack_id?.includes(needle) ||
-      order.purchase_order_id?.includes(needle) ||
-      order.shipment_id?.includes(needle) ||
-      order.order_items.some((item) => item.title.toLowerCase().includes(needle) ||
-        item.item_id.toLowerCase().includes(needle)));
-  }, [page.items, searchText]);
+  // No local-page pseudo-search: global search and pagination are server-scoped.
+  const visibleOrders = page.items;
 
   useEffect(() => () => { imageAbort.current?.abort(); }, 
     [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
   const refreshPageImages = async () => {
-    if (!scope || imageBusy || running || installingUpdate || loading) return;
+    if (!scope || activeQuery || imageBusy || running || installingUpdate || loading) return;
     const snapshot = page.items.filter((order) =>
       order.order_items.some((item) => !item.image_url)).slice(0, 5);
     if (!snapshot.length) {
@@ -508,14 +507,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const selectStatus = (value: string) => {
     setStatusFilter(value);
     setOffset(0);
-    setSearchText("");
   };
 
   useEffect(() => () => { slaAbort.current?.abort(); setSLABusy(false); },
     [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
 
   const refreshPageDispatchSLA = async () => {
-    if (!scope || slaBusy || running || installingUpdate ||
+    if (!scope || activeQuery || slaBusy || running || installingUpdate ||
         (store?.status !== "connected" && store?.status !== "token_expired")) return;
     if (scope.logistic.toLowerCase() === "fulfillment" || scope.logistic.toLowerCase() === "fulfilment") {
       setNotice("Fulfillment 订单不适用发货截止 SLA。");
@@ -676,10 +674,23 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setActionBusy(false);
     }
   };
-  const openOrder = (id: string) => setSelectedId(id);
+  const openOrder = (id: string, targetScope: OrderScope | null = scope) => {
+    setSelectedRowScope(targetScope);
+    setSelectedId(id);
+  };
   const searchOrder = () => {
     const input = searchText.trim();
-    if (/^\d{1,30}$/.test(input)) openOrder(input);
+    if (input && !/^\d{1,30}$/.test(input) && [...input].length < 2) {
+      setListError("商品标题搜索至少输入 2 个字符。");
+      return;
+    }
+    if ([...input].length > 120) {
+      setListError("搜索内容不能超过 120 字符。");
+      return;
+    }
+    setOffset(0);
+    if (activeQuery === input) loadRows();
+    else setActiveQuery(input);
   };
   const copy = (value: string) => {
     void navigator.clipboard.writeText(value).then(() => setNotice("已复制 " + value))
