@@ -23,6 +23,7 @@ func TestOrderSearchAuthAndInputValidation(t *testing.T) {
 		{root + "?site=*&logistic_type=*&q=yellow", http.MethodGet, http.StatusUnauthorized},
 		{root, http.MethodGet, http.StatusBadRequest},
 		{root + "?site=*&logistic_type=*&q=a", http.MethodGet, http.StatusBadRequest},
+		{root + "?site=*&logistic_type=*&q=200", http.MethodGet, http.StatusBadRequest},
 		{root + "?site=*&site=MLB&logistic_type=*", http.MethodGet, http.StatusBadRequest},
 		{root + "?site=*&logistic_type=*&purchase=invalid", http.MethodGet, http.StatusBadRequest},
 		{root + "?site=*&logistic_type=*&offset=-2", http.MethodGet, http.StatusBadRequest},
@@ -44,7 +45,7 @@ func TestOrderSearchAuthAndInputValidation(t *testing.T) {
 	if !(meli.OrderSearchFilter{Store: "all", Site: "*", Logistic: "*", Query: "Test title"}).Valid() {
 		t.Fatal("ordinary title search rejected")
 	}
-	for _, q := range []string{"a", strings.Repeat("A", 121)} {
+	for _, q := range []string{"a", "200", strings.Repeat("A", 121)} {
 		if (meli.OrderSearchFilter{Store: "all", Site: "*", Logistic: "*", Query: q}).Valid() {
 			t.Fatalf("invalid query accepted %q", q)
 		}

@@ -61,12 +61,12 @@ window.fetch = (path, options) => {
     const site = uri.searchParams.get("site") ?? "";
     const purchaseFilter = uri.searchParams.get("purchase") ?? "";
     searchRequests.push({ q, storeFilter, site, uri });
-    const lemon = { ...order, order_id: "20002", store_id: "one", site_id: "MLM", logistic_type: "remote",
+    const lemon = { ...order, order_id: "200002", store_id: "one", site_id: "MLM", logistic_type: "remote",
       purchase_order_id: "", order_items: [{ item_id: "MLM100", title: "Lemon massage tool",
         quantity: 1, unit_price: "12", currency_id: "USD" }] };
     const another = { ...lemon, store_id: "two", site_id: "MLB",
       order_items: [{ ...lemon.order_items[0], item_id: "MLB200" }] };
-    const rows = q === "20002" || q.toLowerCase() === "lemon"
+    const rows = q === "200002" || q.toLowerCase() === "lemon"
       ? storeFilter === "all" ? [lemon, another] : [lemon]
       : site === "*" ? [{ ...lemon, order_id: "10001", site_id: "MLB" }, lemon] : [lemon];
     return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: purchaseFilter,
@@ -318,20 +318,23 @@ try {
   flushSync(() => {
     const input = searchInput();
     const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-    nativeSetter.call(input, "20002");
+    nativeSetter.call(input, "200002");
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   flushSync(() => submitSearch().click());
-  await waitFor(() => searchRequests.some((q) => q.q === "20002" && q.site === "*") &&
+  await waitFor(() => searchRequests.some((q) => q.q === "200002" && q.site === "*") &&
     document.querySelector('select[aria-label="站点和物流模式"]')?.value === "all" &&
-    document.querySelector(".orders-id")?.textContent === "20002",
+    document.querySelector(".orders-id")?.textContent === "200002",
     "cross-site Order ID must change to all sites and show exactly the matching order");
   assert(document.querySelectorAll(".orders-id").length === 1, "numeric search returned extra orders");
   flushSync(() => document.querySelector(".orders-row-purchase").click());
   const crossSitePurchase = await takePurchase("GET");
   assert(new URL(crossSitePurchase.path, location.href).searchParams.get("site") === "MLM" &&
-    crossSitePurchase.path.includes("/stores/one/orders/20002/purchase"),
+    crossSitePurchase.path.includes("/stores/one/orders/200002/purchase"),
     "cross-site purchase opened under the wrong site or store");
+  assert(document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("店铺：one") &&
+    document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("墨西哥"),
+    "purchase modal must identify the first-store MLM target");
   crossSitePurchase.resolve(Response.json({ purchase: null }));
   await waitFor(() => document.querySelector('button[aria-label="关闭采购关联"]:enabled'),
     "cross-site purchase dialog not ready");
@@ -354,9 +357,12 @@ try {
     document.querySelectorAll(".orders-id").length === 2, "all-store search must merge both stores");
   flushSync(() => [...document.querySelectorAll(".orders-row-purchase")][1].click());
   const secondStorePurchase = await takePurchase("GET");
-  assert(secondStorePurchase.path.includes("/stores/two/orders/20002/purchase") &&
+  assert(secondStorePurchase.path.includes("/stores/two/orders/200002/purchase") &&
     new URL(secondStorePurchase.path, location.href).searchParams.get("site") === "MLB",
     "second-store row must not reuse first-store purchase scope");
+  assert(document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("店铺：two") &&
+    document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("巴西"),
+    "purchase modal must identify second-store MLB target");
   secondStorePurchase.resolve(Response.json({ purchase: null }));
   document.body.dataset.result = "pass";
 } catch (error) {

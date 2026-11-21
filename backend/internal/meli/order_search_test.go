@@ -53,10 +53,10 @@ func TestOrderSearchVerifiedOwnerScopeAndPagination(t *testing.T) {
 	}
 
 	for _, row := range []struct{ store, site, seller, id, title string }{
-		{store, "MLB", "987654", "10001", "Blue denim trousers"},
-		{store, "MLM", "987654", "20002", "Yellow mini massager"},
-		{second, "MLB", "987655", "30003", "Denim jacket"},
-		{foreignStore, "MLB", "987656", "40004", "Yellow hidden product"},
+		{store, "MLB", "987654", "100001", "Blue denim trousers"},
+		{store, "MLM", "987654", "200002", "Yellow mini massager"},
+		{second, "MLB", "987655", "300003", "Denim jacket"},
+		{foreignStore, "MLB", "987656", "400004", "Yellow hidden product"},
 	} {
 		items := fmt.Sprintf(`[{"item_id":"%s-X","title":%q,"quantity":1,"unit_price":"12","currency_id":"USD"}]`, row.site, row.title)
 		_, err = db.Exec(ctx, `INSERT INTO app.meli_orders
@@ -68,21 +68,21 @@ func TestOrderSearchVerifiedOwnerScopeAndPagination(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	base := OrderSearchFilter{Store: store, Site: "MLB", Logistic: "*", Query: "20002"}
+	base := OrderSearchFilter{Store: store, Site: "MLB", Logistic: "*", Query: "200002"}
 	page, err := s.SearchOrders(ctx, owner, base)
 	if err != nil || len(page.Items) != 0 {
 		t.Fatalf("site filter leaked: %+v %v", page, err)
 	}
 	base.Site = "*"
 	page, err = s.SearchOrders(ctx, owner, base)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "20002" ||
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "200002" ||
 		page.Items[0].SiteID != "MLM" || page.Items[0].StoreID != store {
 		t.Fatalf("cross-site Order ID: %+v %v", page, err)
 	}
 	base.Query = "denim"
 	base.Site = "MLB"
 	page, err = s.SearchOrders(ctx, owner, base)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "10001" {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "100001" {
 		t.Fatalf("site-limited title search: %+v %v", page, err)
 	}
 	base.Store = "all"
@@ -114,7 +114,7 @@ func TestOrderSearchVerifiedOwnerScopeAndPagination(t *testing.T) {
 	}
 
 	// Concurrent owners may have identical Order IDs; they remain isolated.
-	base.Query = "40004"
+	base.Query = "400004"
 	page, err = s.SearchOrders(ctx, owner, base)
 	if err != nil || len(page.Items) != 0 {
 		t.Fatalf("foreign order ID leaked %+v %v", page, err)
@@ -140,5 +140,58 @@ func TestOrderSearchVerifiedOwnerScopeAndPagination(t *testing.T) {
 	page, err = s.SearchOrders(ctx, owner, base)
 	if err != nil || page.HasMore || len(page.Items) != 3 {
 		t.Fatalf("global page 2: %+v %v", page, err)
+	}
+
+	// Status and purchase filters must be evaluated inside the same owner scope.
+	if _, err = db.Exec(ctx, `INSERT INTO app.meli_order_purchases
+		(store_id,site_id,logistic_type,seller_id,order_id,purchase_order_id,cost_cny)
+		VALUES($1::uuid,'MLB','remote','987654','100001','12345678',10)`, store); err != nil {
+		t.Fatal(err)
+	}
+	base.Offset = 0
+	base.Site = "MLB"
+	base.Logistic = "remote"
+	base.Status = "paid"
+	base.Purchase = "linked"
+	page, err = s.SearchOrders(ctx, owner, base)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "100001" {
+		t.Fatalf("linked purchase filter: %+v %v", page, err)
+	}
+	base.Purchase = "unlinked"
+	page, err = s.SearchOrders(ctx, owner, base)
+	if err != nil || len(page.Items) != 20 || !page.HasMore {
+		t.Fatalf("unlinked purchase filter: %+v %v", page, err)
+	}
+	if _, err = db.Exec(ctx, `UPDATE app.meli_orders SET status='cancelled'
+		WHERE store_id=$1::uuid AND site_id='MLB' AND order_id='100001'`, store); err != nil {
+		t.Fatal(err)
+	}
+	base.Purchase = ""
+	base.Status = "cancelled"
+	page, err = s.SearchOrders(ctx, owner, base)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "100001" {
+		t.Fatalf("official status filter: %+v %v", page, err)
+	}
+	// Verified child seller + logistic pair must be present. Other modes are not interchangeable.
+	if _, err = db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces=
+		'[{"user_id":987654,"site_id":"MLB","logistic_type":"remote"},
+		  {"user_id":987654,"site_id":"MLM","logistic_type":"remote"},
+		  {"user_id":987654,"site_id":"MLM","logistic_type":"fulfillment"}]'::jsonb
+		WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(ctx, `INSERT INTO app.meli_orders
+		(store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,
+		 total_amount,date_created,last_updated)
+		VALUES($1::uuid,'MLM','fulfillment','987654','600006','paid','USD',12,now(),now())`, store); err != nil {
+		t.Fatal(err)
+	}
+	base.Site = "*"
+	base.Logistic = "fulfillment"
+	base.Status = ""
+	page, err = s.SearchOrders(ctx, owner, base)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "600006" ||
+		page.Items[0].LogisticType != "fulfillment" {
+		t.Fatalf("logistic type filter: %+v %v", page, err)
 	}
 }
