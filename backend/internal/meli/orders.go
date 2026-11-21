@@ -817,14 +817,15 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
    AND sla.shipment_id=o.shipment_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4`
 
-func scanOrder(rows pgx.Rows) (OrderRecord, error) {
+func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	var o OrderRecord
 	var items []byte
 	var cost sql.NullString
 	var deadline, checked sql.NullTime
-	err := rows.Scan(&o.ID, &o.PackID, &o.Status, &o.CurrencyID, &o.TotalAmount,
+	destinations := []any{&o.ID, &o.PackID, &o.Status, &o.CurrencyID, &o.TotalAmount,
 		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost,
-		&o.PurchaseTrackingNumber, &o.DispatchSLAStatus, &deadline, &checked)
+		&o.PurchaseTrackingNumber, &o.DispatchSLAStatus, &deadline, &checked}
+	err := rows.Scan(append(destinations, extra...)...)
 	if deadline.Valid {
 		o.DispatchDeadline = &deadline.Time
 	}
