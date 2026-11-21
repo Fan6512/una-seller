@@ -133,6 +133,7 @@ func (s *Store) Promote(ctx context.Context,owner,sourceID string,expectedRevisi
   if errors.Is(err,pgx.ErrNoRows) {revision=0;err=nil} 
   if err!=nil {return OwnProduct{},false,err}
   if revision!=expectedRevision {return OwnProduct{},false,ErrDraftConflict}
+  sourceTitle:=title
   if revision>0 {title=draftTitle;description=&draftDescription}
   if description==nil {empty:="";description=&empty}
   if strings.TrimSpace(title)=="" || utf8.RuneCountInString(title)>500 {
@@ -157,7 +158,7 @@ func (s *Store) Promote(ctx context.Context,owner,sourceID string,expectedRevisi
     (owner_user_id,source_product_id,source_platform,source_site,source_url,source_title,
      title,description,notes,price,currency,category,bullet_points,images,variants)
     VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10::numeric,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb)
-    RETURNING id::text`,owner,sourceID,platform,site,url,title,title,*description,draftNotes,
+    RETURNING id::text`,owner,sourceID,platform,site,url,sourceTitle,title,*description,draftNotes,
     price,currency,category,string(bullets),string(images),string(variants)).Scan(&productID)
   if err!=nil {return OwnProduct{},false,err}
   if err=tx.Commit(ctx);err!=nil {return OwnProduct{},false,err}
