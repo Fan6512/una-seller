@@ -89,6 +89,9 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 	if err := in.Validate(); err != nil {
 		return WorkingDraft{}, err
 	}
+	if in.ListingFields!=nil && in.ListingFields.Titles.Preferred()!="" {
+		in.Title=in.ListingFields.Titles.Preferred()
+	}
 	// Lock the owned source row first, matching Promote's lock order.
 	// Conversion and draft writes can therefore never commit out of order.
 	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{})
