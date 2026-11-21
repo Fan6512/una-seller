@@ -10,6 +10,7 @@ import OrdersPage from "./OrdersPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
 import OwnProductsPage from "./OwnProductsPage";
 import { approveCollection } from "./ownProducts";
+import { countApprovalOutcomes, type ApprovalOutcome } from "./workbenchRules";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import {
   apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getWorkingDraft, getHealth, PAGE_SIZE,
@@ -304,8 +305,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     if(approving||checked.size===0)return;
     if(draftDirty) {setApproveNotice("请先保存当前商品的整理工作稿，再执行通过。");return;}
     setApproving(true);setApproveNotice("");
-    let success=0;
-    let already=0;
+    const outcomes:ApprovalOutcome[]=[];
     const errors:string[]=[];
     const failed=new Set<string>();
     for(const id of checked) {
@@ -314,18 +314,19 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         // retried automatically and a concurrent edit is rejected by the API.
         const {draft}=await getWorkingDraft(id,new AbortController().signal);
         const result=await approveCollection(id,draft?.revision??0,new AbortController().signal);
-        if(result.result==="created")success++;
-        else if(result.result==="already_approved")already++;
+        outcomes.push(result.result);
       } catch(e) {
+        outcomes.push("failed");
         failed.add(id);
         const item=items.find(x=>x.id===id);
         errors.push((item?.title.slice(0,24)??id)+": "+(e instanceof Error?e.message:"转入未确认"));
       }
     }
+    const summary=countApprovalOutcomes(outcomes);
     setChecked(failed);
-    setApproveNotice(`本次新转入 ${success} 件；此前已转入 ${already} 件；${failed.size} 件未确认。`+(errors.length?" "+errors.join("；"):""));
+    setApproveNotice(`本次新转入 ${summary.created} 件；此前已转入 ${summary.alreadyApproved} 件；${summary.failed} 件未确认。`+(errors.length?" "+errors.join("；"):""));
     setApproving(false);
-    if(success>0||already>0)reload();
+    if(summary.created>0||summary.alreadyApproved>0)reload();
   };
   const reload = () => {
     detailCache.current.clear();
