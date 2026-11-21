@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {initialListingFields,validateListingFields} from "../src/listingFields.ts";
+import {detectTitleLanguage,initialListingFields,preferredTitle,validateListingFields} from "../src/listingFields.ts";
 
 test("inbox fields begin with captured images and variants, without assigning a fake purchase cost",()=>{
   const source={
@@ -25,7 +25,7 @@ test("saved empty image override stays empty and does not silently restore sourc
 });
 
 test("cross-marketplace price and logistics validations preserve missing value semantics",()=>{
-  const f=initialListingFields();
+  const f=initialListingFields(null,undefined,"Waterproof Winter Plant Cleaning Spray");
   assert.equal(validateListingFields(f),"");
   f.weight_g="1000";
   f.length_cm="20";
@@ -36,4 +36,37 @@ test("cross-marketplace price and logistics validations preserve missing value s
   f.weight_g="1000";
   f.site_prices=[{site:"MLB",price:"29,90",currency:"BRL"}];
   assert.match(validateListingFields(f),/售价/);
+});
+
+
+test("capture title is classified into the correct language slot without translating",()=>{
+  const en=initialListingFields(null,undefined,"Waterproof Winter Plant Cleaning Spray");
+  const es=initialListingFields(null,undefined,"Limpiador para plantas de invierno con aroma");
+  const pt=initialListingFields(null,undefined,"Spray para limpeza de plantas com aroma");
+  assert.equal(detectTitleLanguage("Waterproof Winter Plant Cleaning Spray"),"en");
+  assert.equal(detectTitleLanguage("Limpiador para plantas de invierno con aroma"),"es");
+  assert.equal(detectTitleLanguage("Spray para limpeza de plantas com aroma"),"pt");
+  assert.equal(en.titles.en,"Waterproof Winter Plant Cleaning Spray");
+  assert.equal(en.titles.es,"");
+  assert.equal(es.titles.es,"Limpiador para plantas de invierno con aroma");
+  assert.equal(es.titles.en,"");
+  assert.equal(pt.titles.pt,"Spray para limpeza de plantas com aroma");
+  assert.equal(pt.titles.en,"");
+  assert.equal(preferredTitle(pt.titles),pt.titles.pt);
+});
+
+test("persisted locale titles and edits remain independent and site-free",()=>{
+  const fields=initialListingFields({
+    titles:{en:"Winter Plant Dry Cleaning Spray",es:"Spray Limpiador de Plantas de Invierno",pt:"Spray Limpa Plantas de Inverno"},
+    category_id:"CBT12345",
+    site_prices:[],
+  },undefined,"Captured English Title");
+  assert.equal(fields.titles.en,"Winter Plant Dry Cleaning Spray");
+  assert.equal(fields.titles.es,"Spray Limpiador de Plantas de Invierno");
+  assert.equal(fields.titles.pt,"Spray Limpa Plantas de Inverno");
+  assert.deepEqual(fields.site_prices,[]);
+  assert.equal(fields.category_site,"");
+  assert.equal(validateListingFields(fields),"");
+  fields.category_id="MLB12345";
+  assert.match(validateListingFields(fields),/CBT/);
 });
