@@ -57,6 +57,13 @@ export type CollectionPage = {
 const defaultApiBase = import.meta.env.DEV ? "http://127.0.0.1:8787" : "https://mkd.186512.xyz";
 export const apiBase = (import.meta.env.VITE_API_BASE_URL || defaultApiBase).replace(/\/$/, "");
 
+class CollectionRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "CollectionRequestError";
+  }
+}
+
 async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true,
   method: "GET" | "DELETE" | "PUT" = "GET", body?: string): Promise<T> {
   let response: Response;
@@ -95,7 +102,7 @@ async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = 
       : response.status === 404
         ? "商品不存在或不可访问"
         : "请求失败（HTTP " + response.status + "）";
-    throw new Error(message);
+    throw new CollectionRequestError(response.status, message);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -118,22 +125,40 @@ export function getCollection(id: string, signal: AbortSignal) {
 
 export type CollectionWorkingDraft = {
   source_product_id: string;
+  revision: number;
   title: string;
   description: string;
   notes: string;
   updated_at: string;
 };
-export type WorkingDraftInput = Pick<CollectionWorkingDraft, "title" | "description" | "notes">;
+export type WorkingDraftInput = Pick<CollectionWorkingDraft, "title" | "description" | "notes"> & {
+  expected_revision: number;
+};
+
+export function isDraftConflict(error: unknown) {
+  return error instanceof CollectionRequestError && error.status === 409;
+}
+
+// Old API and missing source both return 404; check the source before diagnosing.
+async function draftRequest<T>(id: string, method: "GET" | "PUT", signal: AbortSignal, body?: string) {
+  const path = "/api/v1/collections/" + encodeURIComponent(id) + "/working-draft";
+  try {
+    return await requestJSON<T>(path, signal, true, method, body);
+  } catch (error) {
+    if (error instanceof CollectionRequestError && error.status === 404) {
+      await getCollection(id, signal);
+      throw new Error("Go 服务端尚未支持整理工作稿，请先升级 Go API 后重试。");
+    }
+    throw error;
+  }
+}
 
 export function getWorkingDraft(id: string, signal: AbortSignal) {
-  return requestJSON<{ draft: CollectionWorkingDraft | null }>(
-    "/api/v1/collections/" + encodeURIComponent(id) + "/working-draft", signal);
+  return draftRequest<{ draft: CollectionWorkingDraft | null }>(id, "GET", signal);
 }
 
 export function saveWorkingDraft(id: string, input: WorkingDraftInput, signal: AbortSignal) {
-  return requestJSON<{ draft: CollectionWorkingDraft }>(
-    "/api/v1/collections/" + encodeURIComponent(id) + "/working-draft",
-    signal, true, "PUT", JSON.stringify(input));
+  return draftRequest<{ draft: CollectionWorkingDraft }>(id, "PUT", signal, JSON.stringify(input));
 }
 
 export function deleteCollection(id: string, signal: AbortSignal) {
