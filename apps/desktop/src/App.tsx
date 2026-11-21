@@ -445,9 +445,18 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             {diagnosticsEnabled && <DevelopmentDiagnostics />}
           </>}
           {settingsSection === "stores" && <StoresPage onConnectionChecked={(id) => {
-            failedStoreChecks.current.delete(id);
-            failedStoreChecks.current.delete("__initial_read_failed__");
             const latest = cachedStores();
+            if (latest && failedStoreChecks.current.has("__initial_read_failed__")) {
+              // The initial list was unavailable; other active stores still need
+              // their own confirmation before the global badge can turn green.
+              failedStoreChecks.current.delete("__initial_read_failed__");
+              for (const item of latest) {
+                if (item.id !== id && (item.status === "connected" || item.status === "token_expired")) {
+                  failedStoreChecks.current.add(item.id);
+                }
+              }
+            }
+            failedStoreChecks.current.delete(id);
             if (latest) setStoreHealth(storeHealthFromList(latest, failedStoreChecks.current));
           }} />}
         </>}
