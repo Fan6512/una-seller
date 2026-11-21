@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import ListingFieldsEditor from "./ListingFieldsEditor";
+import { initialListingFields,validateListingFields,type ListingFields } from "./listingFields";
 import { formatMoney } from "./collections";
 import { getOwnProduct, getOwnProductPage, updateOwnProduct, OWN_PRODUCT_PAGE_SIZE, ProductRequestError, type OwnProduct, type OwnProductSummary } from "./ownProducts";
 import { emptyProductPageFallback, productSaveNeedsReadback } from "./workbenchRules";
 
-type Editor = Pick<OwnProduct, "title" | "description" | "notes">;
-const BLANK:Editor={title:"",description:"",notes:""};
+type Editor = Pick<OwnProduct, "title" | "description" | "notes"> & { listing_fields: ListingFields };
+const BLANK:Editor={title:"",description:"",notes:"",listing_fields:initialListingFields()};
 const count=(value:string)=>Array.from(value).length;
 
 export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (dirty:boolean)=>void }) {
@@ -25,19 +27,16 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
   const [saving,setSaving]=useState(false);
   const [status,setStatus]=useState("");
   const [unknown,setUnknown]=useState(false);
-  const dirty=!!product&&(fields.title!==product.title||fields.description!==product.description||fields.notes!==product.notes);
+  const dirty=!!product&&(fields.title!==product.title||fields.description!==product.description||fields.notes!==product.notes||
+    JSON.stringify(fields.listing_fields)!==JSON.stringify(initialListingFields(product.listing_fields,product)));
   useEffect(()=>onDirtyChange?.(dirty),[dirty,onDirtyChange]);
   useEffect(()=>()=>onDirtyChange?.(false),[onDirtyChange]);
   useEffect(()=>{
-    if(composing)return;
+    if(composing||dirty)return;
     const normalized=queryDraft.trim();
     if(normalized===query)return;
     const timer=window.setTimeout(()=>{
-      if(dirty&&!window.confirm("搜索会切换商品并丢弃未保存修改，确定继续吗？")){
-        setQueryDraft(query);
-        return;
-      }
-      setQuery(normalized);
+       setQuery(normalized);
       setOffset(0);
     },280);
     return ()=>window.clearTimeout(timer);
@@ -62,7 +61,8 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
     const c=new AbortController();setDetailLoading(true);setDetailError("");setStatus("");setUnknown(false);
     void getOwnProduct(selected,c.signal).then(p=>{
       if(c.signal.aborted)return;
-      setProduct(p);setFields({title:p.title,description:p.description,notes:p.notes});
+      setProduct(p);setFields({title:p.title,description:p.description,notes:p.notes,
+        listing_fields:initialListingFields(p.listing_fields,p)});
     }).catch(e=>{if(!c.signal.aborted){setDetailError(e instanceof Error?e.message:"详情读取失败");setProduct(null);}})
       .finally(()=>{if(!c.signal.aborted)setDetailLoading(false);});
     return ()=>c.abort();
@@ -79,11 +79,13 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
   };
   const save=async()=>{
     if(!product||saving||unknown||!dirty)return;
-    if(!fields.title.trim()||count(fields.title)>500||count(fields.description)>20000||count(fields.notes)>5000)return;
+    if(!fields.title.trim()||count(fields.title)>500||count(fields.description)>20000||count(fields.notes)>5000||
+      validateListingFields(fields.listing_fields))return;
     setSaving(true);setStatus("");
     try {
       const {product:next}=await updateOwnProduct(product.id,{...fields,revision:product.revision},new AbortController().signal);
-      setProduct(next);setFields({title:next.title,description:next.description,notes:next.notes});
+      setProduct(next);setFields({title:next.title,description:next.description,notes:next.notes,
+        listing_fields:initialListingFields(next.listing_fields,next)});
       setItems(old=>old.map(x=>x.id===next.id?{...x,title:next.title,updated_at:next.updated_at}:x)
         .sort((a,b)=>b.updated_at.localeCompare(a.updated_at)||b.id.localeCompare(a.id)));
       setStatus("已保存到产品箱，重启后可恢复");
@@ -95,12 +97,13 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
       if(productSaveNeedsReadback(code))setUnknown(true);
     } finally {setSaving(false);}
   };
-  const valid=fields.title.trim().length>0&&count(fields.title)<=500&&count(fields.description)<=20000&&count(fields.notes)<=5000;
+  const valid=fields.title.trim().length>0&&count(fields.title)<=500&&count(fields.description)<=20000&&count(fields.notes)<=5000&&
+    !validateListingFields(fields.listing_fields);
   return <div className="workspace">
     <section className="list-pane" aria-label="产品箱商品卡片">
       <div className="list-toolbar">
         <label className="search-box">
-          <input type="search" placeholder="搜索产品箱" value={queryDraft} maxLength={200}
+          <input type="search" placeholder={dirty?"请先保存商品再搜索":"搜索产品箱"} value={queryDraft} maxLength={200} readOnly={dirty}
             onChange={e=>setQueryDraft(e.target.value)}
             onCompositionStart={()=>setComposing(true)}
             onCompositionEnd={e=>{setComposing(false);setQueryDraft(e.currentTarget.value);}}
@@ -142,6 +145,8 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
             <label>商品标题<input value={fields.title} onChange={e=>setFields(v=>({...v,title:e.target.value}))} disabled={saving||unknown} /><small>{count(fields.title)} / 500</small></label>
             <label>商品描述<textarea rows={8} value={fields.description} onChange={e=>setFields(v=>({...v,description:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.description)} / 20000</small></label>
             <label>内部整理备注<textarea rows={4} value={fields.notes} onChange={e=>setFields(v=>({...v,notes:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.notes)} / 5000</small></label>
+            <ListingFieldsEditor value={fields.listing_fields} disabled={saving||unknown}
+              onChange={listing_fields=>setFields(v=>({...v,listing_fields}))}/>
             <div className="own-editor-actions">
               <span>{dirty?"有未保存修改":"内容已保存"} · 修订 {product.revision}</span>
               <button type="button" className="primary-button" disabled={!dirty||!valid||saving||unknown} onClick={()=>void save()}>{saving?"保存中…":"保存产品"}</button>
@@ -149,8 +154,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
             {status&&<p role="status" className="workspace-feedback">{status}</p>}
             {unknown&&<p>保存结果未知，请使用“重新加载”核实，勿重复提交。</p>}
           </div>
-          {product.images.length>1&&<div className="own-product-image-strip">{product.images.slice(1).map((image,i)=><img key={i} src={image.url} alt={"附图 "+(i+1)} loading="lazy" referrerPolicy="no-referrer"/>)}</div>}
-          {product.variants.length>0&&<section className="detail-section"><h3>来源规格（只读快照）</h3>{product.variants.map((v,i)=><p key={i}>{Object.entries(v.attributes).map(([k,val])=>k+"："+val).join(" / ")}</p>)}</section>}
+          <p className="listing-fields-note">来源图片、原价格及原始规格始终保留在源快照中；上方编辑区修改的是你自己的产品数据。</p>
         </div>}
     </section>
   </div>;
