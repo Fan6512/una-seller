@@ -23,7 +23,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     const next=images.slice();
     const [pick]=next.splice(index,1);
     next.unshift(pick);
-    set("images",next.map((im,i)=>({...im,type:i===0?"main":"additional"})));
+    set("images",next.map((im,i)=>({...im,type:(i===0?"main":"additional") as "main" | "additional"})));
   };
   const updateVariant=(index:number,patch:Partial<ListingVariant>)=>{
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
@@ -111,7 +111,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
             onChange={e=>updateImage(i,e.target.value)}/>
           <div>
             <button type="button" disabled={disabled||i===0} onClick={()=>moveMain(i)}>{i===0?"首图":"设为首图"}</button>
-            <button type="button" disabled={disabled} onClick={()=>set("images",images.filter((_,j)=>j!==i).map((x,j)=>({...x,type:j===0?"main":"additional"})))}>移除</button>
+            <button type="button" disabled={disabled} onClick={()=>set("images",images.filter((_,j)=>j!==i).map((x,j)=>({...x,type:(j===0?"main":"additional") as "main" | "additional"})))}>移除</button>
           </div>
         </div>)}
       </div>
