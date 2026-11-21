@@ -509,7 +509,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1><p>采集商品 → 整理工作稿 → 通过后进入独立产品箱</p></div>
-          <button type="button" className="refresh-button" onClick={reload} disabled={listLoading||draftDirty} aria-label="刷新商品列表"><Icon name="refresh" size={17} /> 刷新</button>
+          {workspaceTab==="inbox" && <button type="button" className="refresh-button" onClick={reload} disabled={listLoading||draftDirty} aria-label="刷新采集箱"><Icon name="refresh" size={17} /> 刷新</button>}
         </div>
         <div className="workbench-tabs" role="tablist" aria-label="工作台分区">
           <button type="button" role="tab" aria-selected={workspaceTab==="inbox"} onClick={()=>{if(!leavingDirty())return;setWorkspaceTab("inbox");}}>采集箱</button>
