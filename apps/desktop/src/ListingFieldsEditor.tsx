@@ -82,7 +82,6 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
       {suggestions.length>0&&<div className="category-suggestion-list">
         {suggestions.map(item=><button key={item.category_id} type="button" disabled={disabled}
           onClick={()=>{
-            set("category_id",item.category_id);
             onChange({...value,category_id:item.category_id,category_path:item.category_name});
             setPredictMessage("已填入所选 CBT 类目，仍需在刊登前核对官方必填属性。");
           }}>
