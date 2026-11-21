@@ -1,13 +1,32 @@
 import type { ListingFields, ListingVariant } from "./listingFields";
-import { SITE_NAMES, validateListingFields } from "./listingFields";
+import { detectTitleLanguage, validateListingFields, preferredTitle } from "./listingFields";
+import { getCBTCategorySuggestions, type CBTCategorySuggestion } from "./collections";
+import { useState } from "react";
 
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean};
-const CURRENCIES:Record<string,string>={MLB:"BRL",MLM:"MXN",MLA:"ARS",MLC:"CLP",MCO:"COP"};
-const targetSites=Object.keys(SITE_NAMES);
-
-export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
+ export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
-  const prices=value.site_prices??[];
+  const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
+  const [predicting,setPredicting]=useState(false);
+  const [predictMessage,setPredictMessage]=useState("");
+  const chosenTitle=preferredTitle(value.titles);
+  const setLocalizedTitle=(lang:"en"|"es"|"pt",title:string)=>{
+    set("titles",{...value.titles,[lang]:title});
+    setSuggestions([]);
+    setPredictMessage(value.category_id?"标题已修改，原类目需要重新核实。":"");
+  };
+  const predict=async()=>{
+    const english=value.titles.en.trim();
+    if(!english || english.split(/\s+/u).length<2)return;
+    setPredicting(true);setPredictMessage("");setSuggestions([]);
+    try{
+      const result=await getCBTCategorySuggestions(english,new AbortController().signal);
+      setSuggestions(result.items);
+      setPredictMessage(result.items.length?"请核对分类并点击确认候选；不会自动选中。":"官方未返回候选，请手动填写 CBT 类目。");
+    }catch(e){
+      setPredictMessage(e instanceof Error?e.message:"暂时无法获取官方 CBT 分类推荐，请手动填写。");
+    }finally{setPredicting(false)}
+  };
   const images=value.images??[];
   const variants=value.variants??[];
   const error=validateListingFields(value);
@@ -32,16 +51,47 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     <h3>上架资料整理</h3>
     <p className="listing-fields-note">采集数据只是参考；此处编辑的内容会保存到当前工作稿，转入产品箱后仍可继续修改。站点类目及属性须在刊登前用美客多官方规则验证。</p>
 
-    <fieldset><legend>分类及基本信息</legend>
+    <fieldset><legend>三语商品标题</legend>
+      <p className="listing-fields-note">采集时仅把原标题放入识别的语言栏；不自动翻译。无法确定语言时暂放英文栏，可手动调整。编辑完成后再使用 CBT 分类推荐。</p>
+      <div className="localized-title-grid">
+        {([
+          {key:"en",label:"英文标题（源标题 / 类目推荐）",target:"建议 45–55 字符"},
+          {key:"es",label:"西班牙语标题（墨西哥买家）",target:"建议不超过 60 字符"},
+          {key:"pt",label:"葡萄牙语标题（巴西买家）",target:"建议不超过 60 字符"},
+        ] as const).map(item=><label className="listing-field" key={item.key}>
+          {item.label}
+          <textarea rows={2} disabled={disabled} maxLength={500} value={value.titles[item.key]}
+            onChange={e=>setLocalizedTitle(item.key,e.target.value)} placeholder="可人工填写或后续 AI 生成；不编造规格"/>
+          <small className={"localized-title-count "+(item.key!=="en"&&Array.from(value.titles[item.key]).length>60?"title-over-limit":"")}>
+            {Array.from(value.titles[item.key]).length} 字符（含空格及符号）· {item.target}
+          </small>
+        </label>)}
+      </div>
+      {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
+      <p className="listing-fields-note">三语都属于同一个产品，站点与店铺在实际刊登时选择；英文标题优先作为 CBT 推荐依据。</p>
+    </fieldset>
+
+    <fieldset><legend>分类建议与基本属性</legend>
+      <p className="listing-fields-note">采集后不立即分类。先修改好标题，再按需点击“推荐 CBT 类目”。结果由 Mercado Libre Global Selling 官方接口返回，必须由你确认，站点专属必填属性在上传阶段另行验证。</p>
+      <div className="category-predict-row">
+        <button type="button" disabled={disabled||predicting||!value.titles.en.trim()||value.titles.en.trim().split(/\s+/).length<2}
+          onClick={()=>void predict()}>{predicting?"查询中…":"根据英文标题推荐 CBT 类目"}</button>
+        <small>来源语言识别：{detectTitleLanguage(chosenTitle)==="uncertain"?"不确定":detectTitleLanguage(chosenTitle)==="en"?"英语":detectTitleLanguage(chosenTitle)==="es"?"西语":"葡语"}（可手动调整）</small>
+      </div>
+      {predictMessage&&<p className="listing-fields-note" role="status">{predictMessage}</p>}
+      {suggestions.length>0&&<div className="category-suggestion-list">
+        {suggestions.map(item=><button key={item.category_id} type="button" disabled={disabled}
+          onClick={()=>{
+            set("category_id",item.category_id);
+            onChange({...value,category_id:item.category_id,category_path:item.category_name});
+            setPredictMessage("已填入所选 CBT 类目，仍需在刊登前核对官方必填属性。");
+          }}>
+          <strong>{item.category_name}</strong><small>{item.category_id} · {item.domain_name}</small>
+        </button>)}
+      </div>}
       <div className="listing-field-grid">
-        <label className="listing-field">目标站点
-          <select value={value.category_site} disabled={disabled} onChange={e=>set("category_site",e.target.value)}>
-            <option value="">待选择</option>
-            {targetSites.map(site=><option key={site} value={site}>{SITE_NAMES[site]}</option>)}
-          </select>
-        </label>
-        {field("分类路径（中文或官方分类名称）","category_path","例如：家居 / 地板涂料",400)}
-        {field("官方分类 ID（待核实）","category_id","例如：MLB…",60)}
+        {field("CBT 分类名称 / 路径（可手动修改）","category_path","整理完标题后再填写或选择官方推荐",400)}
+        {field("CBT 通用分类 ID（非 MLB/MLM）","category_id","例如 CBT12345；可手动填写",60)}
         {field("品牌","brand","无品牌请留空")}
         {field("型号","model")}
         {field("主商品 SKU（内部编码）","seller_sku","例如：FLOOR-001")}
@@ -49,29 +99,12 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       </div>
     </fieldset>
 
-    <fieldset><legend>价格与站点售价</legend>
+    <fieldset><legend>采购成本</legend>
       <div className="listing-field-grid">
-        {field("采购成本（非采集来源售价）","purchase_price","留空表示未知")}
+        {field("采购成本（不是来源竞品售价）","purchase_price","留空表示未知")}
         {field("采购币种","purchase_currency","如 CNY、USD",3)}
       </div>
-      <div className="site-price-list">
-        {prices.map((p,i)=><div className="site-price-row" key={p.site}>
-          <strong>{SITE_NAMES[p.site]??p.site}</strong>
-          <label>刊登目标价
-            <input value={p.price} placeholder="尚未定价" disabled={disabled}
-              onChange={e=>set("site_prices",prices.map((x,j)=>j===i?{...x,price:e.target.value}:x))}/>
-          </label>
-          <span>{p.currency||CURRENCIES[p.site]}</span>
-          <button type="button" disabled={disabled} onClick={()=>set("site_prices",prices.filter((_,j)=>i!==j))}>移除</button>
-        </div>)}
-        {prices.length<5&&<div className="site-price-add">
-          <span>增加目标站点：</span>
-          {targetSites.filter(site=>!prices.some(p=>p.site===site)).map(site=>
-            <button type="button" key={site} disabled={disabled} onClick={()=>
-              set("site_prices",[...prices,{site,price:"",currency:CURRENCIES[site]}])}>+ {SITE_NAMES[site]}</button>)}
-        </div>}
-      </div>
-      <p className="listing-fields-note">站点价格是草稿字段，不会因保存而提交到美客多。不同国家、币种分别填写。</p>
+      <p className="listing-fields-note">不在这里选择国家站点，也不填写各站点刊登售价。上传商品时再选择目标店铺、国家站点、对应售价及站点属性。</p>
     </fieldset>
 
     <fieldset><legend>重量与包装尺寸</legend>
