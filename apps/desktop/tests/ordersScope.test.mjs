@@ -154,6 +154,14 @@ try {
   await waitFor(() => button() && !button().disabled &&
     document.querySelector(".orders-filter-note")?.textContent.includes("访问令牌已到期"),
     "expired-token store remained disabled after refreshing status");
+  const afterRefresh = await start();
+  stores[0].status = "connected";
+  afterRefresh.resolve(Response.json({ ...progress, has_more: false }));
+  await waitFor(() => document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"),
+    "sync success not confirmed");
+  await waitFor(() => [...document.querySelectorAll(".orders-filter-note")]
+    .some((item) => item.textContent.includes("当前店铺") && item.textContent.includes("已连接")),
+    "successful token renewal left the expired banner visible");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";

@@ -287,6 +287,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       setNotice(last?.has_more
         ? "本轮已保存 " + saved + " 笔订单，达到 20 批安全上限。点击继续同步可从已保存位置接着处理。"
         : "订单同步完成：本轮保存 " + saved + " 笔，已同步到当前搜索窗口末尾。");
+      if (store?.status === "token_expired") void reloadStores();
     } catch (error) {
       if (controller.signal.aborted) {
         setNotice("同步已停止。请刷新后查看服务器上的已保存订单与进度。");

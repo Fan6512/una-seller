@@ -34,6 +34,7 @@ const knownCodes = new Set([
   "order_reauth_required", "order_refresh_unknown", "order_busy", "order_auth_changed",
   "order_rate_limited", "order_timeout", "order_canceled", "order_reset_conflict",
   "order_reset_invalid", "order_unavailable",
+  "order_scope_required", "order_skip_invalid", "order_offset_invalid", "order_status_invalid",
 ]);
 let cursor = 0;
 let nextRequestId = 0;
