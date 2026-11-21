@@ -22,6 +22,12 @@ func TestOrderPurchaseManualLinkAndSellerIsolation(t *testing.T) {
 	if err != nil || missing != nil {
 		t.Fatalf("new order purchase=%+v error=%v", missing, err)
 	}
+	// A distinct unlinked order proves the filter is applied before pagination.
+	if _, err = db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated)
+ VALUES($1::uuid,'MLB','remote','987654','402','paid','USD',9.99,now(),now())`, store); err != nil {
+		t.Fatal(err)
+	}
 	const purchaseID = "1234567890123456"
 	if _, err = s.SaveOrderPurchase(ctx, owner, store, scope, "401", purchaseID, "16.00", nil); err != nil {
 		t.Fatal(err)
@@ -36,7 +42,8 @@ func TestOrderPurchaseManualLinkAndSellerIsolation(t *testing.T) {
 		t.Fatalf("linked purchase filter returned %+v, %v", linked, err)
 	}
 	unlinked, err := s.ListOrders(ctx, owner, store, scope, "", "unlinked", 0)
-	if err != nil || len(unlinked.Items) != 0 {
+	if err != nil || len(unlinked.Items) != 1 || unlinked.Items[0].ID != "402" ||
+		unlinked.Items[0].PurchaseOrderID != "" || unlinked.Items[0].PurchaseCostCNY != nil {
 		t.Fatalf("unlinked purchase filter returned %+v, %v", unlinked, err)
 	}
 	detail, err := s.GetOrder(ctx, owner, store, scope, "401")
