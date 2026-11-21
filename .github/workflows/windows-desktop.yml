@@ -96,6 +96,8 @@ jobs:
 
       - name: Build test NSIS installer
         if: github.event_name != 'push' && !inputs.signed_smoke
+        env:
+          VITE_UNA_SELLER_DEV_DIAGNOSTICS: '1'
         run: npm run tauri:build -- --bundles nsis -- --locked
 
       - name: Build signed NSIS installer

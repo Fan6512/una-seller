@@ -27,7 +27,8 @@ const markets = [
   { user_id: 3, site_id: "MLA", logistic_type: "remote" },
 ];
 const stores = ["one", "two"].map((id) => ({
-  id, nickname: id, status: "connected", marketplaces_status: "verified", marketplaces: markets,
+  id, nickname: id, status: id === "one" ? "token_expired" : "connected",
+  marketplaces_status: "verified", marketplaces: markets,
 }));
 const deferred = [];
 const purchaseRequests = [];
@@ -53,6 +54,8 @@ const select = (name, value) => {
   flushSync(() => field.dispatchEvent(new Event("change", { bubbles: true })));
 };
 const button = () => [...document.querySelectorAll("button")].find((item) => item.textContent === "同步订单");
+const refreshStoreStatus = () => [...document.querySelectorAll("button")]
+  .find((item) => item.textContent === "刷新店铺状态");
 const purchaseButton = (text) => [...document.querySelectorAll(".orders-purchase-actions button")]
   .find((item) => item.textContent === text);
 const takePurchase = async (method) => {
@@ -129,6 +132,36 @@ try {
   await waitFor(() => document.querySelector('input[aria-label="1688 采购订单号"]:enabled'), "new purchase form unavailable");
   assert(staleSave.signal.aborted && !document.querySelector(".orders-purchase-success, .orders-purchase-state"),
     "previous purchase save entered current form");
+
+  // A verified expired-token store must still be able to start one explicit
+  // sync. Show the upstream failure code without leaking any request token.
+  const failed = await start();
+  failed.resolve(Response.json({ error: "order_platform_unavailable" }, { status: 502 }));
+  await waitFor(() => document.querySelector(".orders-notice")?.textContent.includes("HTTP 502"),
+    "order failure HTTP status not surfaced");
+  assert(document.querySelector(".orders-notice").textContent.includes("order_platform_unavailable"),
+    "upstream failure error code not surfaced");
+
+  // Store state can change after a connection check while OrdersPage is open;
+  // use a fresh status read, rather than a stale snapshot, to gate actions.
+  assert(refreshStoreStatus(), "refresh connection control missing");
+  stores[0].status = "reauth_required";
+  flushSync(() => refreshStoreStatus().click());
+  await waitFor(() => button()?.disabled && document.querySelector(".orders-filter-note")?.textContent.includes("重新授权"),
+    "reauthorization status did not disable sync");
+  stores[0].status = "token_expired";
+  flushSync(() => refreshStoreStatus().click());
+  await waitFor(() => button() && !button().disabled &&
+    document.querySelector(".orders-filter-note")?.textContent.includes("访问令牌已到期"),
+    "expired-token store remained disabled after refreshing status");
+  const afterRefresh = await start();
+  stores[0].status = "connected";
+  afterRefresh.resolve(Response.json({ ...progress, has_more: false }));
+  await waitFor(() => document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"),
+    "sync success not confirmed");
+  await waitFor(() => [...document.querySelectorAll(".orders-filter-note")]
+    .some((item) => item.textContent.includes("当前店铺") && item.textContent.includes("已连接")),
+    "successful token renewal left the expired banner visible");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";
