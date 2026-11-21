@@ -3,6 +3,8 @@ import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
 import StoresPage from "./StoresPage";
+import { cachedStores, checkStoreConnection, listStores, watchStoreList } from "./stores";
+import { checkStoresOnLogin, resolveManualStoreCheck, storeHealthFromList, type StoreHealth } from "./storeLoginCheck";
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
@@ -224,8 +226,13 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
   beginSync: () => (() => void) | undefined; syncCount: number;
 }) {
-  const [section, setSection] = useState<"collections" | "stores" | "published" | "orders">("collections");
+  const [section, setSection] = useState<"collections" | "published" | "orders">("collections");
   const [settings, setSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<"updates" | "stores">("updates");
+  const [storeHealth, setStoreHealth] = useState<StoreHealth>({
+    status: "checking", message: "正在核实店铺连接状态",
+  });
+  const failedStoreChecks = useRef(new Set<string>());
   const [service, setService] = useState<ServiceStatus>("checking");
   const [serviceError, setServiceError] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
@@ -244,6 +251,30 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const detailCache = useRef(new Map<string, { value: CollectionDetail; savedAt: number }>());
+
+  // One nonblocking verification round per authenticated workspace mount.
+  // A later plain GET must never turn a failed POST verification green.
+  useEffect(() => {
+    let active = true;
+    let finished = false;
+    const unwatch = watchStoreList((items) => {
+      if (active && finished) setStoreHealth(storeHealthFromList(items, failedStoreChecks.current));
+    });
+    void checkStoresOnLogin(listStores, checkStoreConnection).then(({ health, failedStoreIds }) => {
+      if (!active) return;
+      failedStoreChecks.current = failedStoreIds;
+      finished = true;
+      setStoreHealth(health);
+    }).catch(() => {
+      if (!active) return;
+      finished = true;
+      failedStoreChecks.current.add("__initial_read_failed__");
+      setStoreHealth({
+        status: "attention", message: "店铺连接状态暂时无法确认，请检查网络或进入设置重试",
+      });
+    });
+    return () => { active = false; unwatch(); };
+  }, []);
 
   const reload = () => {
     detailCache.current.clear();
@@ -379,25 +410,49 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         <span className="topbar-divider" aria-hidden="true" />
         <nav aria-label="商品工作台">
           <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { setSettings(false); setSection("collections"); }}>采集箱</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "stores"} onClick={() => { setSettings(false); setSection("stores"); }}>店铺管理</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { setSettings(false); setSection("published"); }}>已刊登商品</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { setSettings(false); setSection("orders"); }}>订单管理</button>
-          <button type="button" className="logout-action" aria-pressed={settings} onClick={() => setSettings(true)}>{updates.update ? "设置 · 有更新" : "设置"}</button>
+          <button type="button" className="logout-action" aria-pressed={settings} onClick={() => { setSettings(true); setSettingsSection("updates"); }}>{updates.update ? "设置 · 有更新" : "设置"}</button>
         </nav>
         <div className="topbar-spacer" />
         <span className={"connection-indicator " + connectionStatus} role="status">
           <span className="connection-dot" aria-hidden="true" />
           {connectionStatus === "checking" ? "连接中" : connectionStatus === "online" ? "服务正常" : "连接异常"}
         </span>
+        <button type="button"
+          className={"store-health-button " + (storeHealth.status === "connected" ? "online" : storeHealth.status)}
+          title={storeHealth.message}
+          onClick={() => { setSettings(true); setSettingsSection("stores"); }}>
+          <span className="connection-dot" aria-hidden="true" />
+          {storeHealth.status === "checking" ? "店铺检查中"
+            : storeHealth.status === "connected" ? "店铺已连接"
+              : storeHealth.status === "empty" ? "未绑定店铺" : "店铺需检查"}
+        </button>
         <span className="account-email" title={email}>{email || "当前用户"}</span>
         <button type="button" className="logout-action" onClick={onLogout}>退出登录</button>
       </header>
 
       <main className="main-content">
-        {settings && <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />}
-        {diagnosticsEnabled && settings && <DevelopmentDiagnostics />}
-        {section === "stores" ? <div hidden={settings}><StoresPage /></div>
-          : section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+        {settings && <>
+          <nav className="settings-navigation" aria-label="设置分类">
+            <button type="button" aria-pressed={settingsSection === "updates"}
+              onClick={() => setSettingsSection("updates")}>客户端与更新</button>
+            <button type="button" aria-pressed={settingsSection === "stores"}
+              onClick={() => setSettingsSection("stores")}>店铺管理</button>
+          </nav>
+          {settingsSection === "updates" && <>
+            <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />
+            {diagnosticsEnabled && <DevelopmentDiagnostics />}
+          </>}
+          {settingsSection === "stores" && <StoresPage onConnectionChecked={(id) => {
+            const latest = cachedStores();
+            if (latest) {
+              failedStoreChecks.current = resolveManualStoreCheck(failedStoreChecks.current, latest, id);
+              setStoreHealth(storeHealthFromList(latest, failedStoreChecks.current));
+            }
+          }} />}
+        </>}
+        {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : !settings && <>
         <div className="page-heading">

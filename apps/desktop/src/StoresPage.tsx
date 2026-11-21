@@ -10,7 +10,7 @@ const statusText: Record<StoreConnection["status"], string> = {
   disconnected: "已断开",
 };
 
-export default function StoresPage() {
+export default function StoresPage({ onConnectionChecked }: { onConnectionChecked?: (storeId: string) => void }) {
   const [items, setItems] = useState<StoreConnection[]>(() => cachedStores() ?? []);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -97,6 +97,7 @@ export default function StoresPage() {
     setError("");
     try {
       const result = await checkStoreConnection(item.id);
+      onConnectionChecked?.(item.id);
       setNotice(result.marketplaces_verified
         ? "Token 有效；获准站点映射已核实，具体刊登能力仍需验证。"
         : "Token 有效；站点映射尚未核实，不允许直接刊登。");

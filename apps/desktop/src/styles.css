@@ -654,3 +654,40 @@ button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visibl
 .working-draft .working-draft-error { color: #b42318; }
 .working-draft .working-draft-success { color: #26774b; }
 .working-draft .working-draft-hint { margin-bottom: 0; }
+
+/* Store connection checks are displayed without blocking login or normal work. */
+.store-health-button {
+  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  border: 1px solid var(--ui-outline); border-radius: 9px;
+  background: var(--ui-surface); color: var(--ui-muted);
+  padding: 7px 10px; font-size: 11px; white-space: nowrap;
+}
+.store-health-button.online { color: #26734b; }
+.store-health-button.online .connection-dot { background: #36a175; }
+.store-health-button.attention { color: #a26829; }
+.store-health-button.attention .connection-dot { background: #d88a39; }
+.store-health-button.empty .connection-dot { background: #a7afbd; }
+.store-health-button:hover { border-color: #bac9e1; }
+
+.settings-navigation {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 24px; border-bottom: 1px solid var(--ui-outline); padding-bottom: 12px;
+}
+.settings-navigation button {
+  border: 1px solid var(--ui-outline); border-radius: 9px;
+  background: var(--ui-surface); color: var(--ui-muted);
+  padding: 10px 15px; font-size: 13px;
+}
+.settings-navigation button[aria-pressed="true"] {
+  background: var(--ui-selection); border-color: #bac9e1; color: var(--ui-accent);
+  font-weight: 600;
+}
+
+/* At the Tauri minimum width (780px), move navigation onto a second line
+   rather than clipping the connection badge or the logout action. */
+@media (max-width: 920px) {
+  .topbar { height: auto; min-height: 64px; padding: 10px 16px; flex-wrap: wrap; gap: 8px 12px; }
+  .topbar nav { order: 3; flex: 1 0 100%; width: 100%; }
+  .topbar-spacer { flex: 1 1 auto; }
+  .account-email { max-width: 120px; }
+}
