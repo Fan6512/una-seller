@@ -59,10 +59,11 @@ async function request<T>(path:string,signal:AbortSignal,method:"GET"|"POST"|"PU
     :res.status===404?"商品不存在或无法访问":"操作失败（HTTP "+res.status+"）");
   return await res.json() as T;
 }
+export const OWN_PRODUCT_PAGE_SIZE = 24;
 export async function getOwnProductPage(q:string,offset:number,signal:AbortSignal) {
-  const query=new URLSearchParams({q,limit:"25",offset:String(offset)});
+  const query=new URLSearchParams({q:q.trim().slice(0,200),limit:String(OWN_PRODUCT_PAGE_SIZE+1),offset:String(offset)});
   const data=await request<{items:OwnProductSummary[]}>("/api/v1/products?"+query,signal);
-  return {items:data.items.slice(0,24),hasMore:data.items.length>24};
+  return {items:data.items.slice(0,OWN_PRODUCT_PAGE_SIZE),hasMore:data.items.length>OWN_PRODUCT_PAGE_SIZE};
 }
 export function getOwnProduct(id:string,signal:AbortSignal) {
   return request<OwnProduct>("/api/v1/products/"+encodeURIComponent(id),signal);
