@@ -4,7 +4,7 @@ import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
 import StoresPage from "./StoresPage";
 import { cachedStores, checkStoreConnection, listStores, watchStoreList } from "./stores";
-import { checkStoresOnLogin, storeHealthFromList, type StoreHealth } from "./storeLoginCheck";
+import { checkStoresOnLogin, resolveManualStoreCheck, storeHealthFromList, type StoreHealth } from "./storeLoginCheck";
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
@@ -446,18 +446,10 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           </>}
           {settingsSection === "stores" && <StoresPage onConnectionChecked={(id) => {
             const latest = cachedStores();
-            if (latest && failedStoreChecks.current.has("__initial_read_failed__")) {
-              // The initial list was unavailable; other active stores still need
-              // their own confirmation before the global badge can turn green.
-              failedStoreChecks.current.delete("__initial_read_failed__");
-              for (const item of latest) {
-                if (item.id !== id && (item.status === "connected" || item.status === "token_expired")) {
-                  failedStoreChecks.current.add(item.id);
-                }
-              }
+            if (latest) {
+              failedStoreChecks.current = resolveManualStoreCheck(failedStoreChecks.current, latest, id);
+              setStoreHealth(storeHealthFromList(latest, failedStoreChecks.current));
             }
-            failedStoreChecks.current.delete(id);
-            if (latest) setStoreHealth(storeHealthFromList(latest, failedStoreChecks.current));
           }} />}
         </>}
         {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
