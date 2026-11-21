@@ -57,18 +57,18 @@ type OrderLine struct {
 }
 
 type OrderRecord struct {
-	ID              string      `json:"order_id"`
-	PackID          string      `json:"pack_id,omitempty"`
-	Status          string      `json:"status"`
-	CurrencyID      string      `json:"currency_id"`
-	TotalAmount     string      `json:"total_amount"`
-	DateCreated     time.Time   `json:"date_created"`
-	LastUpdated     time.Time   `json:"last_updated"`
-	ShipmentID      string      `json:"shipment_id,omitempty"`
-	Items           []OrderLine `json:"order_items"`
-	PurchaseOrderID string      `json:"purchase_order_id,omitempty"`
-	PurchaseCostCNY *string     `json:"purchase_cost_cny,omitempty"`
-	PurchaseTrackingNumber string `json:"purchase_tracking_number,omitempty"`
+	ID                     string      `json:"order_id"`
+	PackID                 string      `json:"pack_id,omitempty"`
+	Status                 string      `json:"status"`
+	CurrencyID             string      `json:"currency_id"`
+	TotalAmount            string      `json:"total_amount"`
+	DateCreated            time.Time   `json:"date_created"`
+	LastUpdated            time.Time   `json:"last_updated"`
+	ShipmentID             string      `json:"shipment_id,omitempty"`
+	Items                  []OrderLine `json:"order_items"`
+	PurchaseOrderID        string      `json:"purchase_order_id,omitempty"`
+	PurchaseCostCNY        *string     `json:"purchase_cost_cny,omitempty"`
+	PurchaseTrackingNumber string      `json:"purchase_tracking_number,omitempty"`
 }
 
 type OrderPage struct {
