@@ -60,7 +60,7 @@ const defaultApiBase = import.meta.env.DEV ? "http://127.0.0.1:8787" : "https://
 export const apiBase = (import.meta.env.VITE_API_BASE_URL || defaultApiBase).replace(/\/$/, "");
 
 class CollectionRequestError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly code?: string) {
     super(message);
     this.name = "CollectionRequestError";
   }
@@ -104,7 +104,12 @@ async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = 
       : response.status === 404
         ? "商品不存在或不可访问"
         : "请求失败（HTTP " + response.status + "）";
-    throw new CollectionRequestError(response.status, message);
+    let errorCode: string | undefined;
+    if (response.status === 409) {
+      const payload = await response.json().catch(() => null) as { code?: unknown } | null;
+      if (typeof payload?.code === "string") errorCode = payload.code;
+    }
+    throw new CollectionRequestError(response.status, message, errorCode);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -138,8 +143,14 @@ export type WorkingDraftInput = Pick<CollectionWorkingDraft, "title" | "descript
   expected_revision: number;
 };
 
+export function isDraftConverted(error: unknown) {
+  return error instanceof CollectionRequestError && error.status === 409 &&
+    error.code === "WORKING_DRAFT_CONVERTED";
+}
+
 export function isDraftConflict(error: unknown) {
-  return error instanceof CollectionRequestError && error.status === 409;
+  return error instanceof CollectionRequestError && error.status === 409 &&
+    !isDraftConverted(error);
 }
 
 export function isDraftRejected(error: unknown) {
