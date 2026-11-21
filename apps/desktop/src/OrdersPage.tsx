@@ -13,6 +13,9 @@ const PAGE_SIZE = 20;
 const SITE_NAMES: Record<string, string> = {
   MLB: "巴西", MLM: "墨西哥", MLA: "阿根廷", MLC: "智利", MCO: "哥伦比亚",
 };
+function logisticLabel(value?: string) {
+  return value === "remote" ? "自发货" : value === "fulfillment" ? "海外仓" : value || "—";
+}
 const FILTERS = [
   { value: "", label: "全部订单" },
   { value: "paid", label: "已付款" },
@@ -282,7 +285,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   }, [selectedId, selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic]);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
-  const closeOrder = () => setSelectedId("");
+  const closeOrder = () => { setSelectedId(""); setSelectedRowScope(null); };
   const closePurchase = () => {
     if (purchaseBusy) return;
     if (purchaseReady && (purchaseNumber !== (purchase?.purchase_order_id ?? "") ||
@@ -291,9 +294,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         purchaseTracking !== (purchase?.purchase_tracking_number ?? "")) &&
         !window.confirm("采购信息尚未保存，确定关闭采购窗口吗？")) return;
     setPurchaseSelectedId("");
+    setPurchaseRowScope(null);
   };
   const openPurchase = (id: string, targetScope: OrderScope | null = scope) => {
     setSelectedId("");
+    setSelectedRowScope(null);
     setPurchaseRowScope(targetScope);
     setPurchaseSelectedId(id);
   };
@@ -680,6 +685,10 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   };
   const searchOrder = () => {
     const input = searchText.trim();
+    if (/^\d{1,5}$/.test(input)) {
+      setListError("请输入完整的 Mercado Libre 销售订单号（至少 6 位），数字不支持部分匹配。");
+      return;
+    }
     if (input && !/^\d{1,30}$/.test(input) && [...input].length < 2) {
       setListError("商品标题搜索至少输入 2 个字符。");
       return;
@@ -749,13 +758,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {marketplaces.length > 0 && <option value="all">所有站点</option>}
             {marketplaces.map((market) => <option key={market.site_id + market.logistic_type} value={market.site_id + "|" + market.logistic_type}>
               {(SITE_NAMES[market.site_id] ?? market.site_id) + " · " +
-                (market.logistic_type === "remote" ? "自发货" : market.logistic_type === "fulfillment" ? "海外仓" : market.logistic_type)}
+                logisticLabel(market.logistic_type)}
             </option>)}
           </select>
         </label>
         <label className="orders-filter-search">搜索订单或商品标题
           <span className="orders-search-inner">
-            <input type="search" value={searchText} placeholder="销售订单号 / 商品标题（全部订单）"
+            <input type="search" value={searchText} placeholder="完整销售订单号 / 商品标题（全部订单）"
               onChange={(event) => { setSearchText(event.target.value);
                 if (!event.target.value) { setActiveQuery(""); setOffset(0); }
               }}
@@ -764,7 +773,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           </span>
         </label>
       </div>
-      <p className="orders-filter-note">Order ID 跨所选店铺全部站点精确查询；商品标题在当前站点的全部已同步订单中搜索。{activeQuery && " · 当前搜索：" + activeQuery}</p>
+      <p className="orders-filter-note">输入完整 Order ID（至少 6 位）跨所选店铺全部站点精确查询；商品标题在当前站点的全部已同步订单中搜索。搜索期间暂不可批量补图或刷新发货截止。{activeQuery && " · 当前搜索：" + activeQuery}</p>
 
       {storeError && <p className="orders-alert" role="alert">{storeError}</p>}
       {!stores.length && <div className="orders-empty">
@@ -847,9 +856,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                         stores.find((item) => item.id === (order.store_id ?? scope?.storeId))?.nickname ||
                         store?.nickname || "店铺").trim().slice(0, 12)}（{
                         SITE_NAMES[order.site_id ?? scope?.site ?? ""] ?? order.site_id ?? scope?.site
-                      }） · {(order.logistic_type ?? scope?.logistic) === "remote" ? "自发货" :
-                        (order.logistic_type ?? scope?.logistic) === "fulfillment" ? "海外仓" :
-                        (order.logistic_type ?? scope?.logistic)}</span>
+                      }） · {logisticLabel(order.logistic_type ?? scope?.logistic)}</span>
                     </td>
                     <td className="orders-product-cell">
                       <div className="orders-product-preview">
@@ -904,7 +911,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <dialog ref={detailDialogRef} className="orders-modal" aria-labelledby="orders-detail-title"
             onCancel={(event) => { event.preventDefault(); closeOrder(); }}
             onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}
-            onClose={() => { if (selectedId) setSelectedId(""); }}>
+            onClose={() => { if (selectedId) setSelectedId(""); setSelectedRowScope(null); }}>
             <div className="orders-detail" aria-label="订单详情">
               <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[selectedRowScope?.site ?? scope?.site ?? ""] ?? selectedRowScope?.site ?? scope?.site}</small>
                 <h2 id="orders-detail-title">{selectedId || "订单详情"}</h2></div>
@@ -945,9 +952,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <h3>订单与物流</h3>
                 <dl className="orders-detail-fields">
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
-                  <dt>物流模式</dt><dd>{(selectedRowScope?.logistic ?? scope?.logistic) === "remote" ? "自发货" :
-                    (selectedRowScope?.logistic ?? scope?.logistic) === "fulfillment" ? "海外仓" :
-                    selectedRowScope?.logistic ?? scope?.logistic ?? "—"}</dd>
+                  <dt>物流模式</dt><dd>{logisticLabel(selectedRowScope?.logistic ?? scope?.logistic)}</dd>
                   <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
                   <dt>平台运单号</dt><dd>待官方 Shipment 接口查询</dd>
                   <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).date}
@@ -992,7 +997,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         </div>
         <dialog ref={purchaseDialogRef} className="orders-modal orders-purchase-modal"
           aria-label="1688采购关联" onCancel={(event) => { event.preventDefault(); closePurchase(); }}
-          onClose={() => { if (purchaseSelectedId) setPurchaseSelectedId(""); }}>
+          onClose={() => { if (purchaseSelectedId) setPurchaseSelectedId(""); setPurchaseRowScope(null); }}>
           <header className="orders-detail-head">
             <div><small>手动采购信息 · 不自动推送货代仓</small>
               <h2>关联 1688 采购</h2></div>
@@ -1001,6 +1006,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           </header>
           <div className="orders-purchase-compact">
             <p className="orders-muted">美客多订单：{purchaseSelectedId}</p>
+            <p className="orders-muted" data-testid="purchase-target-scope">
+              店铺：{(() => {
+                const current = stores.find((item) => item.id === (purchaseRowScope?.storeId ?? scope?.storeId));
+                return current?.nickname || current?.seller_id || "未知店铺";
+              })()} · 站点：{SITE_NAMES[purchaseRowScope?.site ?? scope?.site ?? ""] ??
+                purchaseRowScope?.site ?? scope?.site ?? "未知站点"} · 物流：{
+                logisticLabel(purchaseRowScope?.logistic ?? scope?.logistic)}
+            </p>
             <p className="orders-muted">填写实际货代仓和采购运单；仅保存关联，不会向货小易自动推单。</p>
             <div className="orders-purchase-form">
               <label>货代仓收货地址
