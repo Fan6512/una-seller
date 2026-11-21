@@ -27,6 +27,7 @@ const markets = [
   { user_id: 1, site_id: "MLB", logistic_type: "remote" },
   { user_id: 2, site_id: "MLB", logistic_type: "fulfillment" },
   { user_id: 3, site_id: "MLA", logistic_type: "remote" },
+  { user_id: 4, site_id: "MLM", logistic_type: "remote" },
 ];
 const stores = ["one", "two"].map((id) => ({
   id, nickname: id, status: id === "one" ? "token_expired" : "connected",
@@ -35,6 +36,7 @@ const stores = ["one", "two"].map((id) => ({
 const deferred = [];
 const purchaseRequests = [];
 const purchaseFilters = [];
+const searchRequests = [];
 const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD",
   shipment_id: "87123456" };
 let slaFetchCount = 0;
@@ -52,6 +54,24 @@ window.fetch = (path, options) => {
     order.status = "partially_refunded";
     return Promise.resolve(Response.json(order));
   }
+  if (pathname.endsWith("/orders/search")) {
+    const uri = new URL(path, location.href);
+    const q = uri.searchParams.get("q") ?? "";
+    const storeFilter = pathname.split("/")[4];
+    const site = uri.searchParams.get("site") ?? "";
+    const purchaseFilter = uri.searchParams.get("purchase") ?? "";
+    searchRequests.push({ q, storeFilter, site, uri });
+    const lemon = { ...order, order_id: "200002", store_id: "one", site_id: "MLM", logistic_type: "remote",
+      purchase_order_id: "", order_items: [{ item_id: "MLM100", title: "Lemon massage tool",
+        quantity: 1, unit_price: "12", currency_id: "USD" }] };
+    const another = { ...lemon, store_id: "two", site_id: "MLB",
+      order_items: [{ ...lemon.order_items[0], item_id: "MLB200" }] };
+    const rows = q === "200002" || q.toLowerCase() === "lemon"
+      ? storeFilter === "all" ? [lemon, another] : [lemon]
+      : site === "*" ? [{ ...lemon, order_id: "10001", site_id: "MLB" }, lemon] : [lemon];
+    return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: purchaseFilter,
+      query: q, site_filter: site, store_filter: storeFilter }));
+  }
   if (pathname.endsWith("/orders")) {
     const filter = new URL(path, location.href).searchParams.get("purchase") ?? "";
     purchaseFilters.push(filter);
@@ -66,7 +86,7 @@ window.fetch = (path, options) => {
     ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16",
   }));
   if (pathname.endsWith("/purchase")) {
-    return new Promise((resolve) => purchaseRequests.push({ resolve, ...options }));
+    return new Promise((resolve) => purchaseRequests.push({ resolve, path, ...options }));
   }
   if (pathname.endsWith("/sync")) {
     // Simulate a response already on its way when the scope is switched.
@@ -286,6 +306,64 @@ try {
   assert(!document.querySelector(".orders-money-net") &&
     ![...document.querySelectorAll("button")].some((item) => item.textContent === "订单设置"),
     "nonexistent finance editor should not be visible");
+
+  // Issue #53: numeric Order ID crosses sites; title searches respect selected site.
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  await waitFor(() => !document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
+    "detail dialog remained open before global search");
+  select("站点和物流模式", "MLB|remote");
+  const searchInput = () => document.querySelector('input[type="search"]');
+  const submitSearch = () => [...document.querySelectorAll(".orders-search-inner button")]
+    .find((item) => item.textContent === "搜索");
+  flushSync(() => {
+    const input = searchInput();
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    nativeSetter.call(input, "200002");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  flushSync(() => submitSearch().click());
+  await waitFor(() => searchRequests.some((q) => q.q === "200002" && q.site === "*") &&
+    document.querySelector('select[aria-label="站点和物流模式"]')?.value === "all" &&
+    document.querySelector(".orders-id")?.textContent === "200002",
+    "cross-site Order ID must change to all sites and show exactly the matching order");
+  assert(document.querySelectorAll(".orders-id").length === 1, "numeric search returned extra orders");
+  flushSync(() => document.querySelector(".orders-row-purchase").click());
+  const crossSitePurchase = await takePurchase("GET");
+  assert(new URL(crossSitePurchase.path, location.href).searchParams.get("site") === "MLM" &&
+    crossSitePurchase.path.includes("/stores/one/orders/200002/purchase"),
+    "cross-site purchase opened under the wrong site or store");
+  assert(document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("店铺：one") &&
+    document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("墨西哥"),
+    "purchase modal must identify the first-store MLM target");
+  crossSitePurchase.resolve(Response.json({ purchase: null }));
+  await waitFor(() => document.querySelector('button[aria-label="关闭采购关联"]:enabled'),
+    "cross-site purchase dialog not ready");
+  flushSync(() => document.querySelector('button[aria-label="关闭采购关联"]').click());
+
+  select("站点和物流模式", "MLM|remote");
+  flushSync(() => {
+    const input = searchInput();
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    nativeSetter.call(input, "Lemon");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  flushSync(() => submitSearch().click());
+  await waitFor(() => searchRequests.some((q) => q.q === "Lemon" && q.site === "MLM") &&
+    document.querySelector('select[aria-label="站点和物流模式"]')?.value === "MLM|remote",
+    "title search must remain in MLM, not switch sites");
+
+  select("订单店铺", "all");
+  await waitFor(() => searchRequests.some((q) => q.storeFilter === "all") &&
+    document.querySelectorAll(".orders-id").length === 2, "all-store search must merge both stores");
+  flushSync(() => [...document.querySelectorAll(".orders-row-purchase")][1].click());
+  const secondStorePurchase = await takePurchase("GET");
+  assert(secondStorePurchase.path.includes("/stores/two/orders/200002/purchase") &&
+    new URL(secondStorePurchase.path, location.href).searchParams.get("site") === "MLB",
+    "second-store row must not reuse first-store purchase scope");
+  assert(document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("店铺：two") &&
+    document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("巴西"),
+    "purchase modal must identify second-store MLB target");
+  secondStorePurchase.resolve(Response.json({ purchase: null }));
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";

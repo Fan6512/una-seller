@@ -27,12 +27,29 @@ export type OrderRecord = {
   purchase_order_id?: string;
   purchase_cost_cny?: string | null;
   purchase_tracking_number?: string;
+  // Populated only by the global cached search endpoint.
+  store_id?: string;
+  site_id?: string;
+  logistic_type?: string;
   // Official shipment SLA; never infer deadline from order timestamps.
   dispatch_deadline?: string;
   dispatch_sla_status?: string;
   dispatch_checked_at?: string;
 };
 export type OrderPage = { items: OrderRecord[]; has_more: boolean; purchase_filter?: string };
+export type OrderSearchPage = OrderPage & {
+  query: string;
+  site_filter: string;
+  store_filter: string;
+};
+export function orderRecordScope(record: OrderRecord, fallback: OrderScope | null): OrderScope | null {
+  return record.store_id && record.site_id && record.logistic_type
+    ? { storeId: record.store_id, site: record.site_id, logistic: record.logistic_type } : fallback;
+}
+export function orderRecordKey(record: OrderRecord, fallback: OrderScope | null) {
+  const scope = orderRecordScope(record, fallback);
+  return [scope?.storeId ?? "", scope?.site ?? "", scope?.logistic ?? "", record.order_id].join("|");
+}
 export type OrderProgress = { saved: number; processed: number; has_more: boolean; next_offset: number };
 export type OrderSyncState = { next_offset: number; can_reset: boolean; review?: OrderReview };
 export type OrderReview = { order_id: string; review_id: string; offset: number; reason: string };
@@ -155,6 +172,28 @@ export function listOrders(scope: OrderScope, status: string, purchaseLink: "" |
       throw new Error("服务端版本不支持采购筛选，或返回了不一致的关联结果。请先升级 Go 服务端再刷新订单。");
     }
     return page;
+  });
+}
+// Global cached search never calls upstream Mercado Libre. Numeric IDs are always
+// searched across all selected-store sites; title text respects the selected site.
+export function searchOrders(storeId: string, site: string, logistic: string, query: string,
+  status: string, purchaseLink: "" | "linked" | "unlinked", offset: number, signal?: AbortSignal) {
+  const options = new URLSearchParams({
+    site, logistic_type: logistic, q: query, status, purchase: purchaseLink, offset: String(offset),
+  });
+  return orderRead<OrderSearchPage>("/api/v1/stores/" + encodeURIComponent(storeId) +
+    "/orders/search?" + options, signal).then((page) => {
+    if (page.query !== query || page.site_filter !== site || page.store_filter !== storeId ||
+        page.purchase_filter !== purchaseLink ||
+        page.items.some((record) => !record.store_id || !record.site_id || !record.logistic_type ||
+          (purchaseLink && Boolean(record.purchase_order_id) !== (purchaseLink === "linked")))) {
+      throw new Error("服务端订单搜索结果与请求范围不一致，请先升级 Go API。");
+    }
+    return page;
+  }).catch((error: unknown) => {
+    if (error instanceof OrderRequestError && error.status === 404)
+      throw new Error("Go 服务端尚未支持跨站点订单搜索，请先升级 Go API。");
+    throw error;
   });
 }
 // A user-clicked, read-only official item query which only caches a trusted image URL.
