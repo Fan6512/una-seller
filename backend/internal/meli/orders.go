@@ -68,6 +68,7 @@ type OrderRecord struct {
 	Items           []OrderLine `json:"order_items"`
 	PurchaseOrderID string      `json:"purchase_order_id,omitempty"`
 	PurchaseCostCNY *string     `json:"purchase_cost_cny,omitempty"`
+	PurchaseTrackingNumber string `json:"purchase_tracking_number,omitempty"`
 }
 
 type OrderPage struct {
@@ -799,7 +800,8 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
    ) AS image ON true
  ), '[]'::jsonb),
  COALESCE(p.purchase_order_id,''),
- CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END
+ CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
+ COALESCE(p.purchase_tracking_number,'')
  FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  LEFT JOIN app.meli_order_purchases p
@@ -812,7 +814,7 @@ func scanOrder(rows pgx.Rows) (OrderRecord, error) {
 	var items []byte
 	var cost sql.NullString
 	err := rows.Scan(&o.ID, &o.PackID, &o.Status, &o.CurrencyID, &o.TotalAmount,
-		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost)
+		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost, &o.PurchaseTrackingNumber)
 	if err == nil {
 		err = json.Unmarshal(items, &o.Items)
 	}
