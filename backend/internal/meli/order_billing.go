@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -199,6 +198,4 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 	return parseBillingPreview(raw,ids)
 }
 
-// The endpoint is deliberately not a ledger writer. No cache or financial
-// finality is asserted until a real seller-account response has been reconciled.
-var _ = strconv.Itoa
+// No billing data is persisted or classified as final in this preview slice.
