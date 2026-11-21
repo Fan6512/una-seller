@@ -28,6 +28,7 @@ type OwnProduct struct {
 	BulletPoints    []string  `json:"bullet_points"`
 	Images          []Image   `json:"images"`
 	Variants        []Variant `json:"variants"`
+	ListingFields    ListingFields `json:"listing_fields"`
 	Revision        int64     `json:"revision"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -49,6 +50,7 @@ type OwnProductEdit struct {
 	Title            string `json:"title"`
 	Description      string `json:"description"`
 	Notes            string `json:"notes"`
+	ListingFields    *ListingFields `json:"listing_fields,omitempty"`
 	ExpectedRevision int64  `json:"expected_revision"`
 }
 
@@ -58,6 +60,9 @@ func (in OwnProductEdit) Validate() error {
 		in.ExpectedRevision < 1 {
 		return errors.New("invalid product fields")
 	}
+	if in.ListingFields != nil {
+		return in.ListingFields.Validate()
+	}
 	return nil
 }
 
@@ -66,13 +71,13 @@ func (s *Store) GetOwnProduct(ctx context.Context, owner, id string) (OwnProduct
 		return OwnProduct{}, ErrNotFound
 	}
 	var p OwnProduct
-	var bullets, images, variants []byte
+	var bullets, images, variants, listingJSON []byte
 	err := s.DB.QueryRow(ctx, `SELECT id::text,source_product_id::text,source_platform,source_site,source_url,source_title,
-    title,description,notes,price::text,currency,category,bullet_points,images,variants,revision,created_at,updated_at
+    title,description,notes,price::text,currency,category,bullet_points,images,variants,revision,created_at,updated_at,listing_fields
     FROM app.own_products WHERE id=$1::uuid AND owner_user_id=$2::uuid`, id, owner).
 		Scan(&p.ID, &p.SourceProductID, &p.SourcePlatform, &p.SourceSite, &p.SourceURL, &p.SourceTitle,
 			&p.Title, &p.Description, &p.Notes, &p.Price, &p.Currency, &p.Category, &bullets, &images, &variants,
-			&p.Revision, &p.CreatedAt, &p.UpdatedAt)
+			&p.Revision, &p.CreatedAt, &p.UpdatedAt, &listingJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OwnProduct{}, ErrNotFound
 	}
@@ -86,6 +91,9 @@ func (s *Store) GetOwnProduct(ctx context.Context, owner, id string) (OwnProduct
 		return OwnProduct{}, err
 	}
 	if err = json.Unmarshal(variants, &p.Variants); err != nil {
+		return OwnProduct{}, err
+	}
+	if err = json.Unmarshal(listingJSON, &p.ListingFields); err != nil {
 		return OwnProduct{}, err
 	}
 	return p, nil
@@ -161,9 +169,10 @@ func (s *Store) Promote(ctx context.Context, owner, sourceID string, expectedRev
 
 	var draftTitle, draftDescription, draftNotes string
 	var revision int64
-	err = tx.QueryRow(ctx, `SELECT title,description,notes,revision FROM app.collection_working_drafts
+	listingPayload := []byte("{}")
+	err = tx.QueryRow(ctx, `SELECT title,description,notes,revision,listing_fields FROM app.collection_working_drafts
       WHERE source_product_id=$1::uuid AND owner_user_id=$2::uuid FOR UPDATE`, sourceID, owner).
-		Scan(&draftTitle, &draftDescription, &draftNotes, &revision)
+		Scan(&draftTitle, &draftDescription, &draftNotes, &revision, &listingPayload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		revision = 0
 		err = nil
@@ -207,10 +216,10 @@ func (s *Store) Promote(ctx context.Context, owner, sourceID string, expectedRev
 	var productID string
 	err = tx.QueryRow(ctx, `INSERT INTO app.own_products
     (owner_user_id,source_product_id,source_platform,source_site,source_url,source_title,
-     title,description,notes,price,currency,category,bullet_points,images,variants)
-    VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10::numeric,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb)
+     title,description,notes,price,currency,category,bullet_points,images,variants,listing_fields)
+    VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10::numeric,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb)
     RETURNING id::text`, owner, sourceID, platform, site, url, sourceTitle, title, *description, draftNotes,
-		price, currency, category, string(bullets), string(images), string(variants)).Scan(&productID)
+		price, currency, category, string(bullets), string(images), string(variants), string(listingPayload)).Scan(&productID)
 	if err != nil {
 		return OwnProduct{}, false, err
 	}
@@ -231,11 +240,21 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	if err := in.Validate(); err != nil {
 		return OwnProduct{}, err
 	}
+	var listingValue any
+	if in.ListingFields != nil {
+		raw, err := json.Marshal(in.ListingFields)
+		if err != nil {
+			return OwnProduct{}, err
+		}
+		listingValue = string(raw)
+	}
 	var revision int64
 	err := s.DB.QueryRow(ctx, `UPDATE app.own_products
-    SET title=$3,description=$4,notes=$5,revision=revision+1,updated_at=now()
+    SET title=$3,description=$4,notes=$5,
+      listing_fields=COALESCE($7::jsonb,listing_fields),
+      revision=revision+1,updated_at=now()
     WHERE id=$1::uuid AND owner_user_id=$2::uuid AND revision=$6 RETURNING revision`,
-		id, owner, in.Title, in.Description, in.Notes, in.ExpectedRevision).Scan(&revision)
+		id, owner, in.Title, in.Description, in.Notes, in.ExpectedRevision, listingValue).Scan(&revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var exists bool
 		e := s.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app.own_products WHERE id=$1::uuid AND owner_user_id=$2::uuid)`,
