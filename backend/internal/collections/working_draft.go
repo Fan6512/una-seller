@@ -12,6 +12,7 @@ import (
 )
 
 var ErrDraftConflict = errors.New("working draft has been updated")
+var ErrDraftConverted = errors.New("source already moved to product box")
 
 type WorkingDraftInput struct {
 	Title            string `json:"title"`
@@ -75,10 +76,34 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 	if err := in.Validate(); err != nil {
 		return WorkingDraft{}, err
 	}
+	// Lock the owned source row first, matching Promote's lock order.
+	// Conversion and draft writes can therefore never commit out of order.
+	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return WorkingDraft{}, err
+	}
+	defer tx.Rollback(ctx)
+	var sourceID string
+	err = tx.QueryRow(ctx, `SELECT id::text FROM app.source_products
+		WHERE id=$1::uuid AND owner_user_id=$2::uuid FOR UPDATE`, id, owner).Scan(&sourceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WorkingDraft{}, ErrNotFound
+	}
+	if err != nil {
+		return WorkingDraft{}, err
+	}
+	var converted bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app.own_products
+		WHERE source_product_id=$1::uuid AND owner_user_id=$2::uuid)`, id, owner).Scan(&converted)
+	if err != nil {
+		return WorkingDraft{}, err
+	}
+	if converted {
+		return WorkingDraft{}, ErrDraftConverted
+	}
 	var draft WorkingDraft
-	var err error
 	if in.ExpectedRevision == 0 {
-		err = s.DB.QueryRow(ctx, `INSERT INTO app.collection_working_drafts
+		err = tx.QueryRow(ctx, `INSERT INTO app.collection_working_drafts
 			(source_product_id,owner_user_id,title,description,notes,revision)
 			SELECT p.id,p.owner_user_id,$3,$4,$5,1 FROM app.source_products p
 			WHERE p.id=$2::uuid AND p.owner_user_id=$1::uuid
@@ -88,7 +113,7 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 			Scan(&draft.SourceProductID, &draft.Title, &draft.Description, &draft.Notes,
 				&draft.Revision, &draft.UpdatedAt)
 	} else {
-		err = s.DB.QueryRow(ctx, `UPDATE app.collection_working_drafts d
+		err = tx.QueryRow(ctx, `UPDATE app.collection_working_drafts d
 			SET title=$3,description=$4,notes=$5,revision=d.revision+1,updated_at=now()
 			FROM app.source_products p
 			WHERE d.source_product_id=p.id AND p.id=$2::uuid AND p.owner_user_id=$1::uuid
@@ -100,7 +125,7 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		var exists bool
-		if readErr := s.DB.QueryRow(ctx, `SELECT EXISTS (
+		if readErr := tx.QueryRow(ctx, `SELECT EXISTS (
 			SELECT 1 FROM app.source_products WHERE id=$1::uuid AND owner_user_id=$2::uuid
 		)`, id, owner).Scan(&exists); readErr != nil {
 			return WorkingDraft{}, readErr
@@ -110,5 +135,11 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 		}
 		return WorkingDraft{}, ErrNotFound
 	}
-	return draft, err
+	if err != nil {
+		return WorkingDraft{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return WorkingDraft{}, err
+	}
+	return draft, nil
 }
