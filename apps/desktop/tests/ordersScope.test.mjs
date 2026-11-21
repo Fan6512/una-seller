@@ -12,7 +12,8 @@ import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
-import { orderStatusLabel, shouldApplyOrderRefresh, shouldStopSLABatch } from "/src/orders.ts";
+import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
+  shouldApplyOrderRefresh, shouldStopSLABatch } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -130,6 +131,11 @@ try {
   await waitFor(() => purchaseFilters.includes("linked") &&
     document.querySelector(".orders-row-purchase")?.textContent === "编辑采购",
     "linked row must expose edit purchase CTA");
+  assert(document.querySelector(".orders-row-cost")?.textContent.includes("¥16"),
+    "linked procurement cost must remain visible on the list");
+  assert(document.querySelector(".orders-status")?.textContent === "已付款" &&
+    document.querySelector(".orders-purchase-badge")?.textContent === "已采购",
+    "official paid status must remain distinct from procurement");
   flushSync(() => filter("全部").click());
   await waitFor(() => purchaseFilters.at(-1) === "", "clear purchase filter not sent");
   for (const [field, value, response] of [
@@ -221,6 +227,18 @@ try {
 
   // Preserve both existing purchase filters and the new SLA/refund behavior.
   assert(orderStatusLabel("partially_refunded") === "部分退款", "partial refund label missing");
+  assert(displayOrderStatus({ ...order, purchase_order_id: "12345678" }) === "已付款",
+    "purchase link must not replace the official paid label");
+  assert(hasProcurement({ ...order, purchase_order_id: "12345678" }), "purchase badge predicate incorrect");
+  assert(!hasProcurement(order), "unlinked order must not be marked procured");
+  assert(orderVariationText({ item_id: "MLM111", title: "", variation_id: "998" }) ===
+    "变体 998（属性未返回）", "variation ID fallback missing");
+  assert(orderVariationText({ item_id: "MLM111", title: "",
+    variation_attributes: [{ name: "Color", value_name: "Amarillo" }] }) ===
+    "Color:Amarillo", "official variation attributes missing");
+  assert(orderVariationText({ item_id: "MLM111", title: "" }) === "", "absent variation must not render noise");
+  assert(orderMoney("12", "BRL") === "BRL R$ 12", "BRL symbol regresssed");
+  assert(orderMoney("23.78", "USD") === "USD $ 23.78", "USD currency symbol regresssed");
   assert(shouldApplyOrderRefresh("102", "102", false), "same order refresh must apply");
   assert(!shouldApplyOrderRefresh("102", "103", false), "stale A must not replace selected B");
   assert(!shouldApplyOrderRefresh("102", "102", true), "aborted request must not apply");

@@ -3,7 +3,7 @@ import { cachedStores, listStores, watchStoreList, type StoreConnection } from "
 import {
   getOrder, getOrderSyncState, listOrders, orderDate, orderMoney,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderDispatchSLA, resetOrderCursor, skipOrder, syncOrders,
-  shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, orderVariationText,
+  shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, hasProcurement, orderVariationText,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
@@ -752,9 +752,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         </div>}
         {(notice || syncState?.can_reset) && <div className="orders-notice" role="status">
           <span>{notice || "当前存在可重新扫描的服务器同步窗口。"}</span>
-          {syncState?.can_reset && !review && !running &&
-            <button type="button" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
-          {notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button>}
+          <div className="orders-notice-actions">
+            {syncState?.can_reset && !review && !running &&
+              <button type="button" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
+            {notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button>}
+          </div>
         </div>}
         {review && <div className="orders-review" role="alert">
           <div>
@@ -787,23 +789,25 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <div className="orders-product-preview">
                         <ProductThumbnail src={order.order_items[0]?.image_url} title={order.order_items[0]?.title || ""} />
                         <div className="orders-product-info">
-                          <span className="orders-product-title" title={"中文翻译：暂未提供（待接入翻译）\n原文：" +
-                            (order.order_items[0]?.title || "平台未返回商品标题")}>{order.order_items[0]?.title || "平台未返回商品标题"}</span>
+                          <span className="orders-product-title" title={order.order_items[0]?.title || "平台未返回商品标题"}>{order.order_items[0]?.title || "平台未返回商品标题"}</span>
                           <span className="orders-product-meta">
                             {order.order_items.length > 1 ? order.order_items.length + " 个商品行 · " : ""}
                             {orderCount(order)} 件 · {order.order_items[0]?.item_id || "商品 ID 未返回"}
                           </span>
-                          <span className="orders-product-spec" title="规格以官方订单实际返回的变体属性为准">
+                          {orderVariationText(order.order_items[0]) && <span className="orders-product-spec"
+                            title="官方订单尚未返回可读规格时，仅保留变体 ID">
                             {orderVariationText(order.order_items[0])}
-                          </span>
+                          </span>}
                         </div>
                       </div>
                     </td>
                     <td className="orders-money-cell"><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong>
-                      <small title="净收益需要官方结算和费用数据">净收益：待官方结算回读</small>
-                      <small title="利润需要真实采购成本、费用及汇率">利润：待核算</small>
+                      <small title="净收益待官方结算费用数据，尚未核算">净收益：—</small>
+                      <small title="利润待实际采购成本、费用和汇率核算">利润：—</small>
                     </td>
-                    <td><span className={"orders-status " + safeOrderStatus(order.status)}>{displayOrderStatus(order)}</span></td>
+                    <td><span className={"orders-status " + safeOrderStatus(order.status)}>{displayOrderStatus(order)}</span>
+                      {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
+                    </td>
                     <td className="orders-shipping-refs">
                       <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
                       <span><small>平台运单</small>待官方读取</span>
@@ -814,6 +818,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button>
                       <button className="orders-table-action orders-row-purchase" type="button"
                         onClick={() => openPurchase(order.order_id)}>{order.purchase_order_id ? "编辑采购" : "采购"}</button>
+                      {order.purchase_order_id && <small className="orders-row-cost">
+                        成本：{order.purchase_cost_cny == null ? "待补录" : "¥" + order.purchase_cost_cny}
+                      </small>}
                     </div></td>
                   </tr>)}
                 </tbody>
@@ -847,6 +854,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {detail && <>
               <div className="orders-detail-summary">
                 <span className={"orders-status " + safeOrderStatus(detail.status)}>{displayOrderStatus(detail)}</span>
+                {hasProcurement(detail) && <small className="orders-purchase-badge">已采购</small>}
                 <strong>{orderMoney(detail.total_amount, detail.currency_id)}</strong>
                 <small>下单：{orderDate(detail.date_created)}</small>
                 <small>更新：{orderDate(detail.last_updated)}</small>
@@ -885,7 +893,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                     onClick={() => openPurchase(detail.order_id)}>
                     {detail.purchase_order_id ? "编辑采购" : "采购"}</button>
                 </div>
-                <p className="orders-muted">采购单：{detail.purchase_order_id || "待关联"}；货代签收和采购快递需要另行核实。</p>
+                <p className="orders-muted">采购单：{detail.purchase_order_id || "待关联"}；采购成本：{
+                  detail.purchase_cost_cny == null ? "待补录" : "¥" + detail.purchase_cost_cny
+                }（CNY）；货代签收及采购快递状态需另行核实。</p>
               </section>
               <section className="orders-detail-block">
                 <h3>订单履约流程</h3>

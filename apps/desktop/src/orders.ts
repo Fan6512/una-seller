@@ -101,20 +101,19 @@ export function orderStatusLabel(status: string) {
   };
   return labels[status] || status || "未知状态";
 }
-// Shipment ID and SLA are not reliable delivery events.
+// Platform payment status is authoritative; procurement is a separate manually verified fact.
+// Shipment ID and dispatch SLA cannot establish "shipped" or "delivered".
 export function displayOrderStatus(order: OrderRecord) {
-  if (order.status === "cancelled" || order.status === "cancellation_requested") return orderStatusLabel(order.status);
-  if (order.status === "refunded" || order.status === "partially_refunded") return orderStatusLabel(order.status);
-  if (order.status === "payment_required" || order.status === "partially_paid" || order.status === "payment_in_process")
-    return orderStatusLabel(order.status);
-  if (order.status === "paid" && (order.purchase_order_id || order.purchase_tracking_number))
-    return "已采购";
   return orderStatusLabel(order.status);
+}
+export function hasProcurement(order: OrderRecord) {
+  return Boolean(order.purchase_order_id || order.purchase_tracking_number);
 }
 export function orderVariationText(line?: OrderLine) {
   const attributes = line?.variation_attributes?.filter((attr) => attr.name && attr.value_name)
     .map((attr) => attr.name + ":" + attr.value_name);
-  return attributes?.length ? attributes.join(" · ") : "规格未返回";
+  if (attributes?.length) return attributes.join(" · ");
+  return line?.variation_id ? "变体 " + line.variation_id + "（属性未返回）" : "";
 }
 
 export function orderDate(value: string) {
