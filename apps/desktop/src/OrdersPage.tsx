@@ -279,7 +279,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     orderRefreshAbort.current?.abort();
     orderRefreshAbort.current = null;
     setRefreshingOrder(false);
-  }, [selectedId]);
+  }, [selectedId, selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic]);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
   const closeOrder = () => setSelectedId("");
