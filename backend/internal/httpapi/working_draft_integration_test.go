@@ -34,8 +34,11 @@ func TestWorkingDraftOwnerAndRecaptureIsolation(t *testing.T) {
 	}
 	owner := "2a9c0000-0000-4000-8000-000000000071"
 	other := "2a9c0000-0000-4000-8000-000000000072"
-	defer store.DB.Exec(context.Background(), "DELETE FROM app.source_products WHERE owner_user_id=$1::uuid", owner)
-	defer store.DB.Exec(context.Background(), "DELETE FROM app.users WHERE id=$1::uuid", owner)
+	defer func() {
+		// Delete sources first: user deletion is FK-restricted.
+		store.DB.Exec(context.Background(), "DELETE FROM app.source_products WHERE owner_user_id=$1::uuid", owner)
+		store.DB.Exec(context.Background(), "DELETE FROM app.users WHERE id=$1::uuid", owner)
+	}()
 
 	input := collections.Input{
 		Platform: "amazon", Site: "US", SourceURL: "https://www.amazon.com/dp/B000000071",
