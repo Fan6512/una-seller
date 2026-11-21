@@ -61,7 +61,10 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 		if errors.Is(err, collections.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "collection not found")
 		} else if errors.Is(err, collections.ErrDraftConverted) {
-			writeError(w, http.StatusConflict, "working draft is read-only after product-box approval; edit the product instead")
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "working draft is read-only after product-box approval; edit the product instead",
+				"code": "WORKING_DRAFT_CONVERTED",
+			})
 		} else if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, http.StatusConflict, "working draft updated; reload before saving")
 		} else if err != nil {
