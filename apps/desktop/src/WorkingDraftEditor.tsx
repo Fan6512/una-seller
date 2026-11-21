@@ -5,8 +5,9 @@ type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes">;
 type LoadState = "loading" | "ready" | "error";
 const charCount = (value: string) => Array.from(value).length;
 
-export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDescription }: {
+export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDescription, onDirtyChange }: {
   collectionId: string; sourceTitle: string; sourceDescription: string | null;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [fields, setFields] = useState<DraftFields>({
     title: sourceTitle, description: sourceDescription ?? "", notes: "",
@@ -51,6 +52,11 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
 
   const dirty = !saved || fields.title !== saved.title ||
     fields.description !== saved.description || fields.notes !== saved.notes;
+  // Only edited text is unsaved: an untouched source copy is not an obstacle.
+  useEffect(() => {
+    onDirtyChange?.(touched && dirty);
+    return () => onDirtyChange?.(false);
+  }, [touched,dirty,onDirtyChange]);
   const titleCount = charCount(fields.title);
   const descriptionCount = charCount(fields.description);
   const notesCount = charCount(fields.notes);
