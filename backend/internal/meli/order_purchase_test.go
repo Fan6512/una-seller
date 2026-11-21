@@ -30,6 +30,19 @@ func TestOrderPurchaseManualLinkAndSellerIsolation(t *testing.T) {
 	if err != nil || got == nil || got.PurchaseOrderID != purchaseID || got.CostCNY == nil || *got.CostCNY != "16" || got.Source != "manual" {
 		t.Fatalf("purchase=%+v error=%v", got, err)
 	}
+	linked, err := s.ListOrders(ctx, owner, store, scope, "", "linked", 0)
+	if err != nil || len(linked.Items) != 1 || linked.Items[0].PurchaseOrderID != purchaseID ||
+		linked.Items[0].PurchaseCostCNY == nil || *linked.Items[0].PurchaseCostCNY != "16" {
+		t.Fatalf("linked purchase filter returned %+v, %v", linked, err)
+	}
+	unlinked, err := s.ListOrders(ctx, owner, store, scope, "", "unlinked", 0)
+	if err != nil || len(unlinked.Items) != 0 {
+		t.Fatalf("unlinked purchase filter returned %+v, %v", unlinked, err)
+	}
+	detail, err := s.GetOrder(ctx, owner, store, scope, "401")
+	if err != nil || detail.PurchaseOrderID != purchaseID {
+		t.Fatalf("order purchase detail missing: %+v, %v", detail, err)
+	}
 	for _, version := range []*time.Time{nil, &got.UpdatedAt} {
 		replayed, err := s.SaveOrderPurchase(ctx, owner, store, scope, "401", purchaseID, "16.0", version)
 		if err != nil || !replayed.UpdatedAt.Equal(got.UpdatedAt) {
@@ -108,6 +121,14 @@ func TestOrderPurchaseManualLinkAndSellerIsolation(t *testing.T) {
 	remapped, err := s.GetOrderPurchase(ctx, owner, store, scope, "401")
 	if err != nil || remapped != nil {
 		t.Fatalf("previous seller purchase leaked after remapping: %+v, %v", remapped, err)
+	}
+	newSellerOrder, err := s.GetOrder(ctx, owner, store, scope, "401")
+	if err != nil || newSellerOrder.PurchaseOrderID != "" || newSellerOrder.PurchaseCostCNY != nil {
+		t.Fatalf("remapped seller can see previous purchase: %+v, %v", newSellerOrder, err)
+	}
+	remappedLinked, err := s.ListOrders(ctx, owner, store, scope, "", "linked", 0)
+	if err != nil || len(remappedLinked.Items) != 0 {
+		t.Fatalf("remapped seller linked results: %+v, %v", remappedLinked, err)
 	}
 	if _, err = s.SaveOrderPurchase(ctx, owner, store, scope, "401", purchaseID, "99", &winner.UpdatedAt); !errors.Is(err, ErrOrderPurchaseConflict) {
 		t.Fatalf("previous seller version accepted after remapping: %v", err)

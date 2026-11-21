@@ -32,13 +32,23 @@ const stores = ["one", "two"].map((id) => ({
 }));
 const deferred = [];
 const purchaseRequests = [];
+const purchaseFilters = [];
 const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD" };
 window.fetch = (path, options) => {
   const { pathname } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
-  if (pathname.endsWith("/orders")) return Promise.resolve(Response.json({ items: [order], has_more: false }));
+  if (pathname.endsWith("/orders")) {
+    const filter = new URL(path, location.href).searchParams.get("purchase") ?? "";
+    purchaseFilters.push(filter);
+    const linked = { ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16" };
+    const rows = filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked];
+    return Promise.resolve(Response.json({ items: rows, has_more: false }));
+  }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
   if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json(order));
+  if (pathname.endsWith("/orders/103")) return Promise.resolve(Response.json({
+    ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16",
+  }));
   if (pathname.endsWith("/purchase")) {
     return new Promise((resolve) => purchaseRequests.push({ resolve, ...options }));
   }
@@ -85,6 +95,21 @@ try {
   createRoot(document.querySelector("main")).render(React.createElement(OrdersPage, {
     installingUpdate: false, beginSync() { active++; return () => active--; },
   }));
+  const filter = (label) => [...document.querySelectorAll(".orders-procurement-toolbar button")]
+    .find((item) => item.textContent === label);
+  await waitFor(() => filter("待关联"), "purchase filter unavailable");
+  flushSync(() => filter("待关联").click());
+  await waitFor(() => purchaseFilters.includes("unlinked") &&
+    document.querySelector(".orders-purchase-cell button")?.textContent === "关联采购",
+    "unlinked filter or purchase CTA missing");
+  flushSync(() => filter("已关联").click());
+  await waitFor(() => purchaseFilters.includes("linked") &&
+    document.querySelector(".orders-purchase-cell strong")?.textContent === "已关联",
+    "linked filter or purchase label missing");
+  assert(document.querySelector(".orders-purchase-cell")?.textContent.includes("采购成本 ¥16"),
+    "linked purchase cost missing");
+  flushSync(() => filter("全部").click());
+  await waitFor(() => purchaseFilters.at(-1) === "", "clear purchase filter not sent");
   for (const [field, value, response] of [
     ["订单店铺", "two", reviewResponse()],
     ["站点和物流模式", "MLB|fulfillment", Response.json(progress)],

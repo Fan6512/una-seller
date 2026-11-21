@@ -23,6 +23,8 @@ export type OrderRecord = {
   last_updated: string;
   shipment_id?: string;
   order_items: OrderLine[];
+  purchase_order_id?: string;
+  purchase_cost_cny?: string | null;
 };
 export type OrderPage = { items: OrderRecord[]; has_more: boolean };
 export type OrderProgress = { saved: number; processed: number; has_more: boolean; next_offset: number };
@@ -45,6 +47,7 @@ export class OrderRequestError extends Error {
 
 const messages: Record<string, string> = {
   order_purchase_conflict: "采购关联已被修改，请重新读取后再保存。",
+  order_purchase_filter_invalid: "采购关联筛选无效，请选择全部、待关联或已关联。",
   order_unavailable: "订单服务暂不可用，请稍后重新读取。",
   order_not_found: "当前订单不存在，或此店铺无权访问。",
   order_scope_required: "请先选择已验证的站点和物流类型。",
@@ -96,11 +99,13 @@ function pathWithTail(scope: OrderScope, tail: string) {
   return "/api/v1/stores/" + encodeURIComponent(scope.storeId) + "/orders/" + encodeURIComponent(tail) +
     "?" + new URLSearchParams({ site: scope.site, logistic_type: scope.logistic }).toString();
 }
-export function listOrders(scope: OrderScope, status: string, offset: number, signal?: AbortSignal) {
+export function listOrders(scope: OrderScope, status: string, purchaseLink: "" | "linked" | "unlinked",
+  offset: number, signal?: AbortSignal) {
   const query = new URLSearchParams({
     site: scope.site, logistic_type: scope.logistic, offset: String(offset),
   });
   if (status) query.set("status", status);
+  if (purchaseLink) query.set("purchase", purchaseLink);
   return orderRead<OrderPage>("/api/v1/stores/" + encodeURIComponent(scope.storeId) +
     "/orders?" + query.toString(), signal);
 }

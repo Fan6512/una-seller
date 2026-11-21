@@ -347,7 +347,7 @@ func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 		if _, err = db.Exec(ctx, "UPDATE app.meli_store_connections SET status=$2,access_token_expires_at=now()-interval '1 day' WHERE id=$1::uuid", store, status); err != nil {
 			t.Fatal(err)
 		}
-		page, err := s.ListOrders(ctx, owner, store, scope, "payment_required", 0)
+		page, err := s.ListOrders(ctx, owner, store, scope, "payment_required", "", 0)
 		if err != nil || len(page.Items) != 8 {
 			t.Fatalf("cached list for %s has %d results, error=%v", status, len(page.Items), err)
 		}
@@ -366,7 +366,7 @@ func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 	if err = s.Disconnect(ctx, owner, store); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ListOrders(ctx, owner, store, scope, "", 0); !errors.Is(err, ErrReauthorizationRequired) {
+	if _, err = s.ListOrders(ctx, owner, store, scope, "", "", 0); !errors.Is(err, ErrReauthorizationRequired) {
 		t.Fatalf("disconnected store list should be denied, got %v", err)
 	}
 	if _, err = s.GetOrder(ctx, owner, store, scope, "105"); !errors.Is(err, ErrReauthorizationRequired) {
@@ -441,7 +441,7 @@ func TestOrderPostgresResetsCursorForNewSeller(t *testing.T) {
 	if err != nil || result.Saved != 1 || result.HasMore || newSearches.Load() != 1 {
 		t.Fatalf("new seller batch=%+v error=%v", result, err)
 	}
-	page, err := s.ListOrders(ctx, owner, store, scope, "", 0)
+	page, err := s.ListOrders(ctx, owner, store, scope, "", "", 0)
 	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "201" || page.Items[0].LastUpdated.Day() != 31 {
 		t.Fatalf("unexpected new seller results, rows=%d error=%v", len(page.Items), err)
 	}
@@ -668,7 +668,7 @@ func TestOrderPostgresReviewAndSkip(t *testing.T) {
 		persistedOffset != result.NextOffset || audit != "102:invalid_detail,103:detail_not_found" {
 		t.Fatalf("offset=%d audit=%q error=%v", persistedOffset, audit, err)
 	}
-	page, err := s.ListOrders(ctx, owner, store, scope, "", 0)
+	page, err := s.ListOrders(ctx, owner, store, scope, "", "", 0)
 	if err != nil || len(page.Items) != 2 || page.Items[0].ID != "104" || page.Items[1].ID != "101" {
 		t.Fatalf("skip lost valid details, page=%+v error=%v", page, err)
 	}

@@ -127,6 +127,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 }) {
   const marketplaces = store?.marketplaces ?? [];
   const [searchText, setSearchText] = useState("");
+  const [purchaseLink, setPurchaseLink] = useState<"" | "linked" | "unlinked">("");
   const [offset, setOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
   const [page, setPage] = useState<OrderPage>({ items: [], has_more: false });
@@ -199,7 +200,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
     setLoading(true);
     setListError("");
-    void listOrders(scope, statusFilter, offset, controller.signal).then((value) => {
+    void listOrders(scope, statusFilter, purchaseLink, offset, controller.signal).then((value) => {
       if (!controller.signal.aborted) setPage(value);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
@@ -209,7 +210,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [scope?.storeId, scope?.site, scope?.logistic, statusFilter, offset, nonce]);
+  }, [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset, nonce]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -265,7 +266,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       setPurchase(result);
       setPurchaseNumber(result.purchase_order_id);
       setPurchaseCost(result.cost_cny ?? "");
-      setPurchaseMessage("采购信息已保存。后续优先接入 1688 官方买家授权与订单金额查询。");
+      setPurchaseMessage("采购关联已保存，列表状态已更新；金额仍为人工录入。");
+      loadRows();
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof OrderRequestError && error.status === 409) setPurchaseReady(false);
@@ -280,6 +282,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     if (!needle) return page.items;
     return page.items.filter((order) =>
       order.order_id.includes(needle) || order.pack_id?.includes(needle) ||
+      order.purchase_order_id?.includes(needle) ||
       order.shipment_id?.includes(needle) ||
       order.order_items.some((item) => item.title.toLowerCase().includes(needle) ||
         item.item_id.toLowerCase().includes(needle)));
@@ -472,6 +475,19 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           </button>)}
           <span className="orders-tabs-meta">本页 {page.items.length} 笔 · 每页 {PAGE_SIZE} 笔</span>
         </div>
+        <div className="orders-procurement-toolbar" role="group" aria-label="1688采购关联筛选">
+          <strong>1688 采购</strong>
+          {([
+            { value: "", label: "全部" },
+            { value: "unlinked", label: "待关联" },
+            { value: "linked", label: "已关联" },
+          ] as const).map((item) => <button type="button" key={item.value}
+            aria-pressed={purchaseLink === item.value}
+            onClick={() => { setPurchaseLink(item.value); setOffset(0); setSearchText(""); }}>
+            {item.label}
+          </button>)}
+          <span>按数据库关联状态筛选 · 不代表厂家已发货</span>
+        </div>
 
         {running && <div className="orders-notice" role="status">
           正在同步：已完成 {completedBatches} 批，本次已保存 {progress?.saved ?? 0} 笔。
@@ -500,11 +516,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <div className="orders-table-scroll">
               <table className="orders-table">
                 <thead><tr>
-                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>付款状态</th><th title="平台配送记录标识，不代表已发货，也不等于快递运单号">平台物流</th><th>下单时间</th><th>操作</th>
+                  <th>订单信息</th><th>商品 / 规格</th><th>销售金额</th><th>1688 采购关联</th><th>付款状态</th><th title="平台配送记录标识，不代表已发货，也不等于快递运单号">平台物流</th><th>下单时间</th><th>操作</th>
                 </tr></thead>
                 <tbody>
-                  {loading && page.items.length === 0 && <tr><td colSpan={7} className="orders-table-empty">正在读取订单…</td></tr>}
-                  {!loading && visibleOrders.length === 0 && <tr><td colSpan={7} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
+                  {loading && page.items.length === 0 && <tr><td colSpan={8} className="orders-table-empty">正在读取订单…</td></tr>}
+                  {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
                   {visibleOrders.map((order) => <tr key={order.order_id} className={selectedId === order.order_id ? "selected" : ""}>
                     <td><button type="button" className="orders-id" onClick={() => openOrder(order.order_id)}>{order.order_id}</button>
                       <span className="orders-subline">{SITE_NAMES[scope?.site ?? ""] ?? scope?.site} · {scope?.logistic}</span>
@@ -523,6 +539,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       </div>
                     </td>
                     <td><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong></td>
+                    <td className="orders-purchase-cell">
+                      {order.purchase_order_id ? <>
+                        <strong>已关联</strong><span title={order.purchase_order_id}>{order.purchase_order_id}</span>
+                        <small>{order.purchase_cost_cny != null ? "采购成本 ¥" + order.purchase_cost_cny : "采购成本待补录"}</small>
+                      </> : <button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>关联采购</button>}
+                    </td>
                     <td><span className={"orders-status " + safeOrderStatus(order.status)}>{orderStatusLabel(order.status)}</span></td>
                     <td>{order.shipment_id ? <span className="orders-tracking" title="仅表示已关联平台物流记录，不代表已发货"><small>Shipment ID</small>{order.shipment_id}</span> : <span className="orders-muted">暂无平台物流记录</span>}</td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
