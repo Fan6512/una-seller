@@ -60,6 +60,8 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 		draft, err := a.store.SaveWorkingDraft(r.Context(), owner, id, in)
 		if errors.Is(err, collections.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "collection not found")
+		} else if errors.Is(err, collections.ErrDraftConverted) {
+			writeError(w, http.StatusConflict, "working draft is read-only after product-box approval; edit the product instead")
 		} else if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, http.StatusConflict, "working draft updated; reload before saving")
 		} else if err != nil {
