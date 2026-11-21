@@ -25,6 +25,7 @@ export type OrderRecord = {
   order_items: OrderLine[];
   purchase_order_id?: string;
   purchase_cost_cny?: string | null;
+  purchase_tracking_number?: string;
 };
 export type OrderPage = { items: OrderRecord[]; has_more: boolean; purchase_filter?: string };
 export type OrderProgress = { saved: number; processed: number; has_more: boolean; next_offset: number };

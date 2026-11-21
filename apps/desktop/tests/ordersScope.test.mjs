@@ -133,7 +133,8 @@ try {
   select("订单店铺", "one");
   const currentRead = await openPurchase();
   const purchase = { order_id: "102", purchase_order_id: "12345678", cost_cny: "16",
-    source: "manual", updated_at: "2026-11-20T00:00:00.123456Z" };
+    source: "manual", warehouse_address: "", purchase_tracking_number: "",
+    updated_at: "2026-11-20T00:00:00.123456Z" };
   currentRead.resolve(Response.json({ purchase }));
   staleRead.resolve(Response.json({ purchase: { ...purchase, purchase_order_id: "87654321" } }));
   const save = () => purchaseButton("保存采购关联");
@@ -143,6 +144,8 @@ try {
   const conflict = await takePurchase("POST");
   const submitted = JSON.parse(conflict.body);
   assert(submitted.purchase_order_id === purchase.purchase_order_id, "previous purchase read entered current form");
+  assert(submitted.warehouse_address === "" && submitted.purchase_tracking_number === "",
+    "compact purchase form must submit explicit forwarding fields");
   assert(submitted.updated_at === purchase.updated_at, "save did not send the full version");
   conflict.resolve(Response.json({ error: "order_purchase_conflict" }, { status: 409 }));
   const reread = () => purchaseButton("重新读取采购关联");
