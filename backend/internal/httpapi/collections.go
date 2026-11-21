@@ -31,12 +31,13 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 		storeService = stores[0]
 	}
 	s := storeAPI{auth: api, service: storeService}
+	mux.HandleFunc("/api/v1/categories/predict", s.predictCBTCategory)
 	mux.HandleFunc("/api/v1/stores", s.stores)
 	mux.HandleFunc("/api/v1/stores/oauth/start", s.start)
 	mux.HandleFunc("/api/v1/stores/", s.storeAction)
 	mux.HandleFunc(meli.CallbackPath, s.callback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") || strings.HasPrefix(r.URL.Path, "/api/v1/products") {
+		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") || strings.HasPrefix(r.URL.Path, "/api/v1/products") || r.URL.Path == "/api/v1/categories/predict" {
 			// Chrome MV3 IDs are per-install; only accept syntactically valid
 			// extension origins, and only for the collection API. Store and OAuth
 			// routes stay Tauri-only. API access still requires a Bearer token.
