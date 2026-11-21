@@ -635,3 +635,22 @@ button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visibl
 }
 .store-card .store-actions { margin-top: 16px; }
 @media (max-width: 700px) { .stores-page .page-heading { align-items: flex-start; flex-direction: column; gap: 12px; } }
+
+/* M1-A working draft: human edits are isolated from collected source data. */
+.working-draft { display: grid; gap: 12px; }
+.working-draft-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.working-draft-heading h3 { margin: 0; }
+.working-draft-heading span, .working-draft p, .working-draft small { font-size: 12px; color: var(--ui-muted); }
+.working-draft label { display: grid; gap: 5px; font-size: 13px; font-weight: 600; color: var(--ui-text); }
+.working-draft input, .working-draft textarea {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px;
+  border: 1px solid var(--ui-outline); border-radius: 10px;
+  background: var(--ui-surface); color: var(--ui-text);
+  font: inherit; font-size: 13px; line-height: 1.55;
+}
+.working-draft textarea { resize: vertical; }
+.working-draft label small { justify-self: end; font-weight: 400; }
+.working-draft button { justify-self: start; }
+.working-draft .working-draft-error { color: #b42318; }
+.working-draft .working-draft-success { color: #26774b; }
+.working-draft .working-draft-hint { margin-bottom: 0; }

@@ -26,6 +26,9 @@ var orderPurchasesSQL string
 //go:embed 0006_order_dispatch_sla.sql
 var orderDispatchSLASQL string
 
+//go:embed 0007_collection_working_drafts.sql
+var collectionWorkingDraftSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -56,6 +59,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, orderDispatchSLASQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply order dispatch SLA schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, collectionWorkingDraftSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply collection working draft schema: %w", err)
 	}
 	return nil
 }

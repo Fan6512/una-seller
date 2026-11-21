@@ -57,13 +57,16 @@ export type CollectionPage = {
 const defaultApiBase = import.meta.env.DEV ? "http://127.0.0.1:8787" : "https://mkd.186512.xyz";
 export const apiBase = (import.meta.env.VITE_API_BASE_URL || defaultApiBase).replace(/\/$/, "");
 
-async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true, method: "GET" | "DELETE" = "GET"): Promise<T> {
+async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true,
+  method: "GET" | "DELETE" | "PUT" = "GET", body?: string): Promise<T> {
   let response: Response;
   const fetchWithToken = (token: string | null) => fetch(apiBase + path, {
     method,
     signal,
     cache: "no-store",
-    headers: token ? { "Authorization": "Bearer " + token } : undefined,
+    headers: { ...(token ? { "Authorization": "Bearer " + token } : {}),
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    body,
   });
 
   try {
@@ -111,6 +114,26 @@ export async function getCollectionPage(q: string, offset: number, signal: Abort
 
 export function getCollection(id: string, signal: AbortSignal) {
   return requestJSON<CollectionDetail>("/api/v1/collections/" + encodeURIComponent(id), signal);
+}
+
+export type CollectionWorkingDraft = {
+  source_product_id: string;
+  title: string;
+  description: string;
+  notes: string;
+  updated_at: string;
+};
+export type WorkingDraftInput = Pick<CollectionWorkingDraft, "title" | "description" | "notes">;
+
+export function getWorkingDraft(id: string, signal: AbortSignal) {
+  return requestJSON<{ draft: CollectionWorkingDraft | null }>(
+    "/api/v1/collections/" + encodeURIComponent(id) + "/working-draft", signal);
+}
+
+export function saveWorkingDraft(id: string, input: WorkingDraftInput, signal: AbortSignal) {
+  return requestJSON<{ draft: CollectionWorkingDraft }>(
+    "/api/v1/collections/" + encodeURIComponent(id) + "/working-draft",
+    signal, true, "PUT", JSON.stringify(input));
 }
 
 export function deleteCollection(id: string, signal: AbortSignal) {

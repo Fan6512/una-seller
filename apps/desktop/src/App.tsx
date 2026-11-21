@@ -5,6 +5,7 @@ import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnos
 import StoresPage from "./StoresPage";
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
+import WorkingDraftEditor from "./WorkingDraftEditor";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import {
   apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
@@ -149,6 +150,9 @@ function ProductDetail({ product, onDelete, deleting, deleteError }: { product: 
           <p className="date-note">最近更新 {formatDate(product.last_collected_at)}</p>
         </div>
       </div>
+
+      <WorkingDraftEditor key={product.id} collectionId={product.id}
+        sourceTitle={product.title} sourceDescription={product.description} />
 
       {product.collection_warnings.length > 0 && (
         <details className="capture-notice">

@@ -51,7 +51,7 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				if strings.HasPrefix(r.URL.Path, "/api/v1/collections") && allowedAppOrigin(origin) {
-					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				} else {
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 				}
@@ -262,6 +262,15 @@ func (a collectionAPI) collections(w http.ResponseWriter, r *http.Request) {
 func (a collectionAPI) detail(w http.ResponseWriter, r *http.Request) {
 	ownerID, ok := a.owner(w, r)
 	if !ok {
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/working-draft") {
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/collections/"), "/working-draft")
+		if !collections.ValidUserID(id) {
+			writeError(w, http.StatusNotFound, "collection not found")
+			return
+		}
+		a.workingDraft(w, r, ownerID, id)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodDelete {
