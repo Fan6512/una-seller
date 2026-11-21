@@ -103,11 +103,29 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if again.Code != 200 || !strings.Contains(again.Body.String(), "already_approved") {
 		t.Fatalf("duplicate approval %d", again.Code)
 	}
+	// Converted working drafts are permanently read-only; users must edit
+	// app.own_products, never a stale working draft that will not be consumed.
+	if w := call(owner, "PUT", draftPath,
+		`{"title":"Invisible after approval","description":"wrong","notes":"wrong","expected_revision":1}`);
+		w.Code != 409 || !strings.Contains(w.Body.String(), "read-only after product-box approval") {
+		t.Fatalf("converted draft still writable: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(other, "PUT", draftPath, draftBody); w.Code != 404 {
+		t.Fatalf("foreign converted draft write: %d", w.Code)
+	}
 	if w := call(owner, "GET", "/api/v1/collections?inbox=1", ""); w.Code != 200 || strings.Contains(w.Body.String(), source.ID) {
 		t.Fatalf("approved item leaked into inbox %d", w.Code)
 	}
 	if w := call(owner, "GET", "/api/v1/collections?inbox=0", ""); w.Code != 200 || !strings.Contains(w.Body.String(), source.ID) {
 		t.Fatalf("source provenance disappeared %d", w.Code)
+	}
+	if w := call(owner, "GET", "/api/v1/collections?inbox=0", ""); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"own_product_id":"`+id+`"`) {
+		t.Fatalf("converted source summary has no own product reference: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(owner, "GET", "/api/v1/collections/"+source.ID, ""); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"own_product_id":"`+id+`"`) {
+		t.Fatalf("converted source detail has no own product reference: %d %s", w.Code, w.Body.String())
 	}
 	list := call(owner, "GET", "/api/v1/products", "")
 	if list.Code != 200 || !strings.Contains(list.Body.String(), id) {
