@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { formatMoney } from "./collections";
 import { getOwnProduct, getOwnProductPage, updateOwnProduct, type OwnProduct, type OwnProductSummary } from "./ownProducts";
 
