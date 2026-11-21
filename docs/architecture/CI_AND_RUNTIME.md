@@ -82,4 +82,15 @@ Go backend job 已使用 GitHub-hosted Ubuntu 的临时 **PostgreSQL 17 Service*
 | API 云部署可用 | 已有用户鉴权、HTTPS、域名、隔离数据库及持久化/备份验证 |
 | Mercado Libre 刊登可用 | 官方账号权限确认、实际提交、逐站点结果和平台回读证据 |
 
-> 本文不修改 GitHub Actions 文件、业务代码或生产服务器；它仅为后续独立小 PR 明确配置及验收边界。
+> 本文记录 CI 配置、审核和部署边界；实际工作流以 `.github/workflows/` 为准。
+
+## 5. 轻量 CI、发布验收与小 PR 审核（2026-11-21）
+
+- PR 和 main push 先运行 **Changed Files**；`backend/**` 运行 Go，`apps/desktop/**` 运行 Desktop，`apps/browser-extension/**` 运行 MV3；跨模块改动组合执行；纯文档仅运行范围识别。未识别的代码或工作流更改保守执行全部模块。维持既有 3 个检查名称，避免改坏 Required Checks；分支保护细节不可读取时，合并前由仓库管理员核实。
+- Go 仍保留格式、vet、PG17 相关测试和编译，但关闭全量 verbose。PG **进程重启**的 seed → restart → reread 三步仅在 `backend/migrations/**` 或 `backend/internal/collections/**` 变更时执行；否则标记 NOT_RUN，不将普通单测当成数据库进程恢复证据。
+- Windows NSIS 只在含桌面或后端改动的 PR 转 Ready、人工 dispatch、正式 `desktop-v*` 标签时构建；纯文档/CI 配置 PR 转 Ready 不自动打包，Draft 的反复提交也不打包。正式签名、版本、受保护部署和 Release 草稿门禁原封保留。Windows 构建不是实机 GUI 验收，生产部署/迁移须另行批准。
+- 轻量审核：P0/P1（安全、店铺隔离、数据破坏、重复刊登、资金）必须修并针对性验证；P2 只处理影响本轮交付的问题，P3 留 Issue 或后续处理。先本地 `gofmt` / TS 构建 / 插件语法检查，集中提交，一次定向复审；普通 UI/文案不要求跑完整原生构建或无关数据库重启。
+- 涉及官方 OAuth、真实刊登写操作、支付或迁移时，额外核对官方契约、授权/幂等/回读及需要的 PG 测试；普通修订无需重复完整平台验收。保持单人项目低负担，无新 Redis 或独立 CI 服务。
+- 改动范围选择脚本和 11 个离线样例见 `scripts/ci/changed-scopes.sh`、`scripts/ci/test-scopes.sh`。只有当前 HEAD 的检查完成，才可声称 CI PASS。原有历史 CI 重启测试结果仍有效，但并非每次必跑。
+
+> 本文是执行规范；实际触发和作业条件以 `.github/workflows/` 为准，不代表生产部署完成。

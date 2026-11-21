@@ -1,11 +1,16 @@
 name: Windows Desktop Build
 
 # Native packaging is a review/release gate, not an every-push check.
-# After a Ready PR receives more commits, rerun manually against its branch.
+# Build only on Ready transition, manual dispatch, or protected release tags.
+# If the candidate changes, rerun manually against the new HEAD.
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [ready_for_review]
     branches: [main]
+    # CI/document-only PRs never need a Windows native installer.
+    paths:
+      - 'apps/desktop/**'
+      - 'backend/**'
   workflow_dispatch:
     inputs:
       desktop_only:

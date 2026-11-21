@@ -14,8 +14,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changed Files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+      extension: ${{ steps.scope.outputs.extension }}
+      persistence: ${{ steps.scope.outputs.persistence }}
+    steps:
+      - name: Check out repository (shallow)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Validate changed-file rules
+        run: bash scripts/ci/test-scopes.sh
+      - name: Determine affected modules
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || ! git fetch --no-tags --depth=1 origin "$BASE_SHA" || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo 'Missing compare base: run all checks'
+            printf 'backend=true\ndesktop=true\nextension=true\npersistence=true\n' >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only "$BASE_SHA" HEAD | bash scripts/ci/changed-scopes.sh >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
   backend:
     name: Go Backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -58,15 +90,17 @@ jobs:
       - name: Vet, test and build
         run: |
           go vet ./...
-          go test -v -p 1 ./...
+          go test -p 1 ./...
           go build ./...
 
       - name: Seed PostgreSQL restart persistence fixture
+        if: needs.changes.outputs.persistence == 'true'
         env:
           TEST_RESTART_PHASE: before
-        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence$' ./internal/collections
+        run: go test -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence$' ./internal/collections
 
       - name: Restart PostgreSQL 17 service container
+        if: needs.changes.outputs.persistence == 'true'
         run: |
           container="${{ job.services.postgres.id }}"
           docker restart "$container"
@@ -85,12 +119,15 @@ jobs:
           fi
 
       - name: Verify PostgreSQL data after process restart
+        if: needs.changes.outputs.persistence == 'true'
         env:
           TEST_RESTART_PHASE: after
-        run: go test -v -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence$' ./internal/collections
+        run: go test -p 1 -count=1 -run '^TestPostgresProcessRestartPersistence$' ./internal/collections
 
   desktop:
     name: Desktop Frontend
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -121,6 +158,8 @@ jobs:
 
   extension:
     name: Browser Extension MV3
+    needs: changes
+    if: needs.changes.outputs.extension == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
