@@ -4,7 +4,8 @@ export const diagnosticsEnabled = import.meta.env.VITE_UNA_SELLER_DEV_DIAGNOSTIC
 
 type Operation = "stores_get" | "listings_get" | "description_get" | "store_token_check" | "sync_post"
   | "orders_get" | "order_state_get" | "order_detail_get" | "order_purchase_get"
-  | "orders_sync_post" | "orders_skip_post" | "orders_reset_post" | "order_purchase_post";
+  | "orders_sync_post" | "orders_skip_post" | "orders_reset_post" | "order_purchase_post"
+  | "order_refresh_post" | "order_sla_post";
 type Phase = "token_preflight" | "response_headers" | "response_body" | "failed";
 type Entry = {
   time: string;
@@ -35,6 +36,7 @@ const knownCodes = new Set([
   "order_rate_limited", "order_timeout", "order_canceled", "order_reset_conflict",
   "order_reset_invalid", "order_unavailable",
   "order_scope_required", "order_skip_invalid", "order_offset_invalid", "order_status_invalid",
+  "order_sla_not_applicable", "order_sla_no_shipment", "order_sla_invalid",
 ]);
 let cursor = 0;
 let nextRequestId = 0;
@@ -65,6 +67,10 @@ export function beginRequestDiagnostic(path: string, method: "GET" | "POST") {
     operation = "description_get";
   } else if (method === "POST" && /^\/api\/v1\/stores\/[^/]+\/connection-check$/.test(route)) {
     operation = "store_token_check";
+  } else if (/^\/api\/v1\/stores\/[^/]+\/orders\/[^/]+\/sla$/.test(route) && method === "POST") {
+    operation = "order_sla_post";
+  } else if (/^\/api\/v1\/stores\/[^/]+\/orders\/[^/]+\/refresh$/.test(route) && method === "POST") {
+    operation = "order_refresh_post";
   } else if (/^\/api\/v1\/stores\/[^/]+\/orders(?:\/|$)/.test(route)) {
     if (method === "GET") {
       operation = route.endsWith("/sync-state") ? "order_state_get"

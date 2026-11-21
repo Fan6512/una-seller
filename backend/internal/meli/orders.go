@@ -69,6 +69,9 @@ type OrderRecord struct {
 	PurchaseOrderID        string      `json:"purchase_order_id,omitempty"`
 	PurchaseCostCNY        *string     `json:"purchase_cost_cny,omitempty"`
 	PurchaseTrackingNumber string      `json:"purchase_tracking_number,omitempty"`
+	DispatchDeadline      *time.Time  `json:"dispatch_deadline,omitempty"`
+	DispatchSLAStatus     string      `json:"dispatch_sla_status,omitempty"`
+	DispatchCheckedAt     *time.Time  `json:"dispatch_checked_at,omitempty"`
 }
 
 type OrderPage struct {
@@ -801,20 +804,33 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
  ), '[]'::jsonb),
  COALESCE(p.purchase_order_id,''),
  CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
- COALESCE(p.purchase_tracking_number,'')
+ COALESCE(p.purchase_tracking_number,''),
+ COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at
  FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  LEFT JOIN app.meli_order_purchases p
    ON p.store_id=o.store_id AND p.site_id=o.site_id AND p.logistic_type=o.logistic_type
    AND p.seller_id=o.seller_id AND p.order_id=o.order_id
+ LEFT JOIN app.meli_order_dispatch_sla sla
+   ON sla.store_id=o.store_id AND sla.site_id=o.site_id AND sla.logistic_type=o.logistic_type
+   AND sla.seller_id=o.seller_id AND sla.order_id=o.order_id
+   AND sla.shipment_id=o.shipment_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4`
 
 func scanOrder(rows pgx.Rows) (OrderRecord, error) {
 	var o OrderRecord
 	var items []byte
 	var cost sql.NullString
+	var deadline, checked sql.NullTime
 	err := rows.Scan(&o.ID, &o.PackID, &o.Status, &o.CurrencyID, &o.TotalAmount,
-		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost, &o.PurchaseTrackingNumber)
+		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost,
+		&o.PurchaseTrackingNumber, &o.DispatchSLAStatus, &deadline, &checked)
+	if deadline.Valid {
+		o.DispatchDeadline = &deadline.Time
+	}
+	if checked.Valid {
+		o.DispatchCheckedAt = &checked.Time
+	}
 	if err == nil {
 		err = json.Unmarshal(items, &o.Items)
 	}
