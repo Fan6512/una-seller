@@ -156,6 +156,9 @@ jobs:
       - name: Verify product-box workflow decisions
         run: node --experimental-strip-types --test tests/workbenchRules.test.mjs
 
+      - name: Verify editable listing field defaults and validation
+        run: node --experimental-strip-types --test tests/listingFields.test.mjs
+
       - name: TypeScript check and Vite build
         run: npm run build
 
