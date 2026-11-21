@@ -298,7 +298,7 @@ func (s *Store) Get(ctx context.Context, owner, id string) (Product, error) {
 }
 
 func (s *Store) List(ctx context.Context, owner, query string, limit, offset int) ([]Summary, error) {
-  return s.ListWithInboxFilter(ctx,owner,query,limit,offset,false)
+	return s.ListWithInboxFilter(ctx, owner, query, limit, offset, false)
 }
 
 // Inbox-only filtering is desktop opt-in; extension collection APIs retain the
