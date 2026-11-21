@@ -2,7 +2,6 @@ package meli
 
 import (
   "context"
-  "errors"
   "regexp"
   "strings"
   "unicode/utf8"
@@ -134,4 +133,3 @@ func (s *Service) SearchOrders(ctx context.Context, owner string, f OrderSearchF
   return page,nil
 }
 
-var ErrOrderSearchUnavailable = errors.New("order search unavailable")
