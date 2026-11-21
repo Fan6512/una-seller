@@ -36,6 +36,10 @@ func (f OrderSearchFilter) Valid() bool {
 		utf8.RuneCountInString(f.Query) > 120 {
 		return false
 	}
+	if f.Query != "" && orderNumber(f.Query) && len(f.Query) < 6 {
+		// An incomplete numeric Order ID must not look like a successful empty search.
+		return false
+	}
 	if f.Query != "" && !orderNumber(f.Query) && utf8.RuneCountInString(f.Query) < 2 {
 		return false
 	}
@@ -58,28 +62,9 @@ type OrderSearchPage struct {
 	StoreFilter    string              `json:"store_filter"`
 }
 
-const globalOrderSearchSQL = `SELECT o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
- trim_scale(o.total_amount)::text,o.date_created,o.last_updated,COALESCE(o.shipment_id,''),
- COALESCE((
-   SELECT jsonb_agg(line.value ||
-     CASE WHEN image.url IS NOT NULL THEN jsonb_build_object('image_url',image.url)
-          ELSE '{}'::jsonb END ORDER BY line.pos)
-   FROM jsonb_array_elements(o.order_items) WITH ORDINALITY AS line(value,pos)
-   LEFT JOIN LATERAL (
-     SELECT COALESCE(NULLIF(p.details->>'secure_thumbnail',''),
-       NULLIF(p.details->'pictures'->0->>'secure_url',''),
-       NULLIF(p.details->'pictures'->0->>'url','')) AS url
-     FROM app.meli_published_listings p
-     WHERE p.store_id=o.store_id AND p.site_id=o.site_id
-       AND p.logistic_type=o.logistic_type AND p.listing_id=line.value->>'item_id'
-       AND p.details->>'seller_id'=o.seller_id
-     LIMIT 1
-   ) AS image ON true
- ), '[]'::jsonb),
- COALESCE(p.purchase_order_id,''),
- CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
- COALESCE(p.purchase_tracking_number,''),
- COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at,
+// At higher order volumes, profile global ORDER BY and JSONB title search with
+// EXPLAIN ANALYZE before adding indexes. No schema changes belong in #55.
+const globalOrderSearchSQL = `SELECT ` + orderColumns + `,
   o.store_id::text,o.site_id,o.logistic_type
   FROM app.meli_orders o
   JOIN app.meli_store_connections c ON c.id=o.store_id
