@@ -75,7 +75,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	}
 	draftPath := "/api/v1/collections/" + source.ID + "/working-draft"
 	draftBody := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":0,
-"listing_fields":{"category_site":"MLB","category_id":"MLB123","category_path":"Beleza / Cuidados",
+"listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT123","category_path":"Beleza / Cuidados",
 "brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY",
 "weight_g":"850","length_cm":"20.5","width_cm":"15","height_cm":"5",
 "site_prices":[{"site":"MLB","price":"89.90","currency":"BRL"}],
@@ -105,7 +105,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		len(response.Product.Images) != 1 ||
 		response.Product.ListingFields.WeightG != "850" ||
 		response.Product.ListingFields.SellerSKU != "P-001" ||
-		response.Product.ListingFields.CategorySite != "MLB" ||
+		response.Product.ListingFields.CategoryID != "CBT123" || response.Product.ListingFields.Titles.Spanish != "Título en español" ||
 		response.Product.ListingFields.Images == nil ||
 		len(*response.Product.ListingFields.Images) != 1 {
 		t.Fatalf("wrong snapshot or listing fields: %#v", response.Product)
@@ -158,7 +158,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	updated := call(owner, "PUT", "/api/v1/products/"+id,
 		`{"title":"Edited product","description":"Own description","notes":"Own notes","expected_revision":2,
 		"listing_fields":{"seller_sku":"P-002","weight_g":"1200","length_cm":"23","width_cm":"19","height_cm":"9",
-		"category_site":"MLM","category_id":"MLM999","site_prices":[{"site":"MLM","price":"199.90","currency":"MXN"}]}}`)
+		"titles":{"en":"Edited English Title","es":"Otro título en español","pt":"Outro título em português"},"category_id":"CBT999","site_prices":[{"site":"MLM","price":"199.90","currency":"MXN"}]}}`)
 	if updated.Code != 200 {
 		t.Fatalf("listing fields edit %d %s", updated.Code, updated.Body.String())
 	}
@@ -170,7 +170,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	}
 	if editedResponse.Product.ListingFields.WeightG != "1200" ||
 		editedResponse.Product.ListingFields.SellerSKU != "P-002" ||
-		editedResponse.Product.ListingFields.CategorySite != "MLM" {
+		editedResponse.Product.ListingFields.CategoryID != "CBT999" || editedResponse.Product.ListingFields.Titles.Portuguese != "Outro título em português" {
 		t.Fatalf("merchant listing edit not persisted: %#v", editedResponse.Product.ListingFields)
 	}
 	if w := call(owner, "PUT", "/api/v1/products/"+id,
