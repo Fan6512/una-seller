@@ -40,8 +40,7 @@ func TestManualForwardingWarehouseAndPurchaseTracking(t *testing.T) {
 		t.Fatalf("tracking not projected: %+v %v", order, err)
 	}
 	if _, err = s.SaveOrderPurchaseWithShipping(ctx, owner, store, scope,
-		"9001", purchase.PurchaseOrderID, "16", "带换行\n的地址", "BAD TRACK", &purchase.UpdatedAt);
-		!errors.Is(err, ErrOrderPurchaseInvalid) {
+		"9001", purchase.PurchaseOrderID, "16", "带换行\n的地址", "BAD TRACK", &purchase.UpdatedAt); !errors.Is(err, ErrOrderPurchaseInvalid) {
 		t.Fatalf("accepted invalid forwarding data: %v", err)
 	}
 }
