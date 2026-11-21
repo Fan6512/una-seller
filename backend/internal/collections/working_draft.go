@@ -16,21 +16,21 @@ var ErrDraftConflict = errors.New("working draft has been updated")
 var ErrDraftConverted = errors.New("source already moved to product box")
 
 type WorkingDraftInput struct {
-	Title            string `json:"title"`
-	Description      string `json:"description"`
-	Notes            string `json:"notes"`
+	Title            string         `json:"title"`
+	Description      string         `json:"description"`
+	Notes            string         `json:"notes"`
 	ListingFields    *ListingFields `json:"listing_fields,omitempty"`
-	ExpectedRevision int64 `json:"expected_revision"`
+	ExpectedRevision int64          `json:"expected_revision"`
 }
 
 type WorkingDraft struct {
-	SourceProductID string    `json:"source_product_id"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description"`
-	Notes           string    `json:"notes"`
+	SourceProductID string        `json:"source_product_id"`
+	Title           string        `json:"title"`
+	Description     string        `json:"description"`
+	Notes           string        `json:"notes"`
 	ListingFields   ListingFields `json:"listing_fields"`
-	Revision        int64     `json:"revision"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Revision        int64         `json:"revision"`
+	UpdatedAt       time.Time     `json:"updated_at"`
 }
 
 func (in WorkingDraftInput) Validate() error {
