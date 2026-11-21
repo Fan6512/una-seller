@@ -162,7 +162,7 @@ function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyC
       {product.own_product_id
         ? <p className="converted-draft-hint" role="status">此商品已移入产品箱，原工作稿停止编辑。请切换到「产品箱」继续修改商品。</p>
         : <WorkingDraftEditor key={product.id} collectionId={product.id}
-            sourceTitle={product.title} sourceDescription={product.description} onDirtyChange={onDraftDirtyChange} />}
+            sourceTitle={product.title} sourceDescription={product.description} sourceProduct={product} onDirtyChange={onDraftDirtyChange} />}
 
       {product.collection_warnings.length > 0 && (
         <details className="capture-notice">
