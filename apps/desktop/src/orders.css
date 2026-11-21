@@ -139,6 +139,12 @@
   border-radius: 18px; background: #fff; color: #304055;
   box-shadow: 0 25px 85px rgba(23, 36, 53, .23); overflow: hidden; }
 .orders-modal::backdrop { background: rgba(25, 35, 49, .45); backdrop-filter: blur(5px); }
+.orders-purchase-modal { width: min(530px, calc(100vw - 24px)); }
+.orders-purchase-compact { padding: 18px 21px 25px; display: grid; gap: 12px; }
+.orders-purchase-compact p { margin: 0; line-height: 1.65; }
+.orders-shipping-refs { display: grid; gap: 4px; min-width: 135px; }
+.orders-shipping-refs span { display: block; font-size: 11px; overflow-wrap: anywhere; }
+.orders-shipping-refs small { color: #8593a2; margin-right: 5px; }
 .orders-modal .orders-detail { border: 0; border-radius: 0; box-shadow: none; width: 100%; }
 .orders-modal-scroll { overflow-y: auto; overscroll-behavior: contain; max-height: calc(min(88vh, 990px) - 82px);
   display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); align-content: start; }
