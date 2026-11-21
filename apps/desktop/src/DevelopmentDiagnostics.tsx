@@ -136,6 +136,7 @@ export function diagnosticsJSON() {
 export default function DevelopmentDiagnostics() {
   useSyncExternalStore(subscribe, () => version);
   const [notice, setNotice] = useState("");
+  const [exporting, setExporting] = useState(false);
   const json = diagnosticsJSON();
 
   async function copy() {
@@ -147,22 +148,49 @@ export default function DevelopmentDiagnostics() {
     }
   }
 
-  function download() {
-    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "una-seller-diagnostics.json";
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  async function download() {
+    if (!entries.length || exporting) return;
+    setExporting(true);
+    setNotice("");
+    try {
+      // WebView2 supports the File System Access picker; unlike a synthetic
+      // blob-link click, this reports when a real file has been written.
+      type Handle = { createWritable: () => Promise<{
+        write: (value: string) => Promise<void>; close: () => Promise<void>;
+      }> };
+      const host = window as Window & { showSaveFilePicker?: (options: {
+        suggestedName: string; types: { description: string; accept: Record<string, string[]> }[];
+      }) => Promise<Handle> };
+      if (!host.showSaveFilePicker) {
+        // WebKit-based webviews may lack the picker. Never report "saved" when
+        // we could only copy the JSON; make the manual fallback explicit.
+        await navigator.clipboard.writeText(json);
+        setNotice("此客户端尚不支持系统文件保存，诊断 JSON 已复制。请粘贴到记事本，另存为 una-seller-diagnostics.json");
+        return;
+      }
+      const file = await host.showSaveFilePicker({
+        suggestedName: "una-seller-diagnostics.json",
+        types: [{ description: "JSON 诊断日志", accept: { "application/json": [".json"] } }],
+      });
+      const writable = await file.createWritable();
+      await writable.write(json);
+      await writable.close();
+      setNotice("已成功导出 una-seller-diagnostics.json");
+    } catch (error) {
+      setNotice(error instanceof Error && error.name === "AbortError"
+        ? "已取消导出"
+        : "导出未完成：" + (error instanceof Error ? error.message : "系统拒绝文件保存") +
+          "。可点击「复制 JSON」手动保存。");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return <details>
     <summary>开发诊断（{entries.length}/{limit}）</summary>
     <div>
       <button type="button" onClick={copy} disabled={!entries.length}>复制 JSON</button>
-      <button type="button" onClick={download} disabled={!entries.length}>导出 JSON</button>
+      <button type="button" onClick={() => void download()} disabled={!entries.length || exporting}>{exporting ? "正在导出…" : "导出 JSON"}</button>
       <button type="button" onClick={() => { clearDiagnostics(); setNotice("已清空"); }} disabled={!entries.length}>清空</button>
     </div>
     <p role="status">{notice}</p>
