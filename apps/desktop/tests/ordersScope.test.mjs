@@ -42,7 +42,7 @@ window.fetch = (path, options) => {
     purchaseFilters.push(filter);
     const linked = { ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16" };
     const rows = filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked];
-    return Promise.resolve(Response.json({ items: rows, has_more: false }));
+    return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: filter }));
   }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
   if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json(order));

@@ -222,7 +222,7 @@
 .orders-empty p { color: var(--order-muted); font-size: 12px; }
 @media (max-width: 1340px) {
   .orders-main-layout.detail-open { grid-template-columns: minmax(440px, 1fr) minmax(310px, 360px); }
-  .orders-table { min-width: 820px; }
+  .orders-table { min-width: 1080px; }
 }
 @media (max-width: 850px) {
   .orders-modal-scroll { grid-template-columns: minmax(0, 1fr); }

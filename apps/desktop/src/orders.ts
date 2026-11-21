@@ -26,7 +26,7 @@ export type OrderRecord = {
   purchase_order_id?: string;
   purchase_cost_cny?: string | null;
 };
-export type OrderPage = { items: OrderRecord[]; has_more: boolean };
+export type OrderPage = { items: OrderRecord[]; has_more: boolean; purchase_filter?: string };
 export type OrderProgress = { saved: number; processed: number; has_more: boolean; next_offset: number };
 export type OrderSyncState = { next_offset: number; can_reset: boolean; review?: OrderReview };
 export type OrderReview = { order_id: string; review_id: string; offset: number; reason: string };
@@ -107,7 +107,13 @@ export function listOrders(scope: OrderScope, status: string, purchaseLink: "" |
   if (status) query.set("status", status);
   if (purchaseLink) query.set("purchase", purchaseLink);
   return orderRead<OrderPage>("/api/v1/stores/" + encodeURIComponent(scope.storeId) +
-    "/orders?" + query.toString(), signal);
+    "/orders?" + query.toString(), signal).then((page) => {
+    if (purchaseLink && (page.purchase_filter !== purchaseLink ||
+      page.items.some((order) => Boolean(order.purchase_order_id) !== (purchaseLink === "linked")))) {
+      throw new Error("服务端版本不支持采购筛选，或返回了不一致的关联结果。请先升级 Go 服务端再刷新订单。");
+    }
+    return page;
+  });
 }
 export function getOrder(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");

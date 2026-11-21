@@ -71,8 +71,9 @@ type OrderRecord struct {
 }
 
 type OrderPage struct {
-	Items   []OrderRecord `json:"items"`
-	HasMore bool          `json:"has_more"`
+	Items          []OrderRecord `json:"items"`
+	HasMore        bool          `json:"has_more"`
+	PurchaseFilter string        `json:"purchase_filter"`
 }
 
 type OrderSyncResult struct {
@@ -787,7 +788,9 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
           ELSE '{}'::jsonb END ORDER BY line.pos)
    FROM jsonb_array_elements(o.order_items) WITH ORDINALITY AS line(value,pos)
    LEFT JOIN LATERAL (
-     SELECT NULLIF(p.details->>'secure_thumbnail','') AS url
+     SELECT COALESCE(NULLIF(p.details->>'secure_thumbnail',''),
+       NULLIF(p.details->'pictures'->0->>'secure_url',''),
+       NULLIF(p.details->'pictures'->0->>'url','')) AS url
      FROM app.meli_published_listings p
      WHERE p.store_id=o.store_id AND p.site_id=o.site_id
        AND p.logistic_type=o.logistic_type AND p.listing_id=line.value->>'item_id'
@@ -858,7 +861,7 @@ func (s *Service) ListOrders(ctx context.Context, owner, store string,
 		return OrderPage{}, err
 	}
 	defer rows.Close()
-	page := OrderPage{Items: []OrderRecord{}}
+	page := OrderPage{Items: []OrderRecord{}, PurchaseFilter: purchaseLink}
 	for rows.Next() {
 		o, e := scanOrder(rows)
 		if e != nil {
