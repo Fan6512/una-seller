@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ListingFieldsEditor from "./ListingFieldsEditor";
-import { initialListingFields, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
+import { initialListingFields, preferredTitle, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
 import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
 
 type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes"> & {listing_fields: ListingFields};
@@ -13,7 +13,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
 }) {
   const [fields, setFields] = useState<DraftFields>({
     title: sourceTitle, description: sourceDescription ?? "", notes: "",
-    listing_fields: initialListingFields(null,sourceProduct),
+    listing_fields: initialListingFields(null,sourceProduct,sourceTitle),
   });
   const [saved, setSaved] = useState<DraftFields | null>(null);
   const [touched, setTouched] = useState(false);
@@ -35,9 +35,9 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       if (controller.signal.aborted) return;
       const next = draft
         ? { title: draft.title, description: draft.description, notes: draft.notes,
-            listing_fields: initialListingFields(draft.listing_fields,sourceProduct) }
+            listing_fields: initialListingFields(draft.listing_fields,sourceProduct,draft.title) }
         : { title: sourceTitle, description: sourceDescription ?? "", notes: "",
-            listing_fields: initialListingFields(null,sourceProduct) };
+            listing_fields: initialListingFields(null,sourceProduct,sourceTitle) };
       setFields(next);
       setSaved(draft ? next : null);
       setTouched(false);
@@ -97,7 +97,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       }, controller.signal);
       if (controller.signal.aborted) return;
       const next = { title: draft.title, description: draft.description, notes: draft.notes,
-        listing_fields: initialListingFields(draft.listing_fields,sourceProduct) };
+        listing_fields: initialListingFields(draft.listing_fields,sourceProduct,draft.title) };
       setFields(next);
       setSaved(next);
       setTouched(false);
@@ -127,11 +127,11 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         : saved ? (dirty ? "有未保存修改" : "已保存") : "尚未保存"}</span>
     </div>
     <p>这里是转产品库前的暂存稿，原始采集标题、描述和图片不会被覆盖。</p>
-    <label>商品标题
-      <input value={fields.title} readOnly={loadState !== "ready" || saving}
-        onChange={(e) => change("title", e.target.value)} />
-      <small>{titleCount} / 500 字符</small>
-    </label>
+    <ListingFieldsEditor value={fields.listing_fields} disabled={loadState !== "ready" || saving}
+      onChange={listing_fields=>{
+        setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
+        setTouched(true);setNotice("");
+      }} />
     <label>整理后的商品描述
       <textarea rows={5} value={fields.description} readOnly={loadState !== "ready" || saving}
         onChange={(e) => change("description", e.target.value)} />
@@ -142,8 +142,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         onChange={(e) => change("notes", e.target.value)} />
       <small>{notesCount} / 5000 字符</small>
     </label>
-    <ListingFieldsEditor value={fields.listing_fields} disabled={loadState !== "ready" || saving}
-      onChange={listing_fields=>{setFields(v=>({...v,listing_fields}));setTouched(true);setNotice("");}} />
     {loadState === "ready" && !valid && <p className="working-draft-error" role="alert">
       请检查标题、描述、备注和上架资料中的字段格式；系统会标记不合规的具体输入。
     </p>}
