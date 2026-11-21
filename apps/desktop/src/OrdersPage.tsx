@@ -810,7 +810,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                     </td>
                     <td><DispatchCountdown order={order} now={clockNow} logistic={scope?.logistic ?? ""} /></td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
-                    <td><button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button></td>
+                    <td><div className="orders-row-actions">
+                      <button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button>
+                      <button className="orders-table-action orders-row-purchase" type="button"
+                        onClick={() => openPurchase(order.order_id)}>{order.purchase_order_id ? "编辑采购" : "采购"}</button>
+                    </div></td>
                   </tr>)}
                 </tbody>
               </table>

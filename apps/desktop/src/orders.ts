@@ -9,6 +9,7 @@ export type OrderLine = {
   title: string;
   variation_id?: string;
   image_url?: string;
+  variation_attributes?: { name: string; value_name: string }[];
   quantity: number;
   unit_price: string;
   currency_id: string;
@@ -100,6 +101,22 @@ export function orderStatusLabel(status: string) {
   };
   return labels[status] || status || "未知状态";
 }
+// Shipment ID and SLA are not reliable delivery events.
+export function displayOrderStatus(order: OrderRecord) {
+  if (order.status === "cancelled" || order.status === "cancellation_requested") return orderStatusLabel(order.status);
+  if (order.status === "refunded" || order.status === "partially_refunded") return orderStatusLabel(order.status);
+  if (order.status === "payment_required" || order.status === "partially_paid" || order.status === "payment_in_process")
+    return orderStatusLabel(order.status);
+  if (order.status === "paid" && (order.purchase_order_id || order.purchase_tracking_number))
+    return "已采购";
+  return orderStatusLabel(order.status);
+}
+export function orderVariationText(line?: OrderLine) {
+  const attributes = line?.variation_attributes?.filter((attr) => attr.name && attr.value_name)
+    .map((attr) => attr.name + ":" + attr.value_name);
+  return attributes?.length ? attributes.join(" · ") : "规格未返回";
+}
+
 export function orderDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN", {
@@ -107,8 +124,11 @@ export function orderDate(value: string) {
   });
 }
 export function orderMoney(value: string, currency: string) {
-  if (!/^\d{1,16}(\.\d{1,8})?$/.test(value)) return value + " " + currency;
-  return currency + " " + value;
+  const symbols: Record<string, string> = {
+    USD: "$", BRL: "R$", MXN: "MX$", ARS: "AR$", CLP: "CLP$", CNY: "¥",
+  };
+  const prefix = currency + (symbols[currency] ? " " + symbols[currency] : "") + " ";
+  return prefix + value;
 }
 export const ORDER_READ_TIMEOUT_MS = 8_000;
 export const ORDER_WRITE_TIMEOUT_MS = 25_000;
