@@ -35,7 +35,7 @@ func TestOrderSearchAuthAndInputValidation(t *testing.T) {
 			t.Fatalf("missing Allow: %s",rec.Header().Get("Allow"))
 		}
 	}
-	if !meli.OrderSearchFilter{Store:"all",Site:"*",Logistic:"*",Query:"Test title"}.Valid() {
+	if !(meli.OrderSearchFilter{Store:"all",Site:"*",Logistic:"*",Query:"Test title"}).Valid() {
 		t.Fatal("ordinary title search rejected")
 	}
 	for _,q:=range []string{"a",strings.Repeat("A",121)} {
