@@ -298,13 +298,23 @@ func (s *Store) Get(ctx context.Context, owner, id string) (Product, error) {
 }
 
 func (s *Store) List(ctx context.Context, owner, query string, limit, offset int) ([]Summary, error) {
+  return s.ListWithInboxFilter(ctx,owner,query,limit,offset,false)
+}
+
+// Inbox-only filtering is desktop opt-in; extension collection APIs retain the
+// original source list and never lose provenance on product-box approval.
+func (s *Store) ListWithInboxFilter(ctx context.Context, owner, query string, limit, offset int, inboxOnly bool) ([]Summary, error) {
 	if !ValidUserID(owner) {
 		return nil, errors.New("invalid configured owner")
 	}
 	if limit < 1 || limit > 100 || offset < 0 || offset > 100000 {
 		return nil, fmt.Errorf("invalid paging")
 	}
-	rows, err := s.DB.Query(ctx, `SELECT p.id::text,p.title,p.source_platform,p.source_site,p.price::text,p.currency,(SELECT i.image_url FROM app.source_product_images i WHERE i.source_product_id=p.id AND i.variant_id IS NULL ORDER BY CASE WHEN i.image_type='main' THEN 0 ELSE 1 END,i.image_order LIMIT 1),p.collection_status,p.last_collected_at FROM app.source_products p WHERE p.owner_user_id=$1 AND ($2='' OR p.title ILIKE '%'||$2||'%') ORDER BY p.last_collected_at DESC,p.id LIMIT $3 OFFSET $4`, owner, query, limit, offset)
+	rows, err := s.DB.Query(ctx, `SELECT p.id::text,p.title,p.source_platform,p.source_site,p.price::text,p.currency,(SELECT i.image_url FROM app.source_product_images i WHERE i.source_product_id=p.id AND i.variant_id IS NULL ORDER BY CASE WHEN i.image_type='main' THEN 0 ELSE 1 END,i.image_order LIMIT 1),p.collection_status,p.last_collected_at FROM app.source_products p WHERE p.owner_user_id=$1 AND ($2='' OR p.title ILIKE '%'||$2||'%')
+ AND (NOT $5::boolean OR NOT EXISTS(
+   SELECT 1 FROM app.own_products own WHERE own.source_product_id=p.id AND own.owner_user_id=$1
+ ))
+ ORDER BY p.last_collected_at DESC,p.id LIMIT $3 OFFSET $4`, owner, query, limit, offset, inboxOnly)
 	if err != nil {
 		return nil, err
 	}
