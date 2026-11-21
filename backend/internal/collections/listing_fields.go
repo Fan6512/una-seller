@@ -10,7 +10,19 @@ import (
 
 // ListingFields are editable preparation data, not official platform attributes.
 // Category IDs and site prices require Mercado Libre validation before publishing.
+type LocalizedTitles struct {
+	English string `json:"en"`
+	Spanish string `json:"es"`
+	Portuguese string `json:"pt"`
+}
+func (titles LocalizedTitles) Preferred() string {
+	for _, title := range []string{titles.English,titles.Spanish,titles.Portuguese} {
+		if strings.TrimSpace(title)!="" {return strings.TrimSpace(title)}
+	}
+	return ""
+}
 type ListingFields struct {
+	Titles LocalizedTitles `json:"titles"`
 	CategorySite     string             `json:"category_site"`
 	CategoryID       string             `json:"category_id"`
 	CategoryPath     string             `json:"category_path"`
@@ -48,6 +60,12 @@ type ListingVariant struct {
 	ImageURLs  []string          `json:"image_urls"`
 }
 
+func allNumeric(value string) bool {
+	if value=="" {return false}
+	for _,c :=range value {if c<'0'||c>'9' {return false}}
+	return len(value)<=15
+}
+
 func listingMoney(value string) bool {
 	if value == "" {
 		return true
@@ -75,7 +93,9 @@ func validListingText(text string, max int) bool {
 }
 
 func (f ListingFields) Validate() error {
-	if !validListingText(f.CategorySite, 4) || !validListingText(f.CategoryID, 60) ||
+	if !validListingText(f.Titles.English,500) || !validListingText(f.Titles.Spanish,500) ||
+		!validListingText(f.Titles.Portuguese,500) ||
+		!validListingText(f.CategorySite, 4) || !validListingText(f.CategoryID, 60) ||
 		!validListingText(f.CategoryPath, 400) || !validListingText(f.Brand, 120) ||
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
 		!validListingText(f.GTIN, 50) ||
@@ -86,6 +106,10 @@ func (f ListingFields) Validate() error {
 		!listingDecimal(f.WidthCM, 10000, false) ||
 		!listingDecimal(f.HeightCM, 10000, false) {
 		return errors.New("invalid listing preparation fields")
+	}
+	if f.CategoryID!="" && (!strings.HasPrefix(f.CategoryID,"CBT") ||
+		len(f.CategoryID)<4 || !allNumeric(f.CategoryID[3:])) {
+		return errors.New("category draft must use CBT general category; select marketplace at publishing")
 	}
 	allowedSites := map[string]string{"MLM": "MXN", "MLB": "BRL", "MLA": "ARS", "MLC": "CLP", "MCO": "COP"}
 	if f.CategorySite != "" && allowedSites[f.CategorySite] == "" {
