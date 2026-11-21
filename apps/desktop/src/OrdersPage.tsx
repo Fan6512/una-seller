@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { cachedStores, listStores, type StoreConnection } from "./stores";
+import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
 import {
   getOrder, getOrderSyncState, listOrders, orderDate, orderMoney, orderStatusLabel,
   OrderRequestError, resetOrderCursor, skipOrder, syncOrders,
@@ -42,18 +42,32 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
 }) {
   const [stores, setStores] = useState<StoreConnection[]>(() => cachedStores() ?? []);
   const [storeError, setStoreError] = useState("");
+  const [storeRefreshing, setStoreRefreshing] = useState(false);
   const [storeChoice, setStoreChoice] = useState("");
   const [scopeChoice, setScopeChoice] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  useEffect(() => {
-    let alive = true;
-    void listStores().then((items) => {
-      if (alive) setStores(items);
-    }).catch((error: unknown) => {
-      if (alive) setStoreError(displayError(error));
-    });
-    return () => { alive = false; };
+  const reloadStores = useCallback(async () => {
+    setStoreRefreshing(true);
+    setStoreError("");
+    try {
+      // Read the latest store/token state; a cached status may have changed
+      // after a connection check, OAuth callback, or another page's action.
+      const items = await listStores(true);
+      setStores(items);
+    } catch (error) {
+      setStoreError(displayError(error));
+    } finally {
+      setStoreRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    // Keep the order page in sync when Store Management renews or changes
+    // a connection. This does not start or repeat an order synchronization.
+    const unsubscribe = watchStoreList(setStores);
+    void reloadStores();
+    return unsubscribe;
+  }, [reloadStores]);
 
   const availableStores = useMemo(() =>
     stores.filter((store) => store.status !== "disconnected" &&
@@ -71,11 +85,12 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     scope={scope} scopeKey={scopeKey} store={store} stores={availableStores} storeError={storeError}
     statusFilter={statusFilter} setStatusFilter={setStatusFilter}
     selectStore={(id) => { setStoreChoice(id); setScopeChoice(""); }} selectScope={setScopeChoice}
-    beginSync={beginSync} installingUpdate={installingUpdate} />;
+    beginSync={beginSync} installingUpdate={installingUpdate}
+    reloadStores={reloadStores} storeRefreshing={storeRefreshing} />;
 }
 
 function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter, setStatusFilter,
-  selectStore, selectScope, beginSync, installingUpdate }: {
+  selectStore, selectScope, beginSync, installingUpdate, reloadStores, storeRefreshing }: {
   scope: OrderScope | null;
   scopeKey: string;
   store: StoreConnection | undefined;
@@ -87,6 +102,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   selectScope: (key: string) => void;
   beginSync: BeginSync;
   installingUpdate: boolean;
+  reloadStores: () => Promise<void>;
+  storeRefreshing: boolean;
 }) {
   const marketplaces = store?.marketplaces ?? [];
   const [searchText, setSearchText] = useState("");
@@ -280,7 +297,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         setProgress(error.progress ? { ...error.progress, saved } : null);
         setNotice("本轮已保存 " + saved + " 笔订单，有一笔详情异常，等待核实。");
       } else {
-        setNotice("本轮已保存约 " + saved + " 笔。同步中断：" + displayError(error) +
+        const detail = error instanceof OrderRequestError
+          ? "（HTTP " + error.status + " · " + error.code + "）" : "";
+        setNotice("本轮已保存约 " + saved + " 笔。同步中断：" + displayError(error) + detail +
           "。如请求结果未知，请先刷新确认，不要连续重试。");
       }
     } finally {
@@ -344,6 +363,10 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
   const canSync = Boolean(scope &&
     (store?.status === "connected" || store?.status === "token_expired") && !installingUpdate);
+  const storeStatusText: Record<StoreConnection["status"], string> = {
+    connected: "已连接", token_expired: "访问令牌已到期",
+    reauth_required: "需要重新授权", refresh_unknown: "续签状态待确认", disconnected: "已断开",
+  };
   const disabledReason = !scope ? "请先选择已验证的店铺、站点和物流类型"
     : store?.status === "reauth_required" ? "店铺需要重新授权，请到店铺管理处理"
       : store?.status === "refresh_unknown" ? "令牌续签状态未知，请到店铺管理核实"
@@ -354,6 +377,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       <div className="page-heading">
         <div><h1>订单管理</h1><p>按店铺与站点查看 Mercado Libre 订单 · 订单详情不包含买家隐私资料</p></div>
         <div className="orders-heading-actions">
+          <button className="refresh-button" type="button" onClick={() => void reloadStores()}
+            disabled={storeRefreshing || running}>{storeRefreshing ? "读取店铺中…" : "刷新店铺状态"}</button>
           <button className="refresh-button" type="button" onClick={loadRows} disabled={loading || running}>刷新订单</button>
           {running ? (
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
@@ -365,6 +390,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         </div>
       </div>
 
+      <p className="orders-filter-note" role="status">
+        {store ? "当前店铺：" + (store.nickname || store.seller_id) + " · " +
+          (storeStatusText[store.status] ?? "状态未知") : "请先连接并验证店铺"}
+        {" · "}{store ? "已核实站点 " + marketplaces.length + " 个" : "无可选站点"}
+      </p>
       {store?.status === "token_expired" && <p className="orders-filter-note" role="status">
         美客多访问令牌已到期。点击「同步订单」后服务端将尝试续签；若失败，请到「店铺管理」验证连接。
       </p>}
