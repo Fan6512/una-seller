@@ -716,7 +716,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <button className="refresh-button" type="button" onClick={() => void reloadStores()}
             disabled={storeRefreshing || running}>{storeRefreshing ? "读取店铺中…" : "刷新店铺状态"}</button>
           <button className="refresh-button" type="button" onClick={loadRows} disabled={loading || running}>刷新订单</button>
-          <button className="refresh-button" type="button" disabled={!scope || imageBusy || loading || running}
+          <button className="refresh-button" type="button" disabled={!scope || Boolean(activeQuery) || imageBusy || loading || running}
             onClick={() => void refreshPageImages()}>{imageBusy ? "补图中…" : "补全本页主图"}</button>
           {running ? (
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
@@ -730,8 +730,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
       <p className="orders-filter-note" role="status">
         {store ? "当前店铺：" + (store.nickname || store.seller_id) + " · " +
-          (storeStatusText[store.status] ?? "状态未知") : "请先连接并验证店铺"}
-        {" · "}{store ? "已核实站点 " + marketplaces.length + " 个" : "无可选站点"}
+          (storeStatusText[store.status] ?? "状态未知") : "当前查看：所有已验证店铺"}
+        {" · "}{marketplaces.length ? "已核实站点 / 物流组合 " + marketplaces.length + " 个" : "无可选站点"}
       </p>
       {store?.status === "token_expired" && <p className="orders-filter-note" role="status">
         美客多访问令牌已到期。点击「同步订单」后服务端将尝试续签；若失败，请到「店铺管理」验证连接。
@@ -739,12 +739,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       {scope && !canSync && !installingUpdate && <p className="orders-filter-note" role="status">{disabledReason}</p>}
       <div className="orders-filters">
         <label>店铺
-          <select aria-label="订单店铺" value={store?.id ?? ""} onChange={(event) => selectStore(event.target.value)}>
+          <select aria-label="订单店铺" value={storeFilter} onChange={(event) => selectStore(event.target.value)}>
+            {stores.length > 1 && <option value="all">所有店铺</option>}
             {stores.map((item) => <option key={item.id} value={item.id}>{item.nickname || item.seller_id}</option>)}
           </select>
         </label>
         <label>站点 / 物流模式
           <select aria-label="站点和物流模式" value={scopeKey} onChange={(event) => selectScope(event.target.value)}>
+            {marketplaces.length > 0 && <option value="all">所有站点</option>}
             {marketplaces.map((market) => <option key={market.site_id + market.logistic_type} value={market.site_id + "|" + market.logistic_type}>
               {(SITE_NAMES[market.site_id] ?? market.site_id) + " · " +
                 (market.logistic_type === "remote" ? "自发货" : market.logistic_type === "fulfillment" ? "海外仓" : market.logistic_type)}
@@ -753,14 +755,16 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         </label>
         <label className="orders-filter-search">搜索订单或商品标题
           <span className="orders-search-inner">
-            <input type="search" value={searchText} placeholder="销售订单号 / 商品标题（当前页）"
-              onChange={(event) => setSearchText(event.target.value)}
+            <input type="search" value={searchText} placeholder="销售订单号 / 商品标题（全部订单）"
+              onChange={(event) => { setSearchText(event.target.value);
+                if (!event.target.value) { setActiveQuery(""); setOffset(0); }
+              }}
               onKeyDown={(event) => { if (event.key === "Enter") searchOrder(); }} />
-            <button type="button" onClick={searchOrder} title="输入完整数字订单号可跨页查找">查订单</button>
+            <button type="button" onClick={searchOrder} title="在所选店铺的全部已同步订单中查找">搜索</button>
           </span>
         </label>
       </div>
-      <p className="orders-filter-note">商品关键词只筛选当前页；输入完整数字订单号并点击“查订单”可直接查询该订单，不受当前分页限制。</p>
+      <p className="orders-filter-note">Order ID 跨所选店铺全部站点精确查询；商品标题在当前站点的全部已同步订单中搜索。{activeQuery && " · 当前搜索：" + activeQuery}</p>
 
       {storeError && <p className="orders-alert" role="alert">{storeError}</p>}
       {!stores.length && <div className="orders-empty">
@@ -775,7 +779,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {filter.label}
           </button>)}
           <span className="orders-tabs-meta">本页 {page.items.length} 笔 · 每页 {PAGE_SIZE} 笔</span>
-          <button type="button" className="orders-sla-update" disabled={!scope || slaBusy || running || loading || installingUpdate ||
+          <button type="button" className="orders-sla-update" disabled={!scope || Boolean(activeQuery) || slaBusy || running || loading || installingUpdate ||
               scope?.logistic.toLowerCase() === "fulfillment" || scope?.logistic.toLowerCase() === "fulfilment" ||
               (store?.status !== "connected" && store?.status !== "token_expired")}
             title="按本页有 Shipment ID 的订单逐笔读取官方 SLA，最多 20 笔，不自动重复"
@@ -791,7 +795,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             { value: "linked", label: "已关联" },
           ] as const).map((item) => <button type="button" key={item.value}
             aria-pressed={purchaseLink === item.value}
-            onClick={() => { setPurchaseLink(item.value); setOffset(0); setSearchText(""); }}>
+            onClick={() => { setPurchaseLink(item.value); setOffset(0); }}>
             {item.label}
           </button>)}
           <span>按数据库关联状态筛选 · 不代表厂家已发货</span>
@@ -832,9 +836,20 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <tbody>
                   {loading && page.items.length === 0 && <tr><td colSpan={8} className="orders-table-empty">正在读取订单…</td></tr>}
                   {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
-                  {visibleOrders.map((order) => <tr key={order.order_id} className={selectedId === order.order_id ? "selected" : ""}>
-                    <td><button type="button" className="orders-id" onClick={() => openOrder(order.order_id)}>{order.order_id}</button>
-                      <span className="orders-subline">{(store?.nickname || store?.seller_id || "店铺").trim().slice(0, 12)}（{SITE_NAMES[scope?.site ?? ""] ?? scope?.site}） · {scope?.logistic === "remote" ? "自发货" : scope?.logistic === "fulfillment" ? "海外仓" : scope?.logistic}</span>
+                  {visibleOrders.map((order) => <tr key={orderRecordKey(order, scope)}
+                    className={selectedId === order.order_id &&
+                      orderRecordKey(order, scope) === [selectedRowScope?.storeId ?? scope?.storeId ?? "",
+                        selectedRowScope?.site ?? scope?.site ?? "",
+                        selectedRowScope?.logistic ?? scope?.logistic ?? "", selectedId].join("|") ? "selected" : ""}>
+                    <td><button type="button" className="orders-id" onClick={() =>
+                        openOrder(order.order_id, orderRecordScope(order, scope))}>{order.order_id}</button>
+                      <span className="orders-subline">{(
+                        stores.find((item) => item.id === (order.store_id ?? scope?.storeId))?.nickname ||
+                        store?.nickname || "店铺").trim().slice(0, 12)}（{
+                        SITE_NAMES[order.site_id ?? scope?.site ?? ""] ?? order.site_id ?? scope?.site
+                      }） · {(order.logistic_type ?? scope?.logistic) === "remote" ? "自发货" :
+                        (order.logistic_type ?? scope?.logistic) === "fulfillment" ? "海外仓" :
+                        (order.logistic_type ?? scope?.logistic)}</span>
                     </td>
                     <td className="orders-product-cell">
                       <div className="orders-product-preview">
@@ -863,12 +878,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
                       <span><small>平台运单</small>待官方读取</span>
                     </td>
-                    <td><DispatchCountdown order={order} now={clockNow} logistic={scope?.logistic ?? ""} /></td>
+                    <td><DispatchCountdown order={order} now={clockNow}
+                      logistic={order.logistic_type ?? scope?.logistic ?? ""} /></td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
                     <td><div className="orders-row-actions">
-                      <button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button>
+                      <button className="orders-table-action" type="button"
+                        onClick={() => openOrder(order.order_id, orderRecordScope(order, scope))}>订单详情</button>
                       <button className="orders-table-action orders-row-purchase" type="button"
-                        onClick={() => openPurchase(order.order_id)}>{order.purchase_order_id ? "编辑采购" : "采购"}</button>
+                        onClick={() => openPurchase(order.order_id, orderRecordScope(order, scope))}>{order.purchase_order_id ? "编辑采购" : "采购"}</button>
                       {order.purchase_order_id && <small className="orders-row-cost">
                         成本：{order.purchase_cost_cny == null ? "待补录" : "¥" + order.purchase_cost_cny}
                       </small>}
@@ -889,7 +906,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}
             onClose={() => { if (selectedId) setSelectedId(""); }}>
             <div className="orders-detail" aria-label="订单详情">
-              <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[scope?.site ?? ""] ?? scope?.site}</small>
+              <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[selectedRowScope?.site ?? scope?.site ?? ""] ?? selectedRowScope?.site ?? scope?.site}</small>
                 <h2 id="orders-detail-title">{selectedId || "订单详情"}</h2></div>
                 <div className="orders-detail-head-actions">
                   <button type="button" className="orders-detail-refresh" disabled={refreshingOrder || running}
@@ -928,12 +945,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <h3>订单与物流</h3>
                 <dl className="orders-detail-fields">
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
-                  <dt>物流模式</dt><dd>{scope?.logistic === "remote" ? "自发货" : scope?.logistic === "fulfillment" ? "海外仓" : scope?.logistic ?? "—"}</dd>
+                  <dt>物流模式</dt><dd>{(selectedRowScope?.logistic ?? scope?.logistic) === "remote" ? "自发货" :
+                    (selectedRowScope?.logistic ?? scope?.logistic) === "fulfillment" ? "海外仓" :
+                    selectedRowScope?.logistic ?? scope?.logistic ?? "—"}</dd>
                   <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
                   <dt>平台运单号</dt><dd>待官方 Shipment 接口查询</dd>
-                  <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, scope?.logistic).date}
-                    {dispatchDeadlineLabel(detail, clockNow, scope?.logistic).hint &&
-                      <small> · {dispatchDeadlineLabel(detail, clockNow, scope?.logistic).hint}</small>}</dd>
+                  <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).date}
+                    {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint &&
+                      <small> · {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint}</small>}</dd>
                 </dl>
                 <p className="orders-muted">平台运单及签收信息尚未读取，不会将内部物流记录或发货截止时间视为已发货、已签收。</p>
               </section>
@@ -941,7 +960,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <div className="orders-detail-block-title">
                   <h3>采购</h3>
                   <button type="button" className="orders-table-action"
-                    onClick={() => openPurchase(detail.order_id)}>
+                    onClick={() => openPurchase(detail.order_id, selectedRowScope ?? scope)}>
                     {detail.purchase_order_id ? "编辑采购" : "采购"}</button>
                 </div>
                 <p className="orders-muted">采购单：{detail.purchase_order_id || "待关联"}；采购成本：{
