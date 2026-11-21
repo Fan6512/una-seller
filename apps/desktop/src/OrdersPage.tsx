@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
 import {
-  getOrder, getOrderSyncState, listOrders, orderDate, orderMoney, orderStatusLabel,
+  getOrder, getOrderSyncState, listOrders, orderDate, orderMoney,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderDispatchSLA, resetOrderCursor, skipOrder, syncOrders,
   shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, orderVariationText,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
