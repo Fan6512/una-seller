@@ -1,51 +1,61 @@
 package meli
 
 import (
-  "context"
-  "regexp"
-  "strings"
-  "unicode/utf8"
+	"context"
+	"regexp"
+	"strings"
+	"unicode/utf8"
 )
 
 // OrderSearchFilter searches saved orders across only the caller's current,
 // verified account/store/child-seller mappings. It never calls Mercado Libre.
 type OrderSearchFilter struct {
-  Store string
-  Site string
-  Logistic string
-  Status string
-  Purchase string
-  Query string
-  Offset int
+	Store    string
+	Site     string
+	Logistic string
+	Status   string
+	Purchase string
+	Query    string
+	Offset   int
 }
 
 var orderSearchLogisticPattern = regexp.MustCompile(`^[a-z_]{1,40}$`)
 
 func (f OrderSearchFilter) Valid() bool {
-  if f.Store != "all" && !validUUID(f.Store) { return false }
-  if f.Site != "*" && (f.Site == "CBT" || !orderSitePattern.MatchString(f.Site)) { return false }
-  if f.Logistic != "*" && !orderSearchLogisticPattern.MatchString(f.Logistic) { return false }
-  if !ValidOrderStatus(f.Status) || !ValidPurchaseLinkFilter(f.Purchase) ||
-    f.Offset < 0 || f.Offset > 100000 || strings.TrimSpace(f.Query) != f.Query ||
-    utf8.RuneCountInString(f.Query) > 120 { return false }
-  if f.Query != "" && !orderNumber(f.Query) && utf8.RuneCountInString(f.Query) < 2 { return false }
-  return true
+	if f.Store != "all" && !validUUID(f.Store) {
+		return false
+	}
+	if f.Site != "*" && (f.Site == "CBT" || !orderSitePattern.MatchString(f.Site)) {
+		return false
+	}
+	if f.Logistic != "*" && !orderSearchLogisticPattern.MatchString(f.Logistic) {
+		return false
+	}
+	if !ValidOrderStatus(f.Status) || !ValidPurchaseLinkFilter(f.Purchase) ||
+		f.Offset < 0 || f.Offset > 100000 || strings.TrimSpace(f.Query) != f.Query ||
+		utf8.RuneCountInString(f.Query) > 120 {
+		return false
+	}
+	if f.Query != "" && !orderNumber(f.Query) && utf8.RuneCountInString(f.Query) < 2 {
+		return false
+	}
+	return true
 }
 
 type OrderSearchRecord struct {
-  OrderRecord
-  StoreID string `json:"store_id"`
-  SiteID string `json:"site_id"`
-  LogisticType string `json:"logistic_type"`
+	OrderRecord
+	StoreID      string `json:"store_id"`
+	SiteID       string `json:"site_id"`
+	LogisticType string `json:"logistic_type"`
 }
 
 type OrderSearchPage struct {
-  Items []OrderSearchRecord `json:"items"`
-  HasMore bool `json:"has_more"`
-  PurchaseFilter string `json:"purchase_filter"`
-  Query string `json:"query"`
-  SiteFilter string `json:"site_filter"`
-  StoreFilter string `json:"store_filter"`
+	Items          []OrderSearchRecord `json:"items"`
+	HasMore        bool                `json:"has_more"`
+	PurchaseFilter string              `json:"purchase_filter"`
+	Query          string              `json:"query"`
+	SiteFilter     string              `json:"site_filter"`
+	StoreFilter    string              `json:"store_filter"`
 }
 
 const globalOrderSearchSQL = `SELECT o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
@@ -103,33 +113,42 @@ const globalOrderSearchSQL = `SELECT o.order_id,COALESCE(o.pack_id,''),o.status,
   LIMIT $9 OFFSET $10`
 
 func (s *Service) SearchOrders(ctx context.Context, owner string, f OrderSearchFilter) (OrderSearchPage, error) {
-  if !validUUID(owner) || !f.Valid() {
-    return OrderSearchPage{}, ErrOrderInvalidResponse
-  }
-  var storeID any
-  if f.Store != "all" { storeID = f.Store }
-  kind := ""
-  if f.Query != "" {
-    kind = "title"
-    if orderNumber(f.Query) { kind = "id" }
-  }
-  rows, err := s.db.Query(ctx, globalOrderSearchSQL,owner,storeID,f.Site,f.Logistic,
-    f.Status,f.Purchase,f.Query,kind,orderPageSize+1,f.Offset)
-  if err != nil { return OrderSearchPage{}, err }
-  defer rows.Close()
-  page := OrderSearchPage{Items: []OrderSearchRecord{}, PurchaseFilter:f.Purchase,
-    Query:f.Query,SiteFilter:f.Site,StoreFilter:f.Store}
-  for rows.Next() {
-    var row OrderSearchRecord
-    row.OrderRecord,err = scanOrder(rows,&row.StoreID,&row.SiteID,&row.LogisticType)
-    if err != nil { return OrderSearchPage{}, err }
-    page.Items=append(page.Items,row)
-  }
-  if err=rows.Err(); err!=nil { return OrderSearchPage{},err }
-  if len(page.Items)>orderPageSize {
-    page.HasMore=true
-    page.Items=page.Items[:orderPageSize]
-  }
-  return page,nil
+	if !validUUID(owner) || !f.Valid() {
+		return OrderSearchPage{}, ErrOrderInvalidResponse
+	}
+	var storeID any
+	if f.Store != "all" {
+		storeID = f.Store
+	}
+	kind := ""
+	if f.Query != "" {
+		kind = "title"
+		if orderNumber(f.Query) {
+			kind = "id"
+		}
+	}
+	rows, err := s.db.Query(ctx, globalOrderSearchSQL, owner, storeID, f.Site, f.Logistic,
+		f.Status, f.Purchase, f.Query, kind, orderPageSize+1, f.Offset)
+	if err != nil {
+		return OrderSearchPage{}, err
+	}
+	defer rows.Close()
+	page := OrderSearchPage{Items: []OrderSearchRecord{}, PurchaseFilter: f.Purchase,
+		Query: f.Query, SiteFilter: f.Site, StoreFilter: f.Store}
+	for rows.Next() {
+		var row OrderSearchRecord
+		row.OrderRecord, err = scanOrder(rows, &row.StoreID, &row.SiteID, &row.LogisticType)
+		if err != nil {
+			return OrderSearchPage{}, err
+		}
+		page.Items = append(page.Items, row)
+	}
+	if err = rows.Err(); err != nil {
+		return OrderSearchPage{}, err
+	}
+	if len(page.Items) > orderPageSize {
+		page.HasMore = true
+		page.Items = page.Items[:orderPageSize]
+	}
+	return page, nil
 }
-
