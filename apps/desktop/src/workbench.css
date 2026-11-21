@@ -146,3 +146,28 @@
   .listing-dimension-row { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .site-price-row { grid-template-columns: 66px 1fr 40px 45px; }
 }
+
+/* Product-local multilingual titles and CBT category discovery. */
+.localized-title-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.localized-title-grid textarea {
+  width: 100%; min-height: 62px; box-sizing: border-box; resize: vertical;
+  font-size: 15px; line-height: 1.55; border: 1px solid var(--ui-outline);
+  border-radius: 8px; padding: 10px; color: var(--ui-text); background: #fff;
+}
+.localized-title-count { color: var(--ui-muted); font-size: 11px; }
+.localized-title-count.title-over-limit { color: #b4432e; font-weight: 700; }
+.category-predict-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.category-predict-row button,.category-suggestion-list button {
+  border: 1px solid #b7cbed; border-radius: 8px; color: #28578f;
+  background: #f2f7ff; padding: 9px 12px; font-size: 12px;
+}
+.category-predict-row small { font-size: 11px; color: var(--ui-muted); }
+.category-suggestion-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.category-suggestion-list button {
+  min-width: 0; text-align: left; display: flex; flex-direction: column; gap: 4px;
+}
+.category-suggestion-list button strong { font-size: 12px; color: var(--ui-text); }
+.category-suggestion-list button small { font-size: 11px; color: var(--ui-muted); }
+@media (max-width: 900px) {
+  .category-suggestion-list { grid-template-columns: 1fr; }
+}
