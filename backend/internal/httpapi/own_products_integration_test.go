@@ -74,7 +74,13 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		t.Fatalf("unauthenticated %d", w.Code)
 	}
 	draftPath := "/api/v1/collections/" + source.ID + "/working-draft"
-	draftBody := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":0}`
+	draftBody := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":0,
+"listing_fields":{"category_site":"MLB","category_id":"MLB123","category_path":"Beleza / Cuidados",
+"brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY",
+"weight_g":"850","length_cm":"20.5","width_cm":"15","height_cm":"5",
+"site_prices":[{"site":"MLB","price":"89.90","currency":"BRL"}],
+"images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],
+"variants":[{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","image_urls":[]}]}}`
 	if w := call(owner, "PUT", draftPath, draftBody); w.Code != 200 {
 		t.Fatalf("draft %d %s", w.Code, w.Body.String())
 	}
@@ -96,8 +102,13 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if !collections.ValidUserID(id) || response.Product.Title != "Curated title" ||
 		response.Product.SourceTitle != "Captured original" ||
 		response.Product.Notes != "Internal supplier" ||
-		len(response.Product.Images) != 1 {
-		t.Fatalf("wrong snapshot: %#v", response.Product)
+		len(response.Product.Images) != 1 ||
+		response.Product.ListingFields.WeightG != "850" ||
+		response.Product.ListingFields.SellerSKU != "P-001" ||
+		response.Product.ListingFields.CategorySite != "MLB" ||
+		response.Product.ListingFields.Images == nil ||
+		len(*response.Product.ListingFields.Images) != 1 {
+		t.Fatalf("wrong snapshot or listing fields: %#v", response.Product)
 	}
 	again := call(owner, "POST", approvePath, `{"expected_revision":1}`)
 	if again.Code != 200 || !strings.Contains(again.Body.String(), "already_approved") {
@@ -143,13 +154,30 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if w := call(owner, "PUT", "/api/v1/products/"+id, `{"title":"Stale","description":"","notes":"","expected_revision":1}`); w.Code != 409 {
 		t.Fatalf("stale own edit %d", w.Code)
 	}
+	// The own-product editor can update merchant fields without changing source facts.
+	updated:=call(owner, "PUT", "/api/v1/products/"+id,
+		`{"title":"Edited product","description":"Own description","notes":"Own notes","expected_revision":2,
+		"listing_fields":{"seller_sku":"P-002","weight_g":"1200","length_cm":"23","width_cm":"19","height_cm":"9",
+		"category_site":"MLM","category_id":"MLM999","site_prices":[{"site":"MLM","price":"199.90","currency":"MXN"}]}}`)
+	if updated.Code!=200 {t.Fatalf("listing fields edit %d %s",updated.Code,updated.Body.String())}
+	var editedResponse struct{Product collections.OwnProduct `json:"product"`}
+	if err=json.Unmarshal(updated.Body.Bytes(),&editedResponse);err!=nil {t.Fatal(err)}
+	if editedResponse.Product.ListingFields.WeightG!="1200" ||
+		editedResponse.Product.ListingFields.SellerSKU!="P-002" ||
+		editedResponse.Product.ListingFields.CategorySite!="MLM" {
+		t.Fatalf("merchant listing edit not persisted: %#v",editedResponse.Product.ListingFields)
+	}
+	if w:=call(owner,"PUT","/api/v1/products/"+id,
+		`{"title":"Invalid fields","description":"","notes":"","expected_revision":3,
+		"listing_fields":{"weight_g":"-20"}}`);w.Code!=400 {t.Fatalf("invalid listing weight accepted: %d",w.Code)}
+
 	input.Status = "partial"
 	input.Title.Value = "Recaptured source"
 	if _, _, err = db.Save(ctx, owner, input); err != nil {
 		t.Fatal(err)
 	}
 	p, err := db.GetOwnProduct(ctx, owner, id)
-	if err != nil || p.Title != "Edited product" || p.SourceTitle != "Captured original" || p.Revision != 2 {
+	if err != nil || p.Title != "Edited product" || p.SourceTitle != "Captured original" || p.Revision != 3 || p.ListingFields.WeightG!="1200" {
 		t.Fatalf("recapture polluted own product: %#v %v", p, err)
 	}
 	if w := call(owner, "DELETE", "/api/v1/collections/"+source.ID, ""); w.Code != 204 {
