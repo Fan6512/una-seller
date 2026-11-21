@@ -99,7 +99,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := response.Product.ID
-	if !collections.ValidUserID(id) || response.Product.Title != "Curated title" ||
+	if !collections.ValidUserID(id) || response.Product.Title != "Curated English Title" ||
 		response.Product.SourceTitle != "Captured original" ||
 		response.Product.Notes != "Internal supplier" ||
 		len(response.Product.Images) != 1 ||
@@ -185,14 +185,14 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := db.GetOwnProduct(ctx, owner, id)
-	if err != nil || p.Title != "Edited product" || p.SourceTitle != "Captured original" || p.Revision != 3 || p.ListingFields.WeightG != "1200" {
+	if err != nil || p.Title != "Edited English Title" || p.SourceTitle != "Captured original" || p.Revision != 3 || p.ListingFields.WeightG != "1200" {
 		t.Fatalf("recapture polluted own product: %#v %v", p, err)
 	}
 	if w := call(owner, "DELETE", "/api/v1/collections/"+source.ID, ""); w.Code != 204 {
 		t.Fatalf("source deletion %d", w.Code)
 	}
 	p, err = db.GetOwnProduct(ctx, owner, id)
-	if err != nil || p.SourceProductID != nil || p.Title != "Edited product" {
+	if err != nil || p.SourceProductID != nil || p.Title != "Edited English Title" {
 		t.Fatalf("source deletion removed own product: %#v %v", p, err)
 	}
 	list = call(owner, "GET", "/api/v1/products", "")
