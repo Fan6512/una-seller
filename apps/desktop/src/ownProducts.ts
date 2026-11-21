@@ -1,5 +1,6 @@
 import { getAccessToken, rejectSession } from "./auth";
 import { apiBase, type CollectionImage, type CollectionVariant } from "./collections";
+import type { ListingFields } from "./listingFields";
 
 export type OwnProductSummary = {
   id: string;
@@ -21,6 +22,7 @@ export type OwnProduct = OwnProductSummary & {
   bullet_points: string[];
   images: CollectionImage[];
   variants: CollectionVariant[];
+  listing_fields: Partial<ListingFields>;
   revision: number;
   created_at: string;
 };
@@ -68,9 +70,10 @@ export async function getOwnProductPage(q:string,offset:number,signal:AbortSigna
 export function getOwnProduct(id:string,signal:AbortSignal) {
   return request<OwnProduct>("/api/v1/products/"+encodeURIComponent(id),signal);
 }
-export function updateOwnProduct(id:string,data:Pick<OwnProduct,"title"|"description"|"notes"|"revision">,signal:AbortSignal) {
+export function updateOwnProduct(id:string,data:Pick<OwnProduct,"title"|"description"|"notes"|"revision"|"listing_fields">,signal:AbortSignal) {
   return request<{product:OwnProduct}>("/api/v1/products/"+encodeURIComponent(id),signal,"PUT",{
-    title:data.title,description:data.description,notes:data.notes,expected_revision:data.revision,
+    title:data.title,description:data.description,notes:data.notes,
+    listing_fields:data.listing_fields,expected_revision:data.revision,
   });
 }
 export function approveCollection(id:string,revision:number,signal:AbortSignal) {
