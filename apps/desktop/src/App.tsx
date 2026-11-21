@@ -154,6 +154,7 @@ function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyC
           <p className="source-name">{siteName(product.source_platform, product.source_site)}</p>
           <h2>{product.title}</h2>
           <div className="product-price">{formatMoney(product.price, product.currency)}</div>
+          {product.category && <p className="date-note">采集来源分类：{product.category}（仅供参考，非美客多正式类目）</p>}
           <div className="product-status"><CapturePill status={product.collection_status} /></div>
           <p className="date-note">最近更新 {formatDate(product.last_collected_at)}</p>
         </div>
