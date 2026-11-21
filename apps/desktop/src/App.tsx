@@ -5,6 +5,7 @@ import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnos
 import StoresPage from "./StoresPage";
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
+import WorkingDraftEditor from "./WorkingDraftEditor";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import {
   apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
@@ -150,6 +151,9 @@ function ProductDetail({ product, onDelete, deleting, deleteError }: { product: 
         </div>
       </div>
 
+      <WorkingDraftEditor key={product.id} collectionId={product.id}
+        sourceTitle={product.title} sourceDescription={product.description} />
+
       {product.collection_warnings.length > 0 && (
         <details className="capture-notice">
           <summary><Icon name="warning" size={17} /><span>有 {product.collection_warnings.length} 项信息需要留意</span><span className="notice-hint">查看</span></summary>
@@ -248,7 +252,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
 
   async function removeCollection(product: CollectionDetail) {
     if (deletingId) return;
-    if (!window.confirm("确定永久删除采集商品“" + product.title + "”吗？图片和规格采集记录也将删除，此操作不可撤销。")) return;
+    if (!window.confirm("确定永久删除采集商品“" + product.title + "”吗？采集图片、规格以及该商品尚未转库的人工整理工作稿都会一并永久删除，无法恢复。")) return;
     setDeletingId(product.id);
     setDeleteError(null);
     try {

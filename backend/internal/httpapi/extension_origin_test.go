@@ -71,7 +71,7 @@ func TestStoreRoutesRejectExtensionOrigin(t *testing.T) {
 	r.Header.Set("Origin", "tauri://localhost")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Methods") != "GET, POST, DELETE, OPTIONS" {
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Methods") != "GET, POST, PUT, DELETE, OPTIONS" {
 		t.Fatalf("tauri collection DELETE preflight status=%d methods=%q", w.Code, w.Header().Get("Access-Control-Allow-Methods"))
 	}
 }
