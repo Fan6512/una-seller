@@ -84,11 +84,6 @@ jobs:
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
             printf 'Unformatted Go files:\n%s\n' "$unformatted"
-            for path in $unformatted; do
-              printf 'FORMAT_BEGIN:%s\n' "$path"
-              gofmt "$path" | base64 -w0
-              printf '\nFORMAT_END:%s\n' "$path"
-            done
             exit 1
           fi
 
