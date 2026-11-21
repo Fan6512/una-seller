@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import ListingFieldsEditor from "./ListingFieldsEditor";
-import { initialListingFields,validateListingFields,type ListingFields } from "./listingFields";
+import { initialListingFields,preferredTitle,validateListingFields,type ListingFields } from "./listingFields";
 import { formatMoney } from "./collections";
 import { getOwnProduct, getOwnProductPage, updateOwnProduct, OWN_PRODUCT_PAGE_SIZE, ProductRequestError, type OwnProduct, type OwnProductSummary } from "./ownProducts";
 import { emptyProductPageFallback, productSaveNeedsReadback } from "./workbenchRules";
@@ -28,7 +28,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
   const [status,setStatus]=useState("");
   const [unknown,setUnknown]=useState(false);
   const dirty=!!product&&(fields.title!==product.title||fields.description!==product.description||fields.notes!==product.notes||
-    JSON.stringify(fields.listing_fields)!==JSON.stringify(initialListingFields(product.listing_fields,product)));
+    JSON.stringify(fields.listing_fields)!==JSON.stringify(initialListingFields(product.listing_fields,product,product.title)));
   useEffect(()=>onDirtyChange?.(dirty),[dirty,onDirtyChange]);
   useEffect(()=>()=>onDirtyChange?.(false),[onDirtyChange]);
   useEffect(()=>{
@@ -62,7 +62,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
     void getOwnProduct(selected,c.signal).then(p=>{
       if(c.signal.aborted)return;
       setProduct(p);setFields({title:p.title,description:p.description,notes:p.notes,
-        listing_fields:initialListingFields(p.listing_fields,p)});
+        listing_fields:initialListingFields(p.listing_fields,p,p.title)});
     }).catch(e=>{if(!c.signal.aborted){setDetailError(e instanceof Error?e.message:"详情读取失败");setProduct(null);}})
       .finally(()=>{if(!c.signal.aborted)setDetailLoading(false);});
     return ()=>c.abort();
@@ -85,7 +85,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
     try {
       const {product:next}=await updateOwnProduct(product.id,{...fields,revision:product.revision},new AbortController().signal);
       setProduct(next);setFields({title:next.title,description:next.description,notes:next.notes,
-        listing_fields:initialListingFields(next.listing_fields,next)});
+        listing_fields:initialListingFields(next.listing_fields,next,next.title)});
       setItems(old=>old.map(x=>x.id===next.id?{...x,title:next.title,updated_at:next.updated_at,
         main_image_url:next.listing_fields.images?.[0]?.url??next.images[0]?.url??null}:x)
         .sort((a,b)=>b.updated_at.localeCompare(a.updated_at)||b.id.localeCompare(a.id)));
@@ -143,11 +143,10 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
               <a href={product.source_url} target="_blank" rel="noopener noreferrer">查看原商品</a></div>
           </div>
           <div className="working-draft">
-            <label>商品标题<input value={fields.title} onChange={e=>setFields(v=>({...v,title:e.target.value}))} disabled={saving||unknown} /><small>{count(fields.title)} / 500</small></label>
+            <ListingFieldsEditor key={product.id} value={fields.listing_fields} disabled={saving||unknown}
+              onChange={listing_fields=>setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}))}/>
             <label>商品描述<textarea rows={8} value={fields.description} onChange={e=>setFields(v=>({...v,description:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.description)} / 20000</small></label>
             <label>内部整理备注<textarea rows={4} value={fields.notes} onChange={e=>setFields(v=>({...v,notes:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.notes)} / 5000</small></label>
-            <ListingFieldsEditor value={fields.listing_fields} disabled={saving||unknown}
-              onChange={listing_fields=>setFields(v=>({...v,listing_fields}))}/>
             <div className="own-editor-actions">
               <span>{dirty?"有未保存修改":"内容已保存"} · 修订 {product.revision}</span>
               <button type="button" className="primary-button" disabled={!dirty||!valid||saving||unknown} onClick={()=>void save()}>{saving?"保存中…":"保存产品"}</button>
