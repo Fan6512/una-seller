@@ -17,6 +17,7 @@ export type CollectionVariant = {
 
 export type CollectionSummary = {
   id: string;
+  own_product_id: string | null;
   title: string;
   source_platform: string;
   source_site: string;
@@ -29,6 +30,7 @@ export type CollectionSummary = {
 
 export type CollectionDetail = {
   id: string;
+  own_product_id: string | null;
   title: string;
   source_platform: string;
   source_site: string;
