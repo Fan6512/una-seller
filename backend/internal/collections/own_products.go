@@ -187,6 +187,9 @@ func (s *Store) Promote(ctx context.Context, owner, sourceID string, expectedRev
 	if revision > 0 {
 		title = draftTitle
 		description = &draftDescription
+		var locale struct { Titles LocalizedTitles `json:"titles"` }
+		if err=json.Unmarshal(listingPayload,&locale);err!=nil{return OwnProduct{},false,err}
+		if pref:=locale.Titles.Preferred();pref!="" {title=pref}
 	}
 	if description == nil {
 		empty := ""
@@ -242,6 +245,7 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	}
 	var listingValue any
 	if in.ListingFields != nil {
+		if text:=in.ListingFields.Titles.Preferred();text!="" {in.Title=text}
 		raw, err := json.Marshal(in.ListingFields)
 		if err != nil {
 			return OwnProduct{}, err
