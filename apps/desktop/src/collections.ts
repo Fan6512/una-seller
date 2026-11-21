@@ -108,12 +108,13 @@ async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = 
   return (await response.json()) as T;
 }
 
-export async function getCollectionPage(q: string, offset: number, signal: AbortSignal) {
+export async function getCollectionPage(q: string, offset: number, signal: AbortSignal, inboxOnly = false) {
   const params = new URLSearchParams({
     q,
     // One extra row tells the desktop whether another page exists.
     limit: String(PAGE_SIZE + 1),
     offset: String(offset),
+    inbox: inboxOnly ? "1" : "0",
   });
   const page = await requestJSON<CollectionPage>("/api/v1/collections?" + params.toString(), signal);
   return { items: page.items.slice(0, PAGE_SIZE), hasMore: page.items.length > PAGE_SIZE };
