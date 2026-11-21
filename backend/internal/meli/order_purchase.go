@@ -18,37 +18,18 @@ var (
 )
 
 var purchaseIDPattern = regexp.MustCompile("^[0-9]{8,40}$")
-var purchaseTrackingPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_/-]{2,79}package meli
-
-import (
-	"context"
-	"database/sql"
-	"errors"
-	"regexp"
-	"strings"
-	"time"
-	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5"
-)
-
-var (
-	ErrOrderPurchaseInvalid  = errors.New("invalid order purchase details")
-	ErrOrderPurchaseConflict = errors.New("order purchase version changed")
-)
-
-)
+var purchaseTrackingPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_/-]{2,79}$`)
 var purchaseCostPattern = regexp.MustCompile("^(0|[1-9][0-9]{0,11})(\\.[0-9]{1,2})?$")
 
 // OrderPurchase is a local procurement note. It never changes a Mercado Libre order.
 type OrderPurchase struct {
-	OrderID         string    `json:"order_id"`
-	PurchaseOrderID string    `json:"purchase_order_id"`
-	CostCNY         *string   `json:"cost_cny"`
-	Source          string    `json:"source"`
-	WarehouseAddress string `json:"warehouse_address"`
-	PurchaseTrackingNumber string `json:"purchase_tracking_number"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	OrderID                string    `json:"order_id"`
+	PurchaseOrderID        string    `json:"purchase_order_id"`
+	CostCNY                *string   `json:"cost_cny"`
+	Source                 string    `json:"source"`
+	WarehouseAddress       string    `json:"warehouse_address"`
+	PurchaseTrackingNumber string    `json:"purchase_tracking_number"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 const purchaseSelect = `WITH connection AS (` + orderConnection + `)
