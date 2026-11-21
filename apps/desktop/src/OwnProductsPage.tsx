@@ -86,7 +86,8 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
       const {product:next}=await updateOwnProduct(product.id,{...fields,revision:product.revision},new AbortController().signal);
       setProduct(next);setFields({title:next.title,description:next.description,notes:next.notes,
         listing_fields:initialListingFields(next.listing_fields,next)});
-      setItems(old=>old.map(x=>x.id===next.id?{...x,title:next.title,updated_at:next.updated_at}:x)
+      setItems(old=>old.map(x=>x.id===next.id?{...x,title:next.title,updated_at:next.updated_at,
+        main_image_url:next.listing_fields.images?.[0]?.url??next.images[0]?.url??null}:x)
         .sort((a,b)=>b.updated_at.localeCompare(a.updated_at)||b.id.localeCompare(a.id)));
       setStatus("已保存到产品箱，重启后可恢复");
     } catch(e) {
@@ -136,7 +137,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
           <div className="detail-toolbar"><span className="detail-eyebrow">产品箱 · 独立商品草稿</span>
             <button className="refresh-button" type="button" onClick={refresh}>重新加载</button></div>
           <div className="own-product-preview">
-            {product.images[0]?.url?<img src={product.images[0].url} alt={product.title} referrerPolicy="no-referrer" />:<span>暂无图片</span>}
+            {(fields.listing_fields.images?.[0]?.url??product.images[0]?.url)?<img src={fields.listing_fields.images?.[0]?.url??product.images[0]?.url} alt={fields.title} referrerPolicy="no-referrer" />:<span>暂无图片</span>}
             <div><strong>{product.source_title}</strong><small>来源：{product.source_platform} · {product.source_site}</small>
               <small>{formatMoney(product.price,product.currency)}</small>
               <a href={product.source_url} target="_blank" rel="noopener noreferrer">查看原商品</a></div>
