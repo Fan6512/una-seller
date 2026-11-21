@@ -128,6 +128,19 @@ export async function getCollectionPage(q: string, offset: number, signal: Abort
   return { items: page.items.slice(0, PAGE_SIZE), hasMore: page.items.length > PAGE_SIZE };
 }
 
+export type CBTCategorySuggestion = {
+  category_id: string;
+  category_name: string;
+  domain_id: string;
+  domain_name: string;
+};
+export function getCBTCategorySuggestions(editedEnglishTitle:string,signal:AbortSignal){
+  const q=editedEnglishTitle.trim();
+  if(!q||q.split(/\s+/u).length<2)throw new Error("请先填写完整英文标题，再请求 CBT 类目推荐");
+  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean}>(
+    "/api/v1/categories/predict?q="+encodeURIComponent(q),signal);
+}
+
 export function getCollection(id: string, signal: AbortSignal) {
   return requestJSON<CollectionDetail>("/api/v1/collections/" + encodeURIComponent(id), signal);
 }
