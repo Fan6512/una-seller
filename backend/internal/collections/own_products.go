@@ -162,7 +162,7 @@ func (s *Store) Promote(ctx context.Context, owner, sourceID string, expectedRev
 	var draftTitle, draftDescription, draftNotes string
 	var revision int64
 	err = tx.QueryRow(ctx, `SELECT title,description,notes,revision FROM app.collection_working_drafts
-      WHERE source_product_id=$1::uuid AND owner_user_id=$2::uuid`, sourceID, owner).
+      WHERE source_product_id=$1::uuid AND owner_user_id=$2::uuid FOR UPDATE`, sourceID, owner).
 		Scan(&draftTitle, &draftDescription, &draftNotes, &revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		revision = 0
