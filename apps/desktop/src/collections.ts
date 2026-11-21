@@ -139,6 +139,10 @@ export function isDraftConflict(error: unknown) {
   return error instanceof CollectionRequestError && error.status === 409;
 }
 
+export function isDraftRejected(error: unknown) {
+  return error instanceof CollectionRequestError && [400, 413, 415].includes(error.status);
+}
+
 // Old API and missing source both return 404; check the source before diagnosing.
 async function draftRequest<T>(id: string, method: "GET" | "PUT", signal: AbortSignal, body?: string) {
   const path = "/api/v1/collections/" + encodeURIComponent(id) + "/working-draft";

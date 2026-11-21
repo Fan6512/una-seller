@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS app.collection_working_drafts (
     revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 1),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- Local/dev databases that ran the pre-revision 0007 need an additive upgrade.
+ALTER TABLE app.collection_working_drafts
+    ADD COLUMN IF NOT EXISTS revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 1);
 CREATE INDEX IF NOT EXISTS collection_working_drafts_owner_idx
     ON app.collection_working_drafts(owner_user_id, updated_at DESC);
 ALTER TABLE app.collection_working_drafts ENABLE ROW LEVEL SECURITY;

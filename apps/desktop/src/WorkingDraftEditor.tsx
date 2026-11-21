@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getWorkingDraft, isDraftConflict, saveWorkingDraft, type WorkingDraftInput } from "./collections";
+import { getWorkingDraft, isDraftConflict, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
 
 type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes">;
 type LoadState = "loading" | "ready" | "error";
@@ -12,6 +12,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     title: sourceTitle, description: sourceDescription ?? "", notes: "",
   });
   const [saved, setSaved] = useState<DraftFields | null>(null);
+  const [touched, setTouched] = useState(false);
   const [revision, setRevision] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [reload, setReload] = useState(0);
@@ -33,6 +34,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         : { title: sourceTitle, description: sourceDescription ?? "", notes: "" };
       setFields(next);
       setSaved(draft ? next : null);
+      setTouched(false);
       setRevision(draft?.revision ?? 0);
       setLoadState("ready");
     }).catch((e: unknown) => {
@@ -57,11 +59,12 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
 
   const change = (key: keyof DraftFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }));
+    setTouched(true);
     setNotice("");
   };
 
   const refreshDraft = () => {
-    if (saved && dirty && !window.confirm(
+    if (touched && !window.confirm(
       "重新加载将丢弃此窗口尚未保存的修改。请先复制需要保留的内容，确定继续吗？",
     )) return;
     setReload((n) => n + 1);
@@ -83,15 +86,18 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       const next = { title: draft.title, description: draft.description, notes: draft.notes };
       setFields(next);
       setSaved(next);
+      setTouched(false);
       setRevision(draft.revision);
       setNotice("已保存到云端整理工作稿，关闭窗口后可恢复。");
     } catch (e) {
       if (!controller.signal.aborted) {
         // A timed-out PUT may have committed. Never blindly retry the same revision.
-        setLoadState("error");
+        if (!isDraftRejected(e)) setLoadState("error");
         setError(isDraftConflict(e)
-          ? "工作稿已被另一窗口修改（409），本次没有覆盖服务器内容。请复制需要保留的文本，再重新加载。"
-          : (e instanceof Error ? e.message : "保存失败") + "。保存状态未确认，请重新加载后再试。");
+          ? "工作稿已被其他窗口或上一次提交修改（409），本次没有覆盖服务器内容。请复制需要保留的文本，再重新加载。"
+          : isDraftRejected(e)
+            ? "服务器拒绝保存（请求格式或长度不符合要求），内容没有写入。请修改后重新保存。"
+            : (e instanceof Error ? e.message : "保存失败") + "。保存状态未确认，请重新加载后再试。");
       }
     } finally {
       if (!controller.signal.aborted) setSaving(false);
