@@ -1,11 +1,14 @@
 package collections
 
-import "testing"
+import (
+  "testing"
+  "strings"
+)
 
 func TestListingFieldsValidation(t *testing.T) {
 	good := ListingFields{
-		CategorySite:     "MLB",
-		CategoryID:       "MLB123",
+		Titles:           LocalizedTitles{English:"Winter Plant Cleaning Spray",Spanish:"Limpiador de Plantas",Portuguese:"Spray para Plantas"},
+		CategoryID:       "CBT123",
 		PurchasePrice:    "25.50",
 		PurchaseCurrency: "CNY",
 		WeightG:          "850",
@@ -21,6 +24,8 @@ func TestListingFieldsValidation(t *testing.T) {
 		name   string
 		change func(*ListingFields)
 	}{
+		{"invalid site-specific category", func(x *ListingFields) {x.CategoryID = "MLB123"}},
+		{"overlong localized title", func(x *ListingFields) {x.Titles.Spanish = strings.Repeat("a",501)}},
 		{"negative weight", func(x *ListingFields) { x.WeightG = "-20" }},
 		{"decimal weight", func(x *ListingFields) { x.WeightG = "1.5" }},
 		{"invalid dimensions", func(x *ListingFields) { x.WidthCM = "0" }},
