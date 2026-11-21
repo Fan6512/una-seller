@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
 import {
-  getOrder, getOrderSyncState, listOrders, orderDate, orderMoney,
+  getOrder, getOrderSyncState, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderMoney,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderDispatchSLA, resetOrderCursor, skipOrder, syncOrders,
   shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, hasProcurement, orderVariationText,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
@@ -13,6 +13,9 @@ const PAGE_SIZE = 20;
 const SITE_NAMES: Record<string, string> = {
   MLB: "巴西", MLM: "墨西哥", MLA: "阿根廷", MLC: "智利", MCO: "哥伦比亚",
 };
+function logisticLabel(value?: string) {
+  return value === "remote" ? "自发货" : value === "fulfillment" ? "海外仓" : value || "—";
+}
 const FILTERS = [
   { value: "", label: "全部订单" },
   { value: "paid", label: "已付款" },
@@ -116,6 +119,8 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
   const [storeChoice, setStoreChoice] = useState("");
   const [scopeChoice, setScopeChoice] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [activeQuery, setActiveQuery] = useState("");
   const reloadStores = useCallback(async () => {
     setStoreRefreshing(true);
     setStoreError("");
@@ -142,24 +147,39 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
   const availableStores = useMemo(() =>
     stores.filter((store) => store.status !== "disconnected" &&
       store.marketplaces_status === "verified" && store.marketplaces.length > 0), [stores]);
-  const store = availableStores.find((item) => item.id === storeChoice) ?? availableStores[0];
-  const marketplaces = store?.marketplaces ?? [];
-  const scopeKey = marketplaces.some((m) => m.site_id + "|" + m.logistic_type === scopeChoice)
-    ? scopeChoice : marketplaces[0] ? marketplaces[0].site_id + "|" + marketplaces[0].logistic_type : "";
+  const allStores = storeChoice === "all";
+  const store = allStores ? undefined : availableStores.find((item) => item.id === storeChoice) ?? availableStores[0];
+  const marketplaces = useMemo(() => {
+    if (!allStores) return store?.marketplaces ?? [];
+    const unique = new Map<string, StoreConnection["marketplaces"][number]>();
+    for (const item of availableStores) for (const market of item.marketplaces)
+      unique.set(market.site_id + "|" + market.logistic_type, market);
+    return [...unique.values()];
+  }, [allStores, store, availableStores]);
+  const scopeKey = scopeChoice === "all" || allStores && scopeChoice === "" ? "all"
+    : marketplaces.some((m) => m.site_id + "|" + m.logistic_type === scopeChoice)
+      ? scopeChoice : marketplaces[0] ? marketplaces[0].site_id + "|" + marketplaces[0].logistic_type : "";
   const selectedMarket = marketplaces.find((m) => m.site_id + "|" + m.logistic_type === scopeKey);
   const scope = useMemo<OrderScope | null>(() => store && selectedMarket
     ? { storeId: store.id, site: selectedMarket.site_id, logistic: selectedMarket.logistic_type } : null,
     [store?.id, selectedMarket?.site_id, selectedMarket?.logistic_type]);
 
-  return <ScopedOrders key={JSON.stringify([scope, selectedMarket?.user_id])}
+  return <ScopedOrders key={JSON.stringify([scope, selectedMarket?.user_id, scopeKey, allStores])}
     scope={scope} scopeKey={scopeKey} store={store} stores={availableStores} storeError={storeError}
     statusFilter={statusFilter} setStatusFilter={setStatusFilter}
-    selectStore={(id) => { setStoreChoice(id); setScopeChoice(""); }} selectScope={setScopeChoice}
+    searchText={searchText} setSearchText={setSearchText} activeQuery={activeQuery} setActiveQuery={setActiveQuery}
+    storeFilter={allStores ? "all" : store?.id ?? ""}
+    siteFilter={scopeKey === "all" ? "*" : selectedMarket?.site_id ?? "*"}
+    logisticFilter={scopeKey === "all" ? "*" : selectedMarket?.logistic_type ?? "*"}
+    marketplaces={marketplaces}
+    selectStore={(id) => { setStoreChoice(id); setScopeChoice(id === "all" ? "all" : ""); }}
+    selectScope={setScopeChoice}
     beginSync={beginSync} installingUpdate={installingUpdate}
     reloadStores={reloadStores} storeRefreshing={storeRefreshing} />;
 }
 
 function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter, setStatusFilter,
+  searchText, setSearchText, activeQuery, setActiveQuery, storeFilter, siteFilter, logisticFilter, marketplaces,
   selectStore, selectScope, beginSync, installingUpdate, reloadStores, storeRefreshing }: {
   scope: OrderScope | null;
   scopeKey: string;
@@ -168,6 +188,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   storeError: string;
   statusFilter: string;
   setStatusFilter: (value: string) => void;
+  searchText: string;
+  setSearchText: (value: string) => void;
+  activeQuery: string;
+  setActiveQuery: (value: string) => void;
+  storeFilter: string;
+  siteFilter: string;
+  logisticFilter: string;
+  marketplaces: StoreConnection["marketplaces"];
   selectStore: (id: string) => void;
   selectScope: (key: string) => void;
   beginSync: BeginSync;
@@ -175,8 +203,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   reloadStores: () => Promise<void>;
   storeRefreshing: boolean;
 }) {
-  const marketplaces = store?.marketplaces ?? [];
-  const [searchText, setSearchText] = useState("");
   const [purchaseLink, setPurchaseLink] = useState<"" | "linked" | "unlinked">("");
   const [offset, setOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
@@ -193,6 +219,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [detail, setDetail] = useState<OrderRecord | null>(null);
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedRowScope, setSelectedRowScope] = useState<OrderScope | null>(null);
+  const [purchaseRowScope, setPurchaseRowScope] = useState<OrderScope | null>(null);
   const [running, setRunning] = useState(false);
   const [slaBusy, setSLABusy] = useState(false);
   const [slaProgress, setSLAProgress] = useState("");
@@ -254,10 +282,10 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     orderRefreshAbort.current?.abort();
     orderRefreshAbort.current = null;
     setRefreshingOrder(false);
-  }, [selectedId]);
+  }, [selectedId, selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic]);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
-  const closeOrder = () => setSelectedId("");
+  const closeOrder = () => { setSelectedId(""); setSelectedRowScope(null); };
   const closePurchase = () => {
     if (purchaseBusy) return;
     if (purchaseReady && (purchaseNumber !== (purchase?.purchase_order_id ?? "") ||
@@ -266,9 +294,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         purchaseTracking !== (purchase?.purchase_tracking_number ?? "")) &&
         !window.confirm("采购信息尚未保存，确定关闭采购窗口吗？")) return;
     setPurchaseSelectedId("");
+    setPurchaseRowScope(null);
   };
-  const openPurchase = (id: string) => {
+  const openPurchase = (id: string, targetScope: OrderScope | null = scope) => {
     setSelectedId("");
+    setSelectedRowScope(null);
+    setPurchaseRowScope(targetScope);
     setPurchaseSelectedId(id);
   };
   useLayoutEffect(() => {
@@ -299,15 +330,28 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
   useEffect(() => {
     const controller = new AbortController();
-    if (!scope) {
+    const global = !scope || activeQuery !== "";
+    if (!storeFilter || !stores.length) {
       setPage({ items: [], has_more: false });
       setLoading(false);
       return () => controller.abort();
     }
     setLoading(true);
     setListError("");
-    void listOrders(scope, statusFilter, purchaseLink, offset, controller.signal).then((value) => {
-      if (!controller.signal.aborted) setPage(value);
+    const requestedSite = /^\d{1,30}$/.test(activeQuery) ? "*" : siteFilter;
+    const read = global
+      ? searchOrders(storeFilter, requestedSite, requestedSite === "*" ? "*" : logisticFilter,
+          activeQuery, statusFilter, purchaseLink, offset, controller.signal)
+      : listOrders(scope, statusFilter, purchaseLink, offset, controller.signal);
+    void read.then((value) => {
+      if (controller.signal.aborted) return;
+      if (global && /^\d{1,30}$/.test(activeQuery) && scopeKey !== "all" &&
+        value.items.some((record) => record.site_id !== siteFilter ||
+          record.logistic_type !== logisticFilter)) {
+        selectScope("all");
+        return;
+      }
+      setPage(value);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       setListError(displayError(error));
@@ -316,18 +360,20 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset, nonce]);
+  }, [scope?.storeId, scope?.site, scope?.logistic, storeFilter, siteFilter, logisticFilter,
+    stores.length, activeQuery, scopeKey, statusFilter, purchaseLink, offset, nonce]);
 
   useEffect(() => {
     const controller = new AbortController();
     setDetail(null);
     setDetailError("");
-    if (!scope || !selectedId) {
+    const target = selectedRowScope ?? scope;
+    if (!target || !selectedId) {
       setDetailLoading(false);
       return () => controller.abort();
     }
     setDetailLoading(true);
-    void getOrder(scope, selectedId, controller.signal).then((result) => {
+    void getOrder(target, selectedId, controller.signal).then((result) => {
       if (!controller.signal.aborted) setDetail(result);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setDetailError(displayError(error));
@@ -335,7 +381,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setDetailLoading(false);
     });
     return () => controller.abort();
-  }, [scope?.storeId, scope?.site, scope?.logistic, selectedId, nonce]);
+  }, [scope?.storeId, scope?.site, scope?.logistic,
+    selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic, selectedId, nonce]);
 
   useLayoutEffect(() => {
     const controller = new AbortController();
@@ -350,8 +397,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setWarehouseOptions([]);
     setPurchaseError("");
     setPurchaseMessage("");
-    if (!scope || !purchaseSelectedId) return () => controller.abort();
-    void loadPurchase(scope, purchaseSelectedId, controller.signal).then((value) => {
+    const target = purchaseRowScope ?? scope;
+    if (!target || !purchaseSelectedId) return () => controller.abort();
+    void loadPurchase(target, purchaseSelectedId, controller.signal).then((value) => {
       if (controller.signal.aborted) return;
       setPurchase(value.purchase);
       setPurchaseNumber(value.purchase?.purchase_order_id ?? "");
@@ -364,10 +412,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setPurchaseError(displayError(error));
     });
     return () => controller.abort();
-  }, [scope, purchaseSelectedId, purchaseReload]);
+  }, [scope, purchaseRowScope?.storeId, purchaseRowScope?.site, purchaseRowScope?.logistic,
+    purchaseSelectedId, purchaseReload]);
 
   const refreshSelectedOrder = async () => {
-    if (!scope || !selectedId || refreshingOrder || running) return;
+    const target = selectedRowScope ?? scope;
+    if (!target || !selectedId || refreshingOrder || running) return;
     const id = selectedId;
     const controller = new AbortController();
     orderRefreshAbort.current?.abort();
@@ -375,12 +425,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setRefreshingOrder(true);
     setDetailError("");
     try {
-      const fresh = await refreshOneOrder(scope, id, controller.signal);
+      const fresh = await refreshOneOrder(target, id, controller.signal);
       if (controller.signal.aborted) return;
       if (shouldApplyOrderRefresh(id, selectedIdRef.current, controller.signal.aborted)) setDetail(fresh);
       setNotice("已从 Mercado Libre 重新读取订单 " + id + " 的最新状态。退款金额与最终净回款仍需单独核账。");
       setPage((previous) => ({ ...previous, items: previous.items.map((record) =>
-        record.order_id === fresh.order_id ? fresh : record) }));
+        record.order_id === fresh.order_id && orderRecordKey(record, scope) ===
+          orderRecordKey(fresh, target) ? { ...record, ...fresh } : record) }));
     } catch (error) {
       if (!controller.signal.aborted) setDetailError(displayError(error));
     } finally {
@@ -391,12 +442,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
   const savePurchaseInfo = async () => {
     const signal = purchaseRequest.current?.signal;
-    if (!scope || !purchaseSelectedId || !purchaseReady || purchaseBusy || !purchaseNumber || !signal) return;
+    const target = purchaseRowScope ?? scope;
+    if (!target || !purchaseSelectedId || !purchaseReady || purchaseBusy || !purchaseNumber || !signal) return;
     setPurchaseBusy(true);
     setPurchaseError("");
     setPurchaseMessage("");
     try {
-      const result = await savePurchase(scope, purchaseSelectedId, purchaseNumber.trim(), purchaseCost.trim(),
+      const result = await savePurchase(target, purchaseSelectedId, purchaseNumber.trim(), purchaseCost.trim(),
         purchase?.updated_at ?? null, signal, warehouseAddress.trim(), purchaseTracking.trim());
       if (signal.aborted) return;
       setPurchase(result);
@@ -416,21 +468,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
   };
 
-  const visibleOrders = useMemo(() => {
-    const needle = searchText.trim().toLowerCase();
-    if (!needle) return page.items;
-    return page.items.filter((order) =>
-      order.order_id.includes(needle) || order.pack_id?.includes(needle) ||
-      order.purchase_order_id?.includes(needle) ||
-      order.shipment_id?.includes(needle) ||
-      order.order_items.some((item) => item.title.toLowerCase().includes(needle) ||
-        item.item_id.toLowerCase().includes(needle)));
-  }, [page.items, searchText]);
+  // No local-page pseudo-search: global search and pagination are server-scoped.
+  const visibleOrders = page.items;
 
   useEffect(() => () => { imageAbort.current?.abort(); }, 
     [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
   const refreshPageImages = async () => {
-    if (!scope || imageBusy || running || installingUpdate || loading) return;
+    if (!scope || activeQuery || imageBusy || running || installingUpdate || loading) return;
     const snapshot = page.items.filter((order) =>
       order.order_items.some((item) => !item.image_url)).slice(0, 5);
     if (!snapshot.length) {
@@ -468,14 +512,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const selectStatus = (value: string) => {
     setStatusFilter(value);
     setOffset(0);
-    setSearchText("");
   };
 
   useEffect(() => () => { slaAbort.current?.abort(); setSLABusy(false); },
     [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
 
   const refreshPageDispatchSLA = async () => {
-    if (!scope || slaBusy || running || installingUpdate ||
+    if (!scope || activeQuery || slaBusy || running || installingUpdate ||
         (store?.status !== "connected" && store?.status !== "token_expired")) return;
     if (scope.logistic.toLowerCase() === "fulfillment" || scope.logistic.toLowerCase() === "fulfilment") {
       setNotice("Fulfillment 订单不适用发货截止 SLA。");
@@ -636,10 +679,27 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       if (!controller.signal.aborted) setActionBusy(false);
     }
   };
-  const openOrder = (id: string) => setSelectedId(id);
+  const openOrder = (id: string, targetScope: OrderScope | null = scope) => {
+    setSelectedRowScope(targetScope);
+    setSelectedId(id);
+  };
   const searchOrder = () => {
     const input = searchText.trim();
-    if (/^\d{1,30}$/.test(input)) openOrder(input);
+    if (/^\d{1,5}$/.test(input)) {
+      setListError("请输入完整的 Mercado Libre 销售订单号（至少 6 位），数字不支持部分匹配。");
+      return;
+    }
+    if (input && !/^\d{1,30}$/.test(input) && [...input].length < 2) {
+      setListError("商品标题搜索至少输入 2 个字符。");
+      return;
+    }
+    if ([...input].length > 120) {
+      setListError("搜索内容不能超过 120 字符。");
+      return;
+    }
+    setOffset(0);
+    if (activeQuery === input) loadRows();
+    else setActiveQuery(input);
   };
   const copy = (value: string) => {
     void navigator.clipboard.writeText(value).then(() => setNotice("已复制 " + value))
@@ -665,7 +725,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <button className="refresh-button" type="button" onClick={() => void reloadStores()}
             disabled={storeRefreshing || running}>{storeRefreshing ? "读取店铺中…" : "刷新店铺状态"}</button>
           <button className="refresh-button" type="button" onClick={loadRows} disabled={loading || running}>刷新订单</button>
-          <button className="refresh-button" type="button" disabled={!scope || imageBusy || loading || running}
+          <button className="refresh-button" type="button" disabled={!scope || Boolean(activeQuery) || imageBusy || loading || running}
             onClick={() => void refreshPageImages()}>{imageBusy ? "补图中…" : "补全本页主图"}</button>
           {running ? (
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
@@ -679,8 +739,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
       <p className="orders-filter-note" role="status">
         {store ? "当前店铺：" + (store.nickname || store.seller_id) + " · " +
-          (storeStatusText[store.status] ?? "状态未知") : "请先连接并验证店铺"}
-        {" · "}{store ? "已核实站点 " + marketplaces.length + " 个" : "无可选站点"}
+          (storeStatusText[store.status] ?? "状态未知") : "当前查看：所有已验证店铺"}
+        {" · "}{marketplaces.length ? "已核实站点 / 物流组合 " + marketplaces.length + " 个" : "无可选站点"}
       </p>
       {store?.status === "token_expired" && <p className="orders-filter-note" role="status">
         美客多访问令牌已到期。点击「同步订单」后服务端将尝试续签；若失败，请到「店铺管理」验证连接。
@@ -688,28 +748,32 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       {scope && !canSync && !installingUpdate && <p className="orders-filter-note" role="status">{disabledReason}</p>}
       <div className="orders-filters">
         <label>店铺
-          <select aria-label="订单店铺" value={store?.id ?? ""} onChange={(event) => selectStore(event.target.value)}>
+          <select aria-label="订单店铺" value={storeFilter} onChange={(event) => selectStore(event.target.value)}>
+            {stores.length > 1 && <option value="all">所有店铺</option>}
             {stores.map((item) => <option key={item.id} value={item.id}>{item.nickname || item.seller_id}</option>)}
           </select>
         </label>
         <label>站点 / 物流模式
           <select aria-label="站点和物流模式" value={scopeKey} onChange={(event) => selectScope(event.target.value)}>
+            {marketplaces.length > 0 && <option value="all">所有站点</option>}
             {marketplaces.map((market) => <option key={market.site_id + market.logistic_type} value={market.site_id + "|" + market.logistic_type}>
               {(SITE_NAMES[market.site_id] ?? market.site_id) + " · " +
-                (market.logistic_type === "remote" ? "自发货" : market.logistic_type === "fulfillment" ? "海外仓" : market.logistic_type)}
+                logisticLabel(market.logistic_type)}
             </option>)}
           </select>
         </label>
         <label className="orders-filter-search">搜索订单或商品标题
           <span className="orders-search-inner">
-            <input type="search" value={searchText} placeholder="销售订单号 / 商品标题（当前页）"
-              onChange={(event) => setSearchText(event.target.value)}
+            <input type="search" value={searchText} placeholder="完整销售订单号 / 商品标题（全部订单）"
+              onChange={(event) => { setSearchText(event.target.value);
+                if (!event.target.value) { setActiveQuery(""); setOffset(0); }
+              }}
               onKeyDown={(event) => { if (event.key === "Enter") searchOrder(); }} />
-            <button type="button" onClick={searchOrder} title="输入完整数字订单号可跨页查找">查订单</button>
+            <button type="button" onClick={searchOrder} title="在所选店铺的全部已同步订单中查找">搜索</button>
           </span>
         </label>
       </div>
-      <p className="orders-filter-note">商品关键词只筛选当前页；输入完整数字订单号并点击“查订单”可直接查询该订单，不受当前分页限制。</p>
+      <p className="orders-filter-note">输入完整 Order ID（至少 6 位）跨所选店铺全部站点精确查询；商品标题在当前站点的全部已同步订单中搜索。搜索期间暂不可批量补图或刷新发货截止。{activeQuery && " · 当前搜索：" + activeQuery}</p>
 
       {storeError && <p className="orders-alert" role="alert">{storeError}</p>}
       {!stores.length && <div className="orders-empty">
@@ -724,7 +788,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {filter.label}
           </button>)}
           <span className="orders-tabs-meta">本页 {page.items.length} 笔 · 每页 {PAGE_SIZE} 笔</span>
-          <button type="button" className="orders-sla-update" disabled={!scope || slaBusy || running || loading || installingUpdate ||
+          <button type="button" className="orders-sla-update" disabled={!scope || Boolean(activeQuery) || slaBusy || running || loading || installingUpdate ||
               scope?.logistic.toLowerCase() === "fulfillment" || scope?.logistic.toLowerCase() === "fulfilment" ||
               (store?.status !== "connected" && store?.status !== "token_expired")}
             title="按本页有 Shipment ID 的订单逐笔读取官方 SLA，最多 20 笔，不自动重复"
@@ -740,7 +804,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             { value: "linked", label: "已关联" },
           ] as const).map((item) => <button type="button" key={item.value}
             aria-pressed={purchaseLink === item.value}
-            onClick={() => { setPurchaseLink(item.value); setOffset(0); setSearchText(""); }}>
+            onClick={() => { setPurchaseLink(item.value); setOffset(0); }}>
             {item.label}
           </button>)}
           <span>按数据库关联状态筛选 · 不代表厂家已发货</span>
@@ -781,9 +845,18 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <tbody>
                   {loading && page.items.length === 0 && <tr><td colSpan={8} className="orders-table-empty">正在读取订单…</td></tr>}
                   {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="orders-table-empty">没有符合条件的订单。可调整筛选或点击同步订单。</td></tr>}
-                  {visibleOrders.map((order) => <tr key={order.order_id} className={selectedId === order.order_id ? "selected" : ""}>
-                    <td><button type="button" className="orders-id" onClick={() => openOrder(order.order_id)}>{order.order_id}</button>
-                      <span className="orders-subline">{(store?.nickname || store?.seller_id || "店铺").trim().slice(0, 12)}（{SITE_NAMES[scope?.site ?? ""] ?? scope?.site}） · {scope?.logistic === "remote" ? "自发货" : scope?.logistic === "fulfillment" ? "海外仓" : scope?.logistic}</span>
+                  {visibleOrders.map((order) => <tr key={orderRecordKey(order, scope)}
+                    className={selectedId === order.order_id &&
+                      orderRecordKey(order, scope) === [selectedRowScope?.storeId ?? scope?.storeId ?? "",
+                        selectedRowScope?.site ?? scope?.site ?? "",
+                        selectedRowScope?.logistic ?? scope?.logistic ?? "", selectedId].join("|") ? "selected" : ""}>
+                    <td><button type="button" className="orders-id" onClick={() =>
+                        openOrder(order.order_id, orderRecordScope(order, scope))}>{order.order_id}</button>
+                      <span className="orders-subline">{(
+                        stores.find((item) => item.id === (order.store_id ?? scope?.storeId))?.nickname ||
+                        store?.nickname || "店铺").trim().slice(0, 12)}（{
+                        SITE_NAMES[order.site_id ?? scope?.site ?? ""] ?? order.site_id ?? scope?.site
+                      }） · {logisticLabel(order.logistic_type ?? scope?.logistic)}</span>
                     </td>
                     <td className="orders-product-cell">
                       <div className="orders-product-preview">
@@ -812,12 +885,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
                       <span><small>平台运单</small>待官方读取</span>
                     </td>
-                    <td><DispatchCountdown order={order} now={clockNow} logistic={scope?.logistic ?? ""} /></td>
+                    <td><DispatchCountdown order={order} now={clockNow}
+                      logistic={order.logistic_type ?? scope?.logistic ?? ""} /></td>
                     <td><span className="orders-date">{orderDate(order.date_created)}</span></td>
                     <td><div className="orders-row-actions">
-                      <button className="orders-table-action" type="button" onClick={() => openOrder(order.order_id)}>订单详情</button>
+                      <button className="orders-table-action" type="button"
+                        onClick={() => openOrder(order.order_id, orderRecordScope(order, scope))}>订单详情</button>
                       <button className="orders-table-action orders-row-purchase" type="button"
-                        onClick={() => openPurchase(order.order_id)}>{order.purchase_order_id ? "编辑采购" : "采购"}</button>
+                        onClick={() => openPurchase(order.order_id, orderRecordScope(order, scope))}>{order.purchase_order_id ? "编辑采购" : "采购"}</button>
                       {order.purchase_order_id && <small className="orders-row-cost">
                         成本：{order.purchase_cost_cny == null ? "待补录" : "¥" + order.purchase_cost_cny}
                       </small>}
@@ -836,9 +911,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <dialog ref={detailDialogRef} className="orders-modal" aria-labelledby="orders-detail-title"
             onCancel={(event) => { event.preventDefault(); closeOrder(); }}
             onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}
-            onClose={() => { if (selectedId) setSelectedId(""); }}>
+            onClose={() => { if (selectedId) setSelectedId(""); setSelectedRowScope(null); }}>
             <div className="orders-detail" aria-label="订单详情">
-              <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[scope?.site ?? ""] ?? scope?.site}</small>
+              <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[selectedRowScope?.site ?? scope?.site ?? ""] ?? selectedRowScope?.site ?? scope?.site}</small>
                 <h2 id="orders-detail-title">{selectedId || "订单详情"}</h2></div>
                 <div className="orders-detail-head-actions">
                   <button type="button" className="orders-detail-refresh" disabled={refreshingOrder || running}
@@ -877,12 +952,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <h3>订单与物流</h3>
                 <dl className="orders-detail-fields">
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
-                  <dt>物流模式</dt><dd>{scope?.logistic === "remote" ? "自发货" : scope?.logistic === "fulfillment" ? "海外仓" : scope?.logistic ?? "—"}</dd>
+                  <dt>物流模式</dt><dd>{logisticLabel(selectedRowScope?.logistic ?? scope?.logistic)}</dd>
                   <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
                   <dt>平台运单号</dt><dd>待官方 Shipment 接口查询</dd>
-                  <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, scope?.logistic).date}
-                    {dispatchDeadlineLabel(detail, clockNow, scope?.logistic).hint &&
-                      <small> · {dispatchDeadlineLabel(detail, clockNow, scope?.logistic).hint}</small>}</dd>
+                  <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).date}
+                    {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint &&
+                      <small> · {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint}</small>}</dd>
                 </dl>
                 <p className="orders-muted">平台运单及签收信息尚未读取，不会将内部物流记录或发货截止时间视为已发货、已签收。</p>
               </section>
@@ -890,7 +965,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <div className="orders-detail-block-title">
                   <h3>采购</h3>
                   <button type="button" className="orders-table-action"
-                    onClick={() => openPurchase(detail.order_id)}>
+                    onClick={() => openPurchase(detail.order_id, selectedRowScope ?? scope)}>
                     {detail.purchase_order_id ? "编辑采购" : "采购"}</button>
                 </div>
                 <p className="orders-muted">采购单：{detail.purchase_order_id || "待关联"}；采购成本：{
@@ -922,7 +997,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         </div>
         <dialog ref={purchaseDialogRef} className="orders-modal orders-purchase-modal"
           aria-label="1688采购关联" onCancel={(event) => { event.preventDefault(); closePurchase(); }}
-          onClose={() => { if (purchaseSelectedId) setPurchaseSelectedId(""); }}>
+          onClose={() => { if (purchaseSelectedId) setPurchaseSelectedId(""); setPurchaseRowScope(null); }}>
           <header className="orders-detail-head">
             <div><small>手动采购信息 · 不自动推送货代仓</small>
               <h2>关联 1688 采购</h2></div>
@@ -931,6 +1006,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           </header>
           <div className="orders-purchase-compact">
             <p className="orders-muted">美客多订单：{purchaseSelectedId}</p>
+            <p className="orders-muted" data-testid="purchase-target-scope">
+              店铺：{(() => {
+                const current = stores.find((item) => item.id === (purchaseRowScope?.storeId ?? scope?.storeId));
+                return current?.nickname || current?.seller_id || "未知店铺";
+              })()} · 站点：{SITE_NAMES[purchaseRowScope?.site ?? scope?.site ?? ""] ??
+                purchaseRowScope?.site ?? scope?.site ?? "未知站点"} · 物流：{
+                logisticLabel(purchaseRowScope?.logistic ?? scope?.logistic)}
+            </p>
             <p className="orders-muted">填写实际货代仓和采购运单；仅保存关联，不会向货小易自动推单。</p>
             <div className="orders-purchase-form">
               <label>货代仓收货地址

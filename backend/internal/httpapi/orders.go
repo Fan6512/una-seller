@@ -23,6 +23,10 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 	if !ok {
 		return
 	}
+	if tail == "search" {
+		a.searchOrders(w, r, owner, store)
+		return
+	}
 	q := r.URL.Query()
 	site, logistic := q.Get("site"), q.Get("logistic_type")
 	if site == "" || logistic == "" || len(q["site"]) != 1 || len(q["logistic_type"]) != 1 {
