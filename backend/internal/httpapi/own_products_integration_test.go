@@ -106,8 +106,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	// Converted working drafts are permanently read-only; users must edit
 	// app.own_products, never a stale working draft that will not be consumed.
 	if w := call(owner, "PUT", draftPath,
-		`{"title":"Invisible after approval","description":"wrong","notes":"wrong","expected_revision":1}`);
-		w.Code != 409 || !strings.Contains(w.Body.String(), "read-only after product-box approval") {
+		`{"title":"Invisible after approval","description":"wrong","notes":"wrong","expected_revision":1}`); w.Code != 409 || !strings.Contains(w.Body.String(), "read-only after product-box approval") {
 		t.Fatalf("converted draft still writable: %d %s", w.Code, w.Body.String())
 	}
 	if w := call(other, "PUT", draftPath, draftBody); w.Code != 404 {
