@@ -75,7 +75,7 @@ export function useDesktopUpdates(activity: Activity) {
     } catch { /* Preferences are optional; still apply for this session. */ }
     setIncludeTestUpdates(enabled);
     // Clear any previous channel's candidate before checking the new setting.
-    if (phase === "idle") void checkForUpdate(update, enabled);
+    if (phase === "idle" || phase === "ready") void checkForUpdate(update, enabled);
   }
 
   async function download() {
@@ -136,7 +136,7 @@ export default function DesktopUpdates({ updates, syncCount, onLater }: {
       <p role="status">当前版本：{installedVersion ? formatDesktopVersion(installedVersion) : (installedVersionError?"无法读取版本":isTauri()?"版本读取中…":"开发预览")}</p>
       <label className="desktop-test-updates-toggle">
         <input type="checkbox" checked={includeTestUpdates}
-          disabled={busy || phase === "ready"}
+          disabled={busy}
           onChange={e=>changeTestUpdates(e.target.checked)}/>
         <span>接收测试版更新</span>
       </label>
