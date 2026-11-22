@@ -159,6 +159,9 @@ jobs:
       - name: Verify editable listing field defaults and validation
         run: node --experimental-strip-types --test tests/listingFields.test.mjs
 
+      - name: Verify readable and bounded API errors
+        run: node --experimental-strip-types --test tests/apiErrors.test.mjs
+
       - name: TypeScript check and Vite build
         run: npm run build
 
