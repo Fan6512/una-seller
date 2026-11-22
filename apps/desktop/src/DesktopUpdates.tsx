@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
+import { formatDesktopVersion } from "./desktopVersion";
 
 type Phase = "checking" | "idle" | "downloading" | "ready" | "installing";
 type Activity = RefObject<{ syncs: number; installing: boolean }>;
@@ -8,6 +9,9 @@ type Activity = RefObject<{ syncs: number; installing: boolean }>;
 export function useDesktopUpdates(activity: Activity) {
   const started = useRef(false);
   const running = useRef(false);
+  // The updater may be disabled for unsigned builds; the installed package version isn't.
+  const [installedVersion, setInstalledVersion] = useState<string | null>(null);
+  const [installedVersionError, setInstalledVersionError] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("checking");
   const [update, setUpdate] = useState<Update | null>(null);
@@ -46,6 +50,15 @@ export function useDesktopUpdates(activity: Activity) {
     started.current = true;
     void checkForUpdate();
   }, [checkForUpdate]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let mounted = true;
+    void invoke<string>("desktop_app_version")
+      .then(value => { if(mounted)setInstalledVersion(value); })
+      .catch(() => { if(mounted)setInstalledVersionError(true); });
+    return () => { mounted = false; };
+  }, []);
 
   async function download() {
     if (!update || phase !== "idle" || running.current) return;
@@ -89,20 +102,21 @@ export function useDesktopUpdates(activity: Activity) {
     }
   }
 
-  return { version, phase, update, current, error, progress, checkForUpdate, download, install };
+  return { installedVersion, installedVersionError, version, phase, update, current, error, progress, checkForUpdate, download, install };
 }
 
 export default function DesktopUpdates({ updates, syncCount, onLater }: {
   updates: ReturnType<typeof useDesktopUpdates>; syncCount: number; onLater: () => void;
 }) {
-  const { version, phase, update, current, error, progress, checkForUpdate, download, install } = updates;
+  const { installedVersion, installedVersionError, version, phase, update, current, error, progress, checkForUpdate, download, install } = updates;
   const busy = phase === "checking" || phase === "downloading" || phase === "installing";
 
   return <>
     <div className="page-heading"><h1>设置</h1></div>
     <section className="detail-section" aria-label="客户端更新">
       <h2>客户端更新</h2>
-      {version && <p>当前版本 {version}</p>}
+      <p role="status">当前版本：{installedVersion ? formatDesktopVersion(installedVersion) : (installedVersionError?"无法读取版本":isTauri()?"版本读取中…":"开发预览")}</p>
+      <p className="listing-fields-note">测试版不启用正式在线更新；正式更新由签名发行版本提供。</p>
       <p className="page-actions">
         <button type="button" disabled={busy || phase === "ready" || (!version && !error)} onClick={() => void checkForUpdate(update)}>检查更新</button>
       </p>
@@ -111,7 +125,7 @@ export default function DesktopUpdates({ updates, syncCount, onLater }: {
       {current && !busy && <p role="status">已是最新版本。</p>}
       {error && <p role="alert">{error}</p>}
       {update && <>
-        <h3>可用版本 {update.version}</h3>
+        <h3>可用版本 {formatDesktopVersion(update.version)}</h3>
         {update.body && <div className="description-text">{update.body}</div>}
         {phase === "downloading" && <p role="status">
           <progress aria-label="更新下载进度" max={progress.total || undefined}
