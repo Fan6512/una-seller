@@ -13,22 +13,7 @@ import (
 var ErrCBTPredictorInput = errors.New("CBT category prediction requires a descriptive edited title")
 var ErrCBTPredictorStore = errors.New("connect a Mercado Libre CBT store before requesting official category predictions")
 
-var cbtCategoryID = regexp.MustCompile(`^CBT[0-9]{1,15}package meli
-
-import (
-	"context"
-	"errors"
-	"net/url"
-	"regexp"
-	"strings"
-	"time"
-	"unicode/utf8"
-)
-
-var ErrCBTPredictorInput = errors.New("CBT category prediction requires a descriptive edited title")
-var ErrCBTPredictorStore = errors.New("connect a Mercado Libre CBT store before requesting official category predictions")
-
-)
+var cbtCategoryID = regexp.MustCompile(`^CBT[0-9]{1,15}$`)
 
 // A token-expired store remains authorized to refresh via RequireStoreConnection.
 // Never skip it and incorrectly claim that no store is connected.
