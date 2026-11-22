@@ -188,7 +188,7 @@ func desktopUpdaterHandlerWithTTL(client *http.Client, releasesURL string, ttl t
 		client = &http.Client{Timeout: 7 * time.Second}
 	}
 	cache := &desktopManifestCache{
-		entries: make(map[bool]desktopCachedManifest),
+		entries:    make(map[bool]desktopCachedManifest),
 		retryAfter: make(map[bool]time.Time),
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
