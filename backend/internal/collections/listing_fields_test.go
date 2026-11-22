@@ -15,7 +15,6 @@ func TestListingFieldsValidation(t *testing.T) {
 		LengthCM:         "20.5",
 		WidthCM:          "15",
 		HeightCM:         "5",
-		SitePrices:       []SitePrice{{Site: "MLB", Price: "89.90", Currency: "BRL"}},
 	}
 	if err := good.Validate(); err != nil {
 		t.Fatalf("valid listing fields rejected: %v", err)
@@ -30,8 +29,7 @@ func TestListingFieldsValidation(t *testing.T) {
 		{"decimal weight", func(x *ListingFields) { x.WeightG = "1.5" }},
 		{"invalid dimensions", func(x *ListingFields) { x.WidthCM = "0" }},
 		{"invalid price", func(x *ListingFields) { x.PurchasePrice = "12,5" }},
-		{"wrong site currency", func(x *ListingFields) { x.SitePrices[0].Currency = "USD" }},
-		{"duplicate site", func(x *ListingFields) { x.SitePrices = append(x.SitePrices, x.SitePrices[0]) }},
+		{"invalid purchase currency", func(x *ListingFields) { x.PurchaseCurrency = "NOT-CURRENCY" }},
 		{"invalid image link", func(x *ListingFields) {
 			images := []Image{{URL: "http://invalid.test/a.jpg", Type: "main"}}
 			x.Images = &images
@@ -44,7 +42,6 @@ func TestListingFieldsValidation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			copy := good
-			copy.SitePrices = append([]SitePrice(nil), good.SitePrices...)
 			tc.change(&copy)
 			if err := copy.Validate(); err == nil {
 				t.Fatal("invalid fields accepted")
