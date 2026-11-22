@@ -11,6 +11,7 @@ export function useDesktopUpdates(activity: Activity) {
   const running = useRef(false);
   // The updater may be disabled for unsigned builds; the installed package version isn't.
   const [installedVersion, setInstalledVersion] = useState<string | null>(null);
+  const [installedVersionError, setInstalledVersionError] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("checking");
   const [update, setUpdate] = useState<Update | null>(null);
@@ -55,7 +56,7 @@ export function useDesktopUpdates(activity: Activity) {
     let mounted = true;
     void invoke<string>("desktop_app_version")
       .then(value => { if(mounted)setInstalledVersion(value); })
-      .catch(() => { /* A version read error must not block offline settings. */ });
+      .catch(() => { if(mounted)setInstalledVersionError(true); });
     return () => { mounted = false; };
   }, []);
 
@@ -101,20 +102,20 @@ export function useDesktopUpdates(activity: Activity) {
     }
   }
 
-  return { installedVersion, version, phase, update, current, error, progress, checkForUpdate, download, install };
+  return { installedVersion, installedVersionError, version, phase, update, current, error, progress, checkForUpdate, download, install };
 }
 
 export default function DesktopUpdates({ updates, syncCount, onLater }: {
   updates: ReturnType<typeof useDesktopUpdates>; syncCount: number; onLater: () => void;
 }) {
-  const { installedVersion, version, phase, update, current, error, progress, checkForUpdate, download, install } = updates;
+  const { installedVersion, installedVersionError, version, phase, update, current, error, progress, checkForUpdate, download, install } = updates;
   const busy = phase === "checking" || phase === "downloading" || phase === "installing";
 
   return <>
     <div className="page-heading"><h1>设置</h1></div>
     <section className="detail-section" aria-label="客户端更新">
       <h2>客户端更新</h2>
-      <p role="status">当前版本：{installedVersion ? formatDesktopVersion(installedVersion) : (isTauri()?"版本读取中…":"开发预览")}</p>
+      <p role="status">当前版本：{installedVersion ? formatDesktopVersion(installedVersion) : (installedVersionError?"无法读取版本":isTauri()?"版本读取中…":"开发预览")}</p>
       <p className="listing-fields-note">测试版不启用正式在线更新；正式更新由签名发行版本提供。</p>
       <p className="page-actions">
         <button type="button" disabled={busy || phase === "ready" || (!version && !error)} onClick={() => void checkForUpdate(update)}>检查更新</button>
