@@ -7,7 +7,7 @@ import (
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
-func (a storeAPI) orderDispatchSLA(w http.ResponseWriter, r *http.Request, store, orderID string) {
+func (a storeAPI) orderLogistics(w http.ResponseWriter, r *http.Request, store, orderID, action string) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -25,7 +25,11 @@ func (a storeAPI) orderDispatchSLA(w http.ResponseWriter, r *http.Request, store
 		return
 	}
 	scope := meli.OrderScope{Site: q.Get("site"), Logistic: q.Get("logistic_type")}
-	result, err := a.service.RefreshOrderDispatchSLA(r.Context(), owner, store, scope, orderID)
+	refresh := a.service.RefreshOrderDispatchSLA
+	if action == "shipment" {
+		refresh = a.service.RefreshOrderShipment
+	}
+	result, err := refresh(r.Context(), owner, store, scope, orderID)
 	if err == nil {
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -33,6 +37,10 @@ func (a storeAPI) orderDispatchSLA(w http.ResponseWriter, r *http.Request, store
 	code := meli.OrderErrorCode(err)
 	status := http.StatusServiceUnavailable
 	switch {
+	case errors.Is(err, meli.ErrOrderShipmentMissing):
+		code, status = "order_shipment_missing", http.StatusNotFound
+	case errors.Is(err, meli.ErrOrderShipmentDenied):
+		code, status = "order_shipment_denied", http.StatusForbidden
 	case errors.Is(err, meli.ErrOrderSLANoShipment):
 		code, status = "order_sla_no_shipment", http.StatusNotFound
 	case errors.Is(err, meli.ErrOrderSLAInvalid):

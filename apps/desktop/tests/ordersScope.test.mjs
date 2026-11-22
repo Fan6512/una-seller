@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
-  shouldApplyOrderRefresh, shouldStopSLABatch } from "/src/orders.ts";
+  shouldApplyOrderRefresh, shouldStopSLABatch, shipmentStatusLabel } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -40,9 +40,21 @@ const searchRequests = [];
 const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD",
   shipment_id: "87123456" };
 let slaFetchCount = 0;
+let shipmentFetchCount = 0;
+for (const [status, substatus, label] of [
+  ["ready_to_ship", "printed", "待发货"], ["shipped", "", "已发货"], ["shipped", "in_transit", "运输中"],
+  ["shipped", "out_for_delivery", "派送中"], ["delivered", "", "已签收"],
+  ["cancelled", "", "物流已取消"], ["unknown_new", "", "未知状态"],
+]) assert(shipmentStatusLabel({ status, substatus }) === label, "wrong official shipment label: " + status);
 window.fetch = (path, options) => {
   const { pathname } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
+  if (pathname.endsWith("/orders/102/shipment")) {
+    shipmentFetchCount++;
+    order.shipment = { shipment_id: order.shipment_id, status: "shipped", substatus: "in_transit",
+      tracking_number: "OFFICIAL-TRACK-102", checked_at: new Date().toISOString() };
+    return Promise.resolve(Response.json(order));
+  }
   if (pathname.endsWith("/orders/102/sla")) {
     slaFetchCount++;
     order.dispatch_deadline = new Date(Date.now() + 3 * 86_400_000).toISOString();
@@ -297,9 +309,26 @@ try {
   await waitFor(() => slaFetchCount === 1 &&
     document.querySelector(".orders-dispatch")?.textContent.includes("剩余"),
     "manual SLA refresh did not update list");
+  assert(shipmentFetchCount === 0, "logistics refresh must be manual");
+  const batchShipment = [...document.querySelectorAll(".orders-tabs button")]
+    .find((item) => item.textContent === "更新本页物流");
+  flushSync(() => batchShipment.click());
+  await waitFor(() => shipmentFetchCount === 1 &&
+    document.querySelector(".orders-shipping-refs")?.textContent.includes("OFFICIAL-TRACK-102") &&
+    document.querySelector(".orders-shipping-refs")?.textContent.includes("运输中") &&
+    document.querySelector(".orders-status")?.textContent.includes("已付款"),
+    "shipment and payment states were not displayed independently");
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "real order detail modal did not open after purchase modal closed");
+  const shipmentButton = () => [...document.querySelectorAll(".orders-detail-block button")]
+    .find((item) => item.textContent === "更新平台物流");
+  await waitFor(() => shipmentButton() && !shipmentButton().disabled, "order shipment button unavailable");
+  flushSync(() => shipmentButton().click());
+  await waitFor(() => shipmentFetchCount === 2 &&
+    document.querySelector(".orders-detail-fields")?.textContent.includes("OFFICIAL-TRACK-102") &&
+    document.querySelector(".orders-detail-fields")?.textContent.includes("物流最近核验"),
+    "single-order shipment refresh did not show tracking and check time");
   flushSync(() => [...document.querySelectorAll(".orders-detail-refresh")][0].click());
   await waitFor(() => document.querySelector(".orders-detail-summary")?.textContent.includes("部分退款"),
     "manual order refresh did not display refunded state");

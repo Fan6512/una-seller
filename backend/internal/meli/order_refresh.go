@@ -71,7 +71,8 @@ func (s *Service) RefreshOneOrder(ctx context.Context, owner, store string, scop
 	}
 	_, err = tx.Exec(ctx, `UPDATE app.meli_orders SET
  pack_id=NULLIF($6,''),status=$7,currency_id=$8,total_amount=$9::numeric,
- last_updated=$10,shipment_id=NULLIF($11,''),order_items=$12::jsonb,updated_at=now()
+ last_updated=$10,shipment_id=NULLIF($11,''),order_items=$12::jsonb,updated_at=now(),
+ shipment_snapshot=CASE WHEN shipment_id=NULLIF($11,'') THEN shipment_snapshot END
  WHERE store_id=$1::uuid AND site_id=$3 AND logistic_type=$4
  AND seller_id=$5 AND order_id=$2 AND last_updated <= $10`,
 		store, id, scope.Site, scope.Logistic, childID,

@@ -23,12 +23,14 @@ export type StoreConnection = {
 export type Review = { listing_id?: string; offset: number; reason: string; skippable: boolean };
 export type ListingPage = { items: Listing[]; has_more: boolean; synced_at: string | null; next_offset: number | null; scan_required: boolean; review?: Review };
 
-class StoreRequestError extends Error {
+export class StoreRequestError extends Error {
   readonly status: number;
+  readonly code: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code = "") {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -181,7 +183,8 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
       const detail = await response.json().catch(() => null) as { error?: string } | null;
       assertActive();
       diagnostic?.("failed", response, detail?.error);
-      throw new StoreRequestError(errorLabel(detail?.error || "order_unavailable", response.status), response.status);
+      const code = detail?.error || "order_unavailable";
+      throw new StoreRequestError(errorLabel(code, response.status), response.status, code);
     }
     diagnostic?.("failed", response);
     const reason = ({

@@ -14,6 +14,16 @@ export type OrderLine = {
   unit_price: string;
   currency_id: string;
 };
+export type OrderShipment = {
+  shipment_id: string;
+  status: string;
+  substatus?: string;
+  tracking_number?: string;
+  logistic_type?: string;
+  last_updated?: string;
+  checked_at: string;
+};
+
 export type OrderRecord = {
   order_id: string;
   pack_id?: string;
@@ -23,6 +33,7 @@ export type OrderRecord = {
   date_created: string;
   last_updated: string;
   shipment_id?: string;
+  shipment?: OrderShipment;
   order_items: OrderLine[];
   purchase_order_id?: string;
   purchase_cost_cny?: string | null;
@@ -83,6 +94,8 @@ const messages: Record<string, string> = {
   order_review_conflict: "异常订单或同步位置已变化，请重新检查，不会重复跳过。",
   order_invalid_response: "美客多返回的订单数据无法解析，本次没有自动跳过订单。",
   order_platform_unavailable: "美客多订单接口暂不可用，请核对店铺权限或稍后重试。",
+  order_shipment_missing: "平台未找到该运单或订单尚无 Shipment ID。",
+  order_shipment_denied: "平台拒绝读取物流，请核对店铺授权及物流权限。",
   order_site_not_authorized: "当前站点或物流类型尚未通过店铺映射验证。",
   order_reauth_required: "店铺已断开或需要重新授权，历史缓存订单仍可在允许时查看。",
   order_refresh_unknown: "店铺授权续签结果待确认，请先到店铺管理检查。",
@@ -101,7 +114,7 @@ export function shouldStopSLABatch(status: number, code: string) {
   return status === 0 || status === 401 || status === 403 || status === 429 ||
     status >= 500 ||
     ["order_rate_limited", "order_platform_unavailable", "order_reauth_required",
-      "order_site_not_authorized", "order_refresh_unknown", "order_busy",
+      "order_site_not_authorized", "order_shipment_denied", "order_refresh_unknown", "order_busy",
       "order_timeout", "order_unavailable"].includes(code);
 }
 export function shouldApplyOrderRefresh(requestId: string, currentId: string, aborted: boolean) {
@@ -122,6 +135,22 @@ export function orderStatusLabel(status: string) {
 // Shipment ID and dispatch SLA cannot establish "shipped" or "delivered".
 export function displayOrderStatus(order: OrderRecord) {
   return orderStatusLabel(order.status);
+}
+
+export function shipmentStatusLabel(shipment?: OrderShipment) {
+  if (!shipment) return "尚未读取";
+  const { status, substatus } = shipment;
+  if (status === "shipped") {
+    if (substatus === "in_transit") return "运输中";
+    if (["out_for_delivery", "soon_deliver", "at_the_door"].includes(substatus ?? "")) return "派送中";
+    if (["receiver_absent", "bad_address", "delivery_blocked", "impassable_zone"].includes(substatus ?? "")) return "物流异常";
+    return "已发货";
+  }
+  const labels: Record<string, string> = {
+    pending: "待处理", handling: "待发货", ready_to_ship: "待发货", delivered: "已签收",
+    not_delivered: "物流异常", not_verified: "状态待核实", cancelled: "物流已取消",
+  };
+  return Object.hasOwn(labels, status) ? labels[status] : "未知状态";
 }
 export function hasProcurement(order: OrderRecord) {
   return Boolean(order.purchase_order_id || order.purchase_tracking_number);
@@ -207,11 +236,11 @@ export function getOrder(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
   return orderRead<OrderRecord>(pathWithTail(scope, id), signal);
 }
-export function refreshOrderDispatchSLA(scope: OrderScope, id: string, signal?: AbortSignal) {
+export function refreshOrderLogistics(scope: OrderScope, id: string, action: "sla" | "shipment", signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
   return storeRequest<OrderRecord>(
     "/api/v1/stores/" + encodeURIComponent(scope.storeId) + "/orders/" + encodeURIComponent(id) +
-      "/sla?" + new URLSearchParams({ site: scope.site, logistic_type: scope.logistic }),
+      "/" + action + "?" + new URLSearchParams({ site: scope.site, logistic_type: scope.logistic }),
     "POST", signal ? AbortSignal.any([signal, AbortSignal.timeout(25_000)])
       : AbortSignal.timeout(25_000), false, undefined, orderErrorLabel);
 }
