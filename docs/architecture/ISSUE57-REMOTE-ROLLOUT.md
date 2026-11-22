@@ -1,7 +1,7 @@
 # #57 · Una Seller 远程 Go API 受控升级 / 产品箱验收
 
-> 状态（2026-11-22）：**SERVER_BASELINE_PASS / BACKUP_VERIFIED / PRODUCTION_MIGRATION_NOT_RUN / NO_PRODUCTION_WRITE**。核验依据：[Issue #57 服务器与恢复回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002)。这里记录的是负责执行方的脱敏证据，不代表此 PR 自行拥有服务器 SSH 凭据。
-> 本 PR 只收敛生产升级门禁和操作顺序；**尚未获得生产写操作批准**。不要把 #59 代码合并或 Windows 构建成功误写成远程产品箱已验收。
+> 当前状态（2026-11-22）：**SERVER_BASELINE_PASS / BACKUP_VERIFIED / MIGRATION_REHEARSAL_PASS / SCHEMA_MIGRATED_PASS / GO_DEPLOYED_PASS / NGINX_ROUTED_PASS / HTTP_ANON_PASS / AUTH_PRODUCT_BOX_NOT_RUN / WINDOWS_GUI_NOT_RUN / CBT_PREDICT_NOT_RUN**。已核对 [生产部署脱敏回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7077260112)，完整保留 [服务器与恢复回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002) 及 [隔离迁移演练回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7075825024)。
+> 本文前半部分是已实际执行过的升级操作书（保留审计）；**生产切换已完成，不应再次执行 migrate、重复替换现役 Go/Nginx 或重复恢复备份**。下一步只做授权接口、桌面客户端和真实 CBT 类目推荐验收。验证通过前不可关闭 #57 或发布 V1.0 正式版。
 
 ## 当前已独立核对（2026-11-22）
 
