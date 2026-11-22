@@ -1,5 +1,5 @@
 import type { ListingFields, ListingVariant } from "./listingFields";
-import { detectTitleLanguage, validateListingFields, preferredTitle } from "./listingFields";
+import { detectTitleLanguage, preferredTitle } from "./listingFields";
 import { getCBTCategorySuggestions, type CBTCategorySuggestion } from "./collections";
 import { useEffect, useRef, useState } from "react";
 import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute } from "./editorUx";
@@ -76,7 +76,6 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     {key:"pt" as const,label:"葡语 BR",full:"巴西葡语标题",target:"不超过 60 字符"},
   ];
   const selectedLanguage=languages.find(item=>item.key===activeLanguage)!;
-  const error=validateListingFields(value);
   const field=(label:string,key:keyof ListingFields,placeholder="",maxLength=120)=>
     <label className="listing-field">{label}
       <input value={String(value[key]??"")} onChange={e=>set(key,e.target.value)}
@@ -97,10 +96,6 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
   };
   return <section className="listing-fields">
-    <div className="listing-editor-header">
-      <h3>上架资料整理</h3>
-    </div>
-    {error&&<p className="listing-validation" role="alert">保存前请检查：{error}</p>}
     <fieldset className="listing-editor-panel">
       <legend>多语言标题</legend>
       <div className="listing-language-tabs" role="group" aria-label="标题语言">
@@ -139,7 +134,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
         {suggestions.map(item=><button key={item.category_id} type="button" disabled={disabled}
           onClick={()=>{
             onChange({...value,category_id:item.category_id,category_path:item.category_name});
-            setPredictMessage("已填入所选 CBT 类目，仍需在刊登前核对官方必填属性。");
+            setSuggestions([]);
+            setPredictMessage("");
           }}>
           <strong>{item.category_name}</strong><small>{item.category_id} · {item.domain_name}</small>
         </button>)}
@@ -154,14 +150,18 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       </div>
     </fieldset>
 
-    <fieldset><legend>采购成本</legend>
-      <div className="listing-field-grid">
-        {field("采购成本（不是来源竞品售价）","purchase_price","留空表示未知")}
-        {field("采购币种","purchase_currency","如 CNY、USD",3)}
-      </div>
+    <fieldset className="listing-editor-plain"><legend>采购成本（人民币 CNY）</legend>
+      <label className="listing-field">采购成本（¥）
+        <input value={value.purchase_price} disabled={disabled} placeholder="人民币金额"
+          onChange={e=>onChange({...value,purchase_price:e.target.value,purchase_currency:"CNY"})}/>
+      </label>
+      {value.purchase_currency!==""&&value.purchase_currency!=="CNY"&&
+        <small className="listing-currency-legacy" role="status">历史记录币种为 {value.purchase_currency}。修改金额前请先按人民币核实，系统不会自动换算。</small>}
+      {value.purchase_currency===""&&value.purchase_price!==""&&
+        <small className="listing-currency-legacy" role="status">历史记录币种未确认。重新输入已核实的人民币金额后，才会改为 CNY。</small>}
     </fieldset>
 
-    <fieldset><legend>重量与包装尺寸</legend>
+    <fieldset className="listing-editor-plain"><legend>重量与包装尺寸</legend>
       <div className="listing-dimension-row">
         {field("重量（g）","weight_g","克",15)}
         {field("长（cm）","length_cm","厘米",15)}

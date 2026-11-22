@@ -38,7 +38,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   const defaults: ListingFields = {
     titles: titlesFromSource(capturedTitle),
     category_id:"",category_path:"",brand:"",model:"",
-    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"",
+    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"CNY",
     weight_g:"",length_cm:"",width_cm:"",height_cm:"",
     bullet_points:source?.bullet_points.slice()??[],
     attributes:[],
@@ -54,6 +54,8 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   if(!saved)return defaults;
   const result:ListingFields={...defaults,...saved,
     titles:saved.titles ? {...defaults.titles,...saved.titles} : defaults.titles};
+  // Do not silently reinterpret a legacy, unlabelled purchase amount as CNY.
+  if(saved.purchase_price && !saved.purchase_currency) result.purchase_currency="";
   result.bullet_points=saved.bullet_points?.slice()??defaults.bullet_points;
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
