@@ -103,12 +103,14 @@ func (f ListingFields) Validate() error {
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
 		!validListingText(f.GTIN, 50) ||
 		!listingMoney(f.PurchasePrice) ||
-		(f.PurchaseCurrency != "" && !currencyPattern.MatchString(f.PurchaseCurrency)) ||
 		!listingDecimal(f.WeightG, 1000000, true) ||
 		!listingDecimal(f.LengthCM, 10000, false) ||
 		!listingDecimal(f.WidthCM, 10000, false) ||
 		!listingDecimal(f.HeightCM, 10000, false) {
 		return errors.New("invalid listing preparation fields")
+	}
+	if f.PurchaseCurrency != "" && !currencyPattern.MatchString(f.PurchaseCurrency) {
+		return errors.New("purchase_currency must contain 3 uppercase letters, e.g. CNY or USD")
 	}
 	if f.CategoryID != "" && (!strings.HasPrefix(f.CategoryID, "CBT") ||
 		len(f.CategoryID) < 4 || !allNumeric(f.CategoryID[3:])) {
