@@ -198,4 +198,34 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if list.Code != 200 || !strings.Contains(list.Body.String(), id) {
 		t.Fatalf("orphaned own product disappeared: %d", list.Code)
 	}
+	// A deliberately emptied merchant image array must not resurrect the captured image.
+	emptyImageEdit := call(owner, "PUT", "/api/v1/products/"+id,
+		`{"title":"Edited English Title","description":"Own description","notes":"Own notes",
+		"expected_revision":3,"listing_fields":{"titles":{"en":"Edited English Title"},
+		"images":[]}}`)
+	if emptyImageEdit.Code != 200 {
+		t.Fatalf("empty image override save %d %s", emptyImageEdit.Code, emptyImageEdit.Body.String())
+	}
+	list = call(owner, "GET", "/api/v1/products", "")
+	if list.Code != 200 {
+		t.Fatalf("read own list after removing images: %d", list.Code)
+	}
+	var withImages struct {
+		Items []collections.OwnProductSummary `json:"items"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &withImages); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range withImages.Items {
+		if item.ID == id {
+			found = true
+			if item.MainImageURL != nil {
+				t.Fatalf("removed all product images but list still shows source thumbnail %q", *item.MainImageURL)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("edited own product missing after image removal")
+	}
 }
