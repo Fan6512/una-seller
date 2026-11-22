@@ -72,3 +72,23 @@ test("persisted locale titles and edits remain independent and site-free",()=>{
   fields.category_id="MLB12345";
   assert.match(validateListingFields(fields),/CBT/);
 });
+
+test("currency and attribute validation matches server contract before saving",()=>{
+  const f=initialListingFields(null,undefined,"Waterproof Winter Plant Cleaning Spray");
+  f.purchase_price="18.50";
+  f.purchase_currency="cny";
+  assert.match(validateListingFields(f),/币种/);
+  f.purchase_currency="CNY";
+  assert.equal(validateListingFields(f),"");
+  f.variants=[{seller_sku:"SKU-1",attributes:{颜色:"黑色"},currency:"usd",price:"19.90",image_urls:[]}];
+  assert.match(validateListingFields(f),/币种/);
+  f.variants[0].currency="USD";
+  assert.equal(validateListingFields(f),"");
+  f.attributes=[{name:"a".repeat(121),value:"yes"}];
+  assert.match(validateListingFields(f),/属性/);
+  f.attributes=[{name:"model",value:"v".repeat(501)}];
+  assert.match(validateListingFields(f),/属性/);
+  f.attributes=[];
+  f.variants[0].image_urls=["http://not-https.example/bad.jpg"];
+  assert.match(validateListingFields(f),/URL/);
+});
