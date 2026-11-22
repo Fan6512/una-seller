@@ -125,7 +125,7 @@ export default function DesktopUpdates({ updates, syncCount, onLater }: {
       {current && !busy && <p role="status">已是最新版本。</p>}
       {error && <p role="alert">{error}</p>}
       {update && <>
-        <h3>可用版本 {update.version}</h3>
+        <h3>可用版本 {formatDesktopVersion(update.version)}</h3>
         {update.body && <div className="description-text">{update.body}</div>}
         {phase === "downloading" && <p role="status">
           <progress aria-label="更新下载进度" max={progress.total || undefined}
