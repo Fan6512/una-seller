@@ -24,18 +24,21 @@ test("saved empty image override stays empty and does not silently restore sourc
   assert.equal(fields.weight_g,"800");
 });
 
-test("cross-marketplace price and logistics validations preserve missing value semantics",()=>{
+test("shared purchase cost and logistics remain independent of target marketplaces",()=>{
   const f=initialListingFields(null,undefined,"Waterproof Winter Plant Cleaning Spray");
   assert.equal(validateListingFields(f),"");
   f.weight_g="1000";
   f.length_cm="20";
-  f.site_prices=[{site:"MLB",price:"299.90",currency:"BRL"}];
+  f.purchase_price="29.90";
+  f.purchase_currency="CNY";
   assert.equal(validateListingFields(f),"");
+  assert.equal("site_prices" in f,false);
+  assert.equal("category_site" in f,false);
   f.weight_g="-1";
   assert.match(validateListingFields(f),/重量/);
   f.weight_g="1000";
-  f.site_prices=[{site:"MLB",price:"29,90",currency:"BRL"}];
-  assert.match(validateListingFields(f),/售价/);
+  f.purchase_price="29,90";
+  assert.match(validateListingFields(f),/采购成本/);
 });
 
 
@@ -59,13 +62,12 @@ test("persisted locale titles and edits remain independent and site-free",()=>{
   const fields=initialListingFields({
     titles:{en:"Winter Plant Dry Cleaning Spray",es:"Spray Limpiador de Plantas de Invierno",pt:"Spray Limpa Plantas de Inverno"},
     category_id:"CBT12345",
-    site_prices:[],
   },undefined,"Captured English Title");
   assert.equal(fields.titles.en,"Winter Plant Dry Cleaning Spray");
   assert.equal(fields.titles.es,"Spray Limpiador de Plantas de Invierno");
   assert.equal(fields.titles.pt,"Spray Limpa Plantas de Inverno");
-  assert.deepEqual(fields.site_prices,[]);
-  assert.equal(fields.category_site,"");
+  assert.equal("site_prices" in fields,false);
+  assert.equal("category_site" in fields,false);
   assert.equal(validateListingFields(fields),"");
   fields.category_id="MLB12345";
   assert.match(validateListingFields(fields),/CBT/);
