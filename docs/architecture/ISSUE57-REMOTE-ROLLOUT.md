@@ -1,7 +1,24 @@
 # #57 · Una Seller 远程 Go API 受控升级 / 产品箱验收
 
-> 当前状态（2026-11-22）：**SERVER_BASELINE_PASS / BACKUP_VERIFIED / MIGRATION_REHEARSAL_PASS / SCHEMA_MIGRATED_PASS / GO_DEPLOYED_PASS / NGINX_ROUTED_PASS / HTTP_ANON_PASS / AUTH_PRODUCT_BOX_NOT_RUN / WINDOWS_GUI_NOT_RUN / CBT_PREDICT_NOT_RUN**。已核对 [生产部署脱敏回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7077260112)，完整保留 [服务器与恢复回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002) 及 [隔离迁移演练回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7075825024)。
+> 当前状态（2026-11-22）：**SERVER_BASELINE_PASS / BACKUP_VERIFIED / MIGRATION_REHEARSAL_PASS / SCHEMA_MIGRATED_PASS / GO_DEPLOYED_PASS / NGINX_ROUTED_PASS / HTTP_ANON_PASS / MANUAL_PENDING(AUTH, GUI)**。已核对 [生产部署脱敏回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7077260112)，完整保留 [服务器与恢复回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002) 及 [隔离迁移演练回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7075825024)。
 > 本文前半部分是已实际执行过的升级操作书（保留审计）；**生产切换已完成，不应再次执行 migrate、重复替换现役 Go/Nginx 或重复恢复备份**。下一步只做授权接口、桌面客户端和真实 CBT 类目推荐验收。验证通过前不可关闭 #57 或发布 V1.0 正式版。
+
+## 生产切换回执
+
+| 验证项 | 状态 | 证据 |
+| --- | --- | --- |
+| 加密备份与隔离恢复 | PASS | PostgreSQL 17.11 独立恢复，15 张旧业务表结构和逐表行摘要一致。范围为 app schema；所有者、ACL、Supabase Auth 及异地恢复待验证。 |
+| 0008/0009 迁移演练 | PASS | 从独立恢复库完整执行 0001–0009 两次。第一次核对旧数据与新增结构，第二次核对幂等。 |
+| 生产结构及旧数据 | PASS | 2026-11-22 执行一次 0001–0009。16 张业务表 RLS 生效，own_products 和两处 listing_fields 存在，旧表数据摘要一致。 |
+| Go / Nginx | PASS | 固定提交 5bdac966，部署二进制前后一致；Go 仅监听回环。Nginx 仅增补产品箱与类目预测转发。 |
+| 匿名 HTTP | PASS | 回环及公网 healthz 200；采集、店铺、订单、产品箱与类目预测无 Token 返回 401。 |
+| 历史 Windows 部分验收 | PASS | #65 旧 QA HEAD c131da1b 记录了工作稿云端保存和重启读回、三语标题、图片及 9 变体保存。 |
+| 云端转库和独立产品重启读回 | MANUAL_PENDING(AUTH, GUI) | 从批准的非实盘采集来源保存工作稿，勾选转库后在产品箱编辑并重启复查。当前 #65 候选 GUI 同步复验。 |
+| CBT 官方类目推荐 | MANUAL_PENDING(AUTH) | 用已授权测试店铺提交英文测试标题，记录真实候选或官方拒绝状态。 |
+| 生产回退 | NOT_RUN | 备有 Go 与 Nginx 私有回退副本。切换门禁通过，实际未回退。 |
+
+[备份与恢复](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002) · [两次迁移演练](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7075825024) · [生产切换](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7077260112) · [Windows 历史反馈](https://github.com/Fan6512/una-seller/pull/65)
+
 
 ## 当前已独立核对（2026-11-22）
 
