@@ -42,8 +42,9 @@ if(before[0]>=1&&after[0]===0)throw new Error("A stable release must not downgra
 const changeJSON=(original,keys)=>{
   const copy=JSON.parse(original);
   for(const key of keys){
-    if(key.length===1)copy[key[0]]=target;
-    else copy[key[0]][key[1]]=target;
+    let cursor=copy;
+    for(const part of key.slice(0,-1))cursor=cursor[part];
+    cursor[key[key.length-1]]=target;
   }
   return JSON.stringify(copy,null,2)+"\n";
 };
@@ -53,10 +54,7 @@ if(files.cargoLock.split(oldLock).length!==2)throw new Error("Cargo.lock project
 const cargoLocked=files.cargoLock.replace(oldLock,'[[package]]\nname = "una-seller"\nversion = "'+target+'"');
 const edits={
   packageJSON:changeJSON(files.packageJSON,[["version"]]),
-  npmLock:changeJSON(files.npmLock,[["version"],["packages",""]]).replace(
-    '"": {\n      "name": "una-seller-desktop",\n      "version": "'+current+'"',
-    '"": {\n      "name": "una-seller-desktop",\n      "version": "'+target+'"'
-  ),
+  npmLock:changeJSON(files.npmLock,[["version"],["packages","","version"]]),
   tauri:changeJSON(files.tauri,[["version"]]),
   cargo:cargoName,
   cargoLock:cargoLocked,
