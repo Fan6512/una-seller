@@ -9,7 +9,7 @@ import (
 )
 
 // ListingFields are editable preparation data, not official platform attributes.
-// Category IDs and site prices require Mercado Libre validation before publishing.
+// Workbench drafts are independent of listing markets and site prices.
 type LocalizedTitles struct {
 	English    string `json:"en"`
 	Spanish    string `json:"es"`
@@ -27,7 +27,6 @@ func (titles LocalizedTitles) Preferred() string {
 
 type ListingFields struct {
 	Titles           LocalizedTitles    `json:"titles"`
-	CategorySite     string             `json:"category_site"`
 	CategoryID       string             `json:"category_id"`
 	CategoryPath     string             `json:"category_path"`
 	Brand            string             `json:"brand"`
@@ -40,18 +39,12 @@ type ListingFields struct {
 	LengthCM         string             `json:"length_cm"`
 	WidthCM          string             `json:"width_cm"`
 	HeightCM         string             `json:"height_cm"`
-	SitePrices       []SitePrice        `json:"site_prices"`
 	BulletPoints     []string           `json:"bullet_points"`
 	Attributes       []ListingAttribute `json:"attributes"`
 	Images           *[]Image           `json:"images,omitempty"`
 	Variants         *[]ListingVariant  `json:"variants,omitempty"`
 }
 
-type SitePrice struct {
-	Site     string `json:"site"`
-	Price    string `json:"price"`
-	Currency string `json:"currency"`
-}
 type ListingAttribute struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
@@ -105,7 +98,7 @@ func validListingText(text string, max int) bool {
 func (f ListingFields) Validate() error {
 	if !validListingText(f.Titles.English, 500) || !validListingText(f.Titles.Spanish, 500) ||
 		!validListingText(f.Titles.Portuguese, 500) ||
-		!validListingText(f.CategorySite, 4) || !validListingText(f.CategoryID, 60) ||
+		!validListingText(f.CategoryID, 60) ||
 		!validListingText(f.CategoryPath, 400) || !validListingText(f.Brand, 120) ||
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
 		!validListingText(f.GTIN, 50) ||
@@ -121,20 +114,8 @@ func (f ListingFields) Validate() error {
 		len(f.CategoryID) < 4 || !allNumeric(f.CategoryID[3:])) {
 		return errors.New("category draft must use CBT general category; select marketplace at publishing")
 	}
-	allowedSites := map[string]string{"MLM": "MXN", "MLB": "BRL", "MLA": "ARS", "MLC": "CLP", "MCO": "COP"}
-	if f.CategorySite != "" && allowedSites[f.CategorySite] == "" {
-		return errors.New("invalid target category site")
-	}
-	if len(f.SitePrices) > 5 || len(f.BulletPoints) > 20 || len(f.Attributes) > 60 {
-		return errors.New("too many site prices or listing attributes")
-	}
-	seen := map[string]bool{}
-	for _, p := range f.SitePrices {
-		if allowedSites[p.Site] == "" || seen[p.Site] || !listingMoney(p.Price) ||
-			(p.Currency != "" && p.Currency != allowedSites[p.Site]) {
-			return errors.New("invalid site price or currency")
-		}
-		seen[p.Site] = true
+	if len(f.BulletPoints) > 20 || len(f.Attributes) > 60 {
+		return errors.New("too many listing attributes")
 	}
 	for _, bullet := range f.BulletPoints {
 		if !validListingText(bullet, 500) {
