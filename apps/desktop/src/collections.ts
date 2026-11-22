@@ -1,4 +1,5 @@
 import { getAccessToken, rejectSession } from "./auth";
+import { readAPIError } from "./apiErrors";
 import type { ListingFields } from "./listingFields";
 
 export type CaptureStatus = "complete" | "partial";
@@ -105,12 +106,8 @@ async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = 
       : response.status === 404
         ? "商品不存在或不可访问"
         : "请求失败（HTTP " + response.status + "）";
-    let errorCode: string | undefined;
-    if (response.status === 409) {
-      const payload = await response.json().catch(() => null) as { code?: unknown } | null;
-      if (typeof payload?.code === "string") errorCode = payload.code;
-    }
-    throw new CollectionRequestError(response.status, message, errorCode);
+    const details=await readAPIError(response,message);
+    throw new CollectionRequestError(response.status,details.message,details.code);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
