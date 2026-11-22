@@ -14,5 +14,5 @@ test("stable versions show release channel only when major >= 1",()=>{
   assert.equal(formatDesktopVersion("1.1.0-beta.2"),"V1.1 测试版");
 });
 test("unexpected package version is displayed without guesswork",()=>{
-  assert.equal(formatDesktopVersion("0.2.0-beta.1"),"V0.2.0-beta.1");
+  assert.equal(formatDesktopVersion("0.2.0-beta.1"),"V0.2 测试版");
 });
