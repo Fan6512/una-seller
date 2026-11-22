@@ -78,7 +78,6 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 "listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT123","category_path":"Beleza / Cuidados",
 "brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY",
 "weight_g":"850","length_cm":"20.5","width_cm":"15","height_cm":"5",
-"site_prices":[{"site":"MLB","price":"89.90","currency":"BRL"}],
 "images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],
 "variants":[{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","image_urls":[]}]}}`
 	if w := call(owner, "PUT", draftPath, draftBody); w.Code != 200 {
@@ -158,7 +157,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	updated := call(owner, "PUT", "/api/v1/products/"+id,
 		`{"title":"Edited product","description":"Own description","notes":"Own notes","expected_revision":2,
 		"listing_fields":{"seller_sku":"P-002","weight_g":"1200","length_cm":"23","width_cm":"19","height_cm":"9",
-		"titles":{"en":"Edited English Title","es":"Otro título en español","pt":"Outro título em português"},"category_id":"CBT999","site_prices":[{"site":"MLM","price":"199.90","currency":"MXN"}]}}`)
+		"titles":{"en":"Edited English Title","es":"Otro título en español","pt":"Outro título em português"},"category_id":"CBT999"}}`)
 	if updated.Code != 200 {
 		t.Fatalf("listing fields edit %d %s", updated.Code, updated.Body.String())
 	}
