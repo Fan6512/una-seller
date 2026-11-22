@@ -93,6 +93,7 @@ export function validateListingFields(v:ListingFields):string {
   if(v.category_path.length>400||v.category_id.length>60||v.brand.length>120||
     v.model.length>120||v.seller_sku.length>120||v.gtin.length>50) return "类目或基础属性过长";
   if(!isMoney(v.purchase_price))return "采购成本格式不正确，最多保留四位小数";
+  if(v.purchase_currency && !/^[A-Z]{3}$/.test(v.purchase_currency))return "采购币种必须是 3 位大写字母（例如 CNY、USD）";
   if(!isDecimal(v.weight_g,1000000,true))return "重量请输入正整数，单位为克";
   for(const [n,k] of [["长","length_cm"],["宽","width_cm"],["高","height_cm"]] as const) {
     if(!isDecimal(v[k],10000,false))return n+"度必须是大于零的厘米数字";
@@ -100,8 +101,14 @@ export function validateListingFields(v:ListingFields):string {
   if(v.images&&v.images.some(i=>!/^https:\/\/[^\s]+$/i.test(i.url)||i.url.length>2000))return "图片 URL 必须为有效 HTTPS 地址";
   if(v.images&&v.images.length>60)return "图片不能超过 60 张";
   if(v.variants&&v.variants.length>100)return "规格不能超过 100 项";
-  if(v.variants?.some(x=>!isMoney(x.price)||x.seller_sku.length>120||Object.entries(x.attributes).some(([k,val])=>!k||!val)))return "请补充规格属性和正确的 SKU、价格";
-  if(v.bullet_points.length>20||v.bullet_points.some(x=>x.length>500))return "商品卖点最多 20 条，每条 500 字符";
-  if(v.attributes.length>60)return "附加属性过多";
+  if(v.variants?.some(x=>!isMoney(x.price)||Array.from(x.seller_sku).length>120||
+    (x.currency!==""&&!/^[A-Z]{3}$/.test(x.currency))||
+    Object.entries(x.attributes).some(([k,val])=>!k||!val||Array.from(k).length>80||Array.from(val).length>200)||
+    x.image_urls.length>30||x.image_urls.some(url=>!/^https:\/\/[^\s]+$/i.test(url)||url.length>2000))) {
+    return "变体价格、币种（3 位大写字母）、SKU、属性或图片 URL 不符合要求";
+  }
+  if(v.bullet_points.length>20||v.bullet_points.some(x=>Array.from(x).length>500))return "商品卖点最多 20 条，每条 500 字符";
+  if(v.attributes.length>60||v.attributes.some(a=>Array.from(a.name).length>120||Array.from(a.value).length>500))
+    return "附加属性最多 60 条，名称 120 字符、值 500 字符以内";
   return "";
 }
