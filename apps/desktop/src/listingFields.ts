@@ -103,6 +103,7 @@ export function validateListingFields(v:ListingFields):string {
   if(v.variants&&v.variants.length>100)return "规格不能超过 100 项";
   if(v.variants?.some(x=>!isMoney(x.price)||Array.from(x.seller_sku).length>120||
     (x.currency!==""&&!/^[A-Z]{3}$/.test(x.currency))||
+    Object.keys(x.attributes).length===0||
     Object.entries(x.attributes).some(([k,val])=>!k||!val||Array.from(k).length>80||Array.from(val).length>200)||
     x.image_urls.length>30||x.image_urls.some(url=>!/^https:\/\/[^\s]+$/i.test(url)||url.length>2000))) {
     return "变体价格、币种（3 位大写字母）、SKU、属性或图片 URL 不符合要求";

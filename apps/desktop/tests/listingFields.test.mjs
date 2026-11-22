@@ -94,3 +94,14 @@ test("currency and attribute validation matches server contract before saving",(
   f.variants[0].image_urls=["http://not-https.example/bad.jpg"];
   assert.match(validateListingFields(f),/URL/);
 });
+
+
+test("a variant needs at least one complete attribute before saving",()=>{
+  const f=initialListingFields(null,undefined,"Waterproof Winter Plant Cleaning Spray");
+  f.variants=[{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[]}];
+  assert.match(validateListingFields(f),/变体.*属性/);
+  f.variants[0].attributes={"属性1":""};
+  assert.match(validateListingFields(f),/变体.*属性/);
+  f.variants[0].attributes={颜色:"黑色"};
+  assert.equal(validateListingFields(f),"");
+});

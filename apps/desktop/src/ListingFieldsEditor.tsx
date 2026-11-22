@@ -86,8 +86,9 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
   const updateImage=(index:number,url:string)=>{
     set("images",images.map((im,i)=>i===index?{...im,url}:im));
   };
-  const moveMain=(index:number)=>set("images",moveGalleryImage(images,index,0));
-  const moveImage=(from:number,to:number)=>set("images",moveGalleryImage(images,from,to));
+  const resetImageFocus=()=>{setImagePreview(null);setEditingImage(null);};
+  const moveMain=(index:number)=>{set("images",moveGalleryImage(images,index,0));resetImageFocus();};
+  const moveImage=(from:number,to:number)=>{set("images",moveGalleryImage(images,from,to));resetImageFocus();};
   const removeImage=(index:number)=>{
     set("images",images.filter((_,i)=>i!==index).map((im,i)=>({...im,type:(i===0?"main":"additional") as "main"|"additional"})));
     setImagePreview(null);
@@ -102,23 +103,23 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       <p className="listing-fields-note">原始采集资料不会被覆盖；工作稿与产品箱共用此编辑器。当前分区切换不会丢失尚未保存的内容。</p>
     </div>
     {error&&<p className="listing-validation" role="alert">保存前请检查：{error}</p>}
-    <div className="listing-editor-tabs" role="tablist" aria-label="商品资料编辑分区">
+    <div className="listing-editor-tabs" role="group" aria-label="商品资料编辑分区">
       {([
         {key:"titles",label:"多语言标题"},
         {key:"basic",label:"基础信息"},
         {key:"images",label:"图片管理 ("+images.length+")"},
         {key:"variants",label:"变体 SKU ("+variants.length+")"},
-      ] as const).map(item=><button key={item.key} type="button" role="tab"
-        aria-selected={activePanel===item.key} onClick={()=>setActivePanel(item.key)}>
+      ] as const).map(item=><button key={item.key} type="button"
+        aria-pressed={activePanel===item.key} onClick={()=>setActivePanel(item.key)}>
         {item.label}
       </button>)}
     </div>
     {activePanel==="titles"&&<fieldset className="listing-editor-panel">
       <legend>多语言商品标题</legend>
       <p className="listing-fields-note">原始采集只填入识别的语言栏，不自动翻译。西语和葡语用于买家本地化，站点选择在刊登阶段完成。</p>
-      <div className="listing-language-tabs" role="tablist" aria-label="标题语言">
-        {languages.map(item=><button key={item.key} type="button" role="tab"
-          aria-selected={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
+      <div className="listing-language-tabs" role="group" aria-label="标题语言">
+        {languages.map(item=><button key={item.key} type="button"
+          aria-pressed={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
           {item.label} <small>{Array.from(value.titles[item.key]).length}</small>
         </button>)}
       </div>
@@ -258,7 +259,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       <div className="listing-variant-toolbar">
         <strong>现有 {variants.length} 个变体</strong>
         <button type="button" disabled={disabled||variants.length>=100}
-          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[]}])}>
+          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{"属性1":""},price:"",currency:"",image_urls:[]}])}>
           + 添加变体
         </button>
       </div>

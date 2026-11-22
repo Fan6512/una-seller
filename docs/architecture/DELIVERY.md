@@ -86,3 +86,17 @@
 - Win/Mac 不能因为 Windows 单机通过而同时声称 macOS 通过。
 - 所有缺失字段与上传失败要诚实显示，不能用默认值假装采集到事实。
 - 不为了 UI 截图复刻一整套长表单、审核中心、采集销量/评价、复杂 ERP 架构；必要安全：鉴权、HTTPS、官方 Token 服务端保存和真实写操作回读。
+
+## V0.3 桌面测试版发布检查（PR #65）
+
+此段是操作清单，不代表生产已部署或 Windows 真机已验收。正式签名发布与 PR 内的**未签名 QA 安装包**严格区分。
+
+1. **合并前**：Go 更新路由的选择器、签名 manifest 校验、缓存回退、并发和 UI/字段定点测试通过；Desktop 类型检查和相关 CI 通过。使用临时签名 key 的 `signed_smoke` 只能证明隔离测试链路，不能作为正式签名 OTA 证明。
+2. **合并**：负责人批准后才将 PR #65 合并 `main`；不提前打正式发布 Tag。发布工作流校验 Tag 所指提交必须在 `main` 历史内。
+3. **服务端**：经独立授权备份与部署 Go API/Nginx `/api/v1/desktop/updates`；核对公开 GET 对无合格 Release 返回 204（无正文），对有合格发布版本返回校验后的 200；确认其他路由没有回归。不得把代码合并视为已部署。
+4. **签名与发布**：核对 `desktop-production` 环境的审批和既有可信 Tauri 公私钥一致；在 `main` 中版本文件全部对应 `0.3.0` 后，由负责人创建 `desktop-test-v0.3.0`，通过受保护 workflow 生成签名安装器、`.sig`、`latest.json`；人工确认并发布为 **Pre-release**，不得发布 Draft 或用未签名 PR QA 包冒充更新包。
+5. **真实 OTA**：在**先前用相同可信密钥签名**、且 updater 已启用的 Windows 客户端上分别关闭/开启“接收测试版更新”，抓取 `X-Una-Include-Prerelease: 0/1` 是否经 Tauri→Nginx→Go 正确传递；检查版本升级、下载签名验证、安装和重启。未签名客户端不支持在线自更新。真实签名 OTA 未通过前，V0.3 只可作为待验收候选。
+6. **故障处理**：Go 进程仍可用但 GitHub API/manifest 请求失败时，返回内存中上一次**成功校验**的已发布 manifest，并短暂退避；Go 或 Nginx 自身不可用时此策略无法救援。`releases/latest/download/latest.json` 只有在确认 GitHub latest 一直指向符合 `desktop-vMAJOR.MINOR.0` 的桌面正式版时才能作为第二 endpoint；目前 GitHub latest 是旧 `desktop-v0.1.1`，**不得直接启用**。签名客户端更新链路依赖当前路由，运维需留意。
+7. **后续 Beta 边界**：服务端已能识别 `desktop-test-v1.1.0-beta.N`，但 `windows-desktop.yml` 的 Tag 校验及生成 manifest 的版本比较**尚不支持**带 `-beta.N` 的 Tag；V1.0 以后要实际发布 Beta 时另改 workflow 和测试。本轮不提前开放。
+
+V1.0 正式版仍须先完成授权商品读回/更新、编辑器 Windows 实机验收及相应签名 OTA 验收，不以 V0.3 CI 通过替代。
