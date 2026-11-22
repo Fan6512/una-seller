@@ -28,3 +28,17 @@ func TestCBTCategorySuggestionRejectsSiteIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestPreferredCBTStoreRefreshesExpiredAccessToken(t *testing.T) {
+	stores := []Store{
+		{ID:"disconnected-id",Status:"disconnected"},
+		{ID:"expired-id",Status:"token_expired"},
+		{ID:"connected-id",Status:"connected"},
+	}
+	if got:=preferredCBTStore(stores);got!="expired-id" {
+		t.Fatalf("expected first refreshable CBT store, got %q",got)
+	}
+	if got:=preferredCBTStore([]Store{{ID:"bad",Status:"reauth_required"}});got!="" {
+		t.Fatalf("reauth required must not trigger refresh: %q",got)
+	}
+}
