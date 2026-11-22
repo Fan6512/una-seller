@@ -19,7 +19,7 @@ const desktopAssetPrefix = "https://github.com/Fan6512/una-seller/releases/downl
 
 var (
 	officialTag = regexp.MustCompile(`^desktop-v([1-9][0-9]*)\.(0|[1-9][0-9]*)\.0$`)
-	testTag = regexp.MustCompile(`^desktop-test-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.0(?:-beta\.([1-9][0-9]*))?$`)
+	testTag     = regexp.MustCompile(`^desktop-test-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.0(?:-beta\.([1-9][0-9]*))?$`)
 )
 
 type desktopRelease struct {
@@ -45,7 +45,7 @@ type desktopManifest struct {
 // than the eventual stable release. All publicly displayed versions are MAJOR.MINOR.
 type desktopVersion struct {
 	major, minor, betaIndex int
-	beta                   bool
+	beta                    bool
 }
 
 func parseDesktopRelease(release desktopRelease) (desktopVersion, string, bool) {
