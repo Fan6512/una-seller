@@ -16,34 +16,34 @@ var billingMoneyPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]{0,15})(\.[0-9]{1,
 // These types deliberately exclude buyers, payer IDs, shipping addresses, and raw billing JSON.
 // A billing charge, payment taxable base, or a Brazil-only sale_fee.net is NOT net receipts.
 type BillingCharge struct {
-	DetailID string `json:"detail_id,omitempty"`
-	Type string `json:"type"`
-	Subtype string `json:"subtype,omitempty"`
-	Amount string `json:"amount"`
-	Currency string `json:"currency"`
-	DebitedFromOperation bool `json:"debited_from_operation"`
+	DetailID             string `json:"detail_id,omitempty"`
+	Type                 string `json:"type"`
+	Subtype              string `json:"subtype,omitempty"`
+	Amount               string `json:"amount"`
+	Currency             string `json:"currency"`
+	DebitedFromOperation bool   `json:"debited_from_operation"`
 }
 type BillingPayment struct {
-	Status string `json:"status"`
+	Status             string `json:"status"`
 	MoneyReleaseStatus string `json:"money_release_status"`
-	TaxableBaseUSD string `json:"taxable_base_usd,omitempty"`
+	TaxableBaseUSD     string `json:"taxable_base_usd,omitempty"`
 }
 type BillingTax struct {
-	Type string `json:"type"`
+	Type        string `json:"type"`
 	OriginalUSD string `json:"original_usd,omitempty"`
 	RefundedUSD string `json:"refunded_usd,omitempty"`
 }
 type BillingOrderPreview struct {
-	OrderID string `json:"order_id"`
-	Available bool `json:"available"`
-	Payments []BillingPayment `json:"payments"`
-	Taxes []BillingTax `json:"taxes"`
-	Charges []BillingCharge `json:"charges"`
-	Reconciliation string `json:"reconciliation"`
+	OrderID        string           `json:"order_id"`
+	Available      bool             `json:"available"`
+	Payments       []BillingPayment `json:"payments"`
+	Taxes          []BillingTax     `json:"taxes"`
+	Charges        []BillingCharge  `json:"charges"`
+	Reconciliation string           `json:"reconciliation"`
 }
 type BillingPreviewPage struct {
-	Items []BillingOrderPreview `json:"items"`
-	NetIncomeUSD *string `json:"net_income_usd"`
+	Items        []BillingOrderPreview `json:"items"`
+	NetIncomeUSD *string               `json:"net_income_usd"`
 }
 
 func billingIDsValid(ids []string) bool {
@@ -83,26 +83,28 @@ func billingAmount(value json.Number) (string, error) {
 func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, error) {
 	var source struct {
 		Results []struct {
-			OrderID json.Number `json:"order_id"`
+			OrderID     json.Number `json:"order_id"`
 			PaymentInfo []struct {
-				Status string `json:"status"`
-				MoneyReleaseStatus string `json:"money_release_status"`
-				BaseAmountUSD json.Number `json:"base_amount_usd"`
-				TaxDetails []struct {
-					FinancialEntity string `json:"mov_financial_entity"`
-					OriginalUSD json.Number `json:"original_amount_usd"`
-					RefundedUSD json.Number `json:"refunded_amount_usd"`
+				Status             string      `json:"status"`
+				MoneyReleaseStatus string      `json:"money_release_status"`
+				BaseAmountUSD      json.Number `json:"base_amount_usd"`
+				TaxDetails         []struct {
+					FinancialEntity string      `json:"mov_financial_entity"`
+					OriginalUSD     json.Number `json:"original_amount_usd"`
+					RefundedUSD     json.Number `json:"refunded_amount_usd"`
 				} `json:"tax_details"`
 			} `json:"payment_info"`
 			Details []struct {
 				ChargeInfo struct {
-					DetailID json.Number `json:"detail_id"`
-					DetailType string `json:"detail_type"`
-					DetailSubtype string `json:"detail_sub_type"`
-					DetailAmount json.Number `json:"detail_amount"`
-					DebitedFromOperation string `json:"debited_from_operation"`
+					DetailID             json.Number `json:"detail_id"`
+					DetailType           string      `json:"detail_type"`
+					DetailSubtype        string      `json:"detail_sub_type"`
+					DetailAmount         json.Number `json:"detail_amount"`
+					DebitedFromOperation string      `json:"debited_from_operation"`
 				} `json:"charge_info"`
-				CurrencyInfo struct { CurrencyID string `json:"currency_id"` } `json:"currency_info"`
+				CurrencyInfo struct {
+					CurrencyID string `json:"currency_id"`
+				} `json:"currency_info"`
 			} `json:"details"`
 		} `json:"results"`
 	}
@@ -111,7 +113,9 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 		return BillingPreviewPage{}, ErrOrderBillingInvalid
 	}
 	allowed := make(map[string]bool, len(requested))
-	for _, id := range requested { allowed[id] = true }
+	for _, id := range requested {
+		allowed[id] = true
+	}
 	records := make(map[string]BillingOrderPreview, len(requested))
 	for _, bill := range source.Results {
 		id := bill.OrderID.String()
@@ -119,21 +123,25 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 			len(bill.PaymentInfo) > 100 {
 			return BillingPreviewPage{}, ErrOrderBillingInvalid
 		}
-		out := BillingOrderPreview{OrderID:id, Available:true, Reconciliation:"review_required",
-			Payments:[]BillingPayment{}, Taxes:[]BillingTax{}, Charges:[]BillingCharge{}}
+		out := BillingOrderPreview{OrderID: id, Available: true, Reconciliation: "review_required",
+			Payments: []BillingPayment{}, Taxes: []BillingTax{}, Charges: []BillingCharge{}}
 		for _, pay := range bill.PaymentInfo {
 			base, err := billingAmount(pay.BaseAmountUSD)
 			if err != nil || len(pay.Status) > 60 || len(pay.MoneyReleaseStatus) > 60 || len(pay.TaxDetails) > 100 {
 				return BillingPreviewPage{}, ErrOrderBillingInvalid
 			}
-			out.Payments = append(out.Payments, BillingPayment{Status:pay.Status,
-				MoneyReleaseStatus:pay.MoneyReleaseStatus, TaxableBaseUSD:base})
+			out.Payments = append(out.Payments, BillingPayment{Status: pay.Status,
+				MoneyReleaseStatus: pay.MoneyReleaseStatus, TaxableBaseUSD: base})
 			for _, tax := range pay.TaxDetails {
 				original, err := billingAmount(tax.OriginalUSD)
-				if err != nil { return BillingPreviewPage{}, err }
+				if err != nil {
+					return BillingPreviewPage{}, err
+				}
 				refunded, err := billingAmount(tax.RefundedUSD)
-				if err != nil || len(tax.FinancialEntity) > 80 { return BillingPreviewPage{}, ErrOrderBillingInvalid }
-				out.Taxes = append(out.Taxes, BillingTax{Type:tax.FinancialEntity, OriginalUSD:original, RefundedUSD:refunded})
+				if err != nil || len(tax.FinancialEntity) > 80 {
+					return BillingPreviewPage{}, ErrOrderBillingInvalid
+				}
+				out.Taxes = append(out.Taxes, BillingTax{Type: tax.FinancialEntity, OriginalUSD: original, RefundedUSD: refunded})
 			}
 		}
 		for _, line := range bill.Details {
@@ -143,20 +151,20 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 				len(line.CurrencyInfo.CurrencyID) > 8 || len(c.DetailID) > 30 {
 				return BillingPreviewPage{}, ErrOrderBillingInvalid
 			}
-			out.Charges = append(out.Charges, BillingCharge{DetailID:c.DetailID.String(),
-				Type:c.DetailType, Subtype:c.DetailSubtype, Amount:amount,
-				Currency:line.CurrencyInfo.CurrencyID,
-				DebitedFromOperation:strings.EqualFold(c.DebitedFromOperation,"YES")})
+			out.Charges = append(out.Charges, BillingCharge{DetailID: c.DetailID.String(),
+				Type: c.DetailType, Subtype: c.DetailSubtype, Amount: amount,
+				Currency:             line.CurrencyInfo.CurrencyID,
+				DebitedFromOperation: strings.EqualFold(c.DebitedFromOperation, "YES")})
 		}
 		records[id] = out
 	}
-	page := BillingPreviewPage{Items:make([]BillingOrderPreview,0,len(requested))}
+	page := BillingPreviewPage{Items: make([]BillingOrderPreview, 0, len(requested))}
 	for _, id := range requested {
 		if record, exists := records[id]; exists {
 			page.Items = append(page.Items, record)
 		} else {
-			page.Items = append(page.Items, BillingOrderPreview{OrderID:id, Reconciliation:"not_available",
-				Payments:[]BillingPayment{}, Taxes:[]BillingTax{}, Charges:[]BillingCharge{}})
+			page.Items = append(page.Items, BillingOrderPreview{OrderID: id, Reconciliation: "not_available",
+				Payments: []BillingPayment{}, Taxes: []BillingTax{}, Charges: []BillingCharge{}})
 		}
 	}
 	return page, nil
@@ -171,31 +179,47 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 	}
 	// Authorization and current child mapping must be checked before platform access.
 	auth, child, err := s.RequireSiteConnection(ctx, owner, store, scope.Site, scope.Logistic)
-	if err != nil { return BillingPreviewPage{}, err }
+	if err != nil {
+		return BillingPreviewPage{}, err
+	}
 	path, err := billingPath(ids, child)
-	if err != nil { return BillingPreviewPage{}, err }
+	if err != nil {
+		return BillingPreviewPage{}, err
+	}
 	rows, err := s.db.Query(ctx, `WITH connection AS (`+orderConnection+`)
  SELECT o.order_id FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4
- AND o.order_id=ANY($5::text[])`,store,owner,scope.Site,scope.Logistic,ids)
-	if err != nil { return BillingPreviewPage{}, err }
+ AND o.order_id=ANY($5::text[])`, store, owner, scope.Site, scope.Logistic, ids)
+	if err != nil {
+		return BillingPreviewPage{}, err
+	}
 	found := map[string]bool{}
 	for rows.Next() {
 		var id string
-		if err=rows.Scan(&id); err!=nil { break }
-		found[id]=true
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		found[id] = true
 	}
-	if err==nil { err=rows.Err() }
+	if err == nil {
+		err = rows.Err()
+	}
 	rows.Close()
-	if err!=nil { return BillingPreviewPage{},err }
-	if len(found)!=len(ids) { return BillingPreviewPage{},ErrOrderNotFound }
-	fetchCtx,cancel:=context.WithTimeout(ctx,15*time.Second)
+	if err != nil {
+		return BillingPreviewPage{}, err
+	}
+	if len(found) != len(ids) {
+		return BillingPreviewPage{}, ErrOrderNotFound
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var raw json.RawMessage
-	_,err=s.orderGET(fetchCtx,auth.AccessToken,path,&raw)
-	if err!=nil { return BillingPreviewPage{},err }
-	return parseBillingPreview(raw,ids)
+	_, err = s.orderGET(fetchCtx, auth.AccessToken, path, &raw)
+	if err != nil {
+		return BillingPreviewPage{}, err
+	}
+	return parseBillingPreview(raw, ids)
 }
 
 // No billing data is persisted or classified as final in this preview slice.

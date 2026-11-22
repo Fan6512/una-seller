@@ -23,6 +23,10 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 	if !ok {
 		return
 	}
+	if tail == "search" {
+		a.searchOrders(w, r, owner, store)
+		return
+	}
 	q := r.URL.Query()
 	site, logistic := q.Get("site"), q.Get("logistic_type")
 	if site == "" || logistic == "" || len(q["site"]) != 1 || len(q["logistic_type"]) != 1 {
@@ -106,8 +110,13 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_status_invalid"})
 			return
 		}
+		purchaseLink := q.Get("purchase")
+		if len(q["purchase"]) > 1 || !meli.ValidPurchaseLinkFilter(purchaseLink) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_purchase_filter_invalid"})
+			return
+		}
 		var page meli.OrderPage
-		page, err = a.service.ListOrders(r.Context(), owner, store, scope, status, offset)
+		page, err = a.service.ListOrders(r.Context(), owner, store, scope, status, purchaseLink, offset)
 		if err == nil {
 			writeJSON(w, http.StatusOK, page)
 			return

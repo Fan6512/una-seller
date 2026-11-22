@@ -4,6 +4,8 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import ts from "typescript";
 import { runListingBatches } from "../src/listingBatches.ts";
+// Store login checks share this suite's Node strip-types fixture and store-session mocks.
+import { checkStoresOnLogin, resolveManualStoreCheck, storeHealthFromList } from "../src/storeLoginCheck.ts";
 
 const storesURL = new URL("../src/stores.ts", import.meta.url).href;
 const diagnosticsSource = readFileSync(new URL("../src/DevelopmentDiagnostics.tsx", import.meta.url), "utf8");
@@ -391,4 +393,87 @@ test("an expired login does not replay a POST", async (t) => {
   const fetch = t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 401 }));
   await assert.rejects(storeRequest(mlm, "POST", undefined, true), /确认状态后重新发起/);
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+
+test("login verifies each eligible store once and preserves a failed verification warning", async () => {
+  const initial = [
+    { id: "one", status: "connected", marketplaces_status: "verified" },
+    { id: "two", status: "token_expired", marketplaces_status: "verified" },
+  ];
+  const fresh = initial.map((item) => ({ ...item, status: "connected" }));
+  const reads = [];
+  const checks = [];
+  const result = await checkStoresOnLogin(
+    async (force) => { reads.push(force); return reads.length === 1 ? initial : fresh; },
+    async (id, manual) => {
+      checks.push([id, manual]);
+      if (id === "two") throw new Error("network error");
+    },
+  );
+  assert.deepEqual(reads, [true, true], "only the initial and final store GETs are needed");
+  assert.deepEqual(checks, [["one", false], ["two", false]], "one automatic POST per eligible store");
+  assert.equal(result.health.status, "attention", "an ambiguous check must not show connected");
+  assert.deepEqual([...result.failedStoreIds], ["two"]);
+  assert.equal(storeHealthFromList(fresh, result.failedStoreIds).status, "attention",
+    "later plain GETs must not override a failed connection check");
+  result.failedStoreIds.delete("two"); // confirmed manual check for this store
+  assert.equal(storeHealthFromList(fresh, result.failedStoreIds).status, "connected",
+    "only a successful recheck should clear the warning");
+});
+
+test("login leaves terminal/absent stores alone instead of attempting OAuth rotation", async () => {
+  const states = [
+    { id: "reauth", status: "reauth_required", marketplaces_status: "verified" },
+    { id: "uncertain", status: "refresh_unknown", marketplaces_status: "verified" },
+    { id: "disconnected", status: "disconnected", marketplaces_status: "verified" },
+  ];
+  let reads = 0;
+  let postCalls = 0;
+  const result = await checkStoresOnLogin(async () => { reads++; return states; }, async () => { postCalls++; });
+  assert.equal(reads, 1);
+  assert.equal(postCalls, 0);
+  assert.equal(result.health.status, "attention");
+  assert.equal(result.failedStoreIds.size, 0);
+  const empty = await checkStoresOnLogin(async () => [], async () => { postCalls++; });
+  assert.equal(empty.health.status, "empty");
+  assert.equal(postCalls, 0);
+});
+
+test("disconnected-only stores show an empty state, not a connection error", async () => {
+  const disconnected = { id: "inactive", status: "disconnected", marketplaces_status: "unverified" };
+  const connected = { id: "active", status: "connected", marketplaces_status: "verified" };
+  const reauth = { id: "reauth", status: "reauth_required", marketplaces_status: "verified" };
+  assert.deepEqual(storeHealthFromList([disconnected]), {
+    status: "empty", message: "所有店铺已断开，可在设置中重新授权",
+  });
+  assert.equal(storeHealthFromList([connected, disconnected]).status, "connected",
+    "a voluntarily disconnected store must not make a healthy account orange");
+  assert.equal(storeHealthFromList([disconnected, reauth]).status, "attention",
+    "a still-active store requiring reauthorization remains actionable");
+  assert.equal(storeHealthFromList([disconnected], new Set(["inactive"])).status, "empty",
+    "failed checks on subsequently disconnected stores are not active failures");
+  assert.equal(storeHealthFromList([connected], new Set(["__initial_read_failed__"])).status, "attention",
+    "an initial read failure still requires confirmation if active stores exist");
+});
+
+test("manual verification recovery keeps unverified peer stores flagged", () => {
+  const stores = [
+    { id: "confirmed", status: "connected", marketplaces_status: "verified" },
+    { id: "other", status: "connected", marketplaces_status: "verified" },
+    { id: "deliberate-disconnect", status: "disconnected", marketplaces_status: "verified" },
+  ];
+  const initialFailure = new Set(["__initial_read_failed__", "deliberate-disconnect"]);
+  const afterFirst = resolveManualStoreCheck(initialFailure, stores, "confirmed");
+  assert.deepEqual([...initialFailure].sort(), ["__initial_read_failed__", "deliberate-disconnect"],
+    "input should not be mutated");
+  assert.deepEqual([...afterFirst], ["other"], "other active store must remain unverified");
+  assert.equal(storeHealthFromList(stores, afterFirst).status, "attention");
+  const afterSecond = resolveManualStoreCheck(afterFirst, stores, "other");
+  assert.deepEqual([...afterSecond], []);
+  assert.equal(storeHealthFromList(stores, afterSecond).status, "connected");
+
+  const failedOne = new Set(["confirmed", "other"]);
+  const recoveredOne = resolveManualStoreCheck(failedOne, stores, "confirmed");
+  assert.deepEqual([...recoveredOne], ["other"], "manual recovery must only clear the checked store");
 });

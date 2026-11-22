@@ -15,3 +15,7 @@ CREATE TABLE IF NOT EXISTS app.meli_order_purchases (
       REFERENCES app.meli_orders(store_id,site_id,logistic_type,seller_id,order_id) ON DELETE CASCADE
 );
 ALTER TABLE app.meli_order_purchases ENABLE ROW LEVEL SECURITY;
+
+-- These additions are explicitly reapplied during migration; no warehouse API is invoked.
+ALTER TABLE app.meli_order_purchases ADD COLUMN IF NOT EXISTS warehouse_address text NOT NULL DEFAULT '';
+ALTER TABLE app.meli_order_purchases ADD COLUMN IF NOT EXISTS purchase_tracking_number text NOT NULL DEFAULT '';

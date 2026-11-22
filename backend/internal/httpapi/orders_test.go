@@ -45,6 +45,8 @@ func TestOrdersRejectMissingScopeAndInvalidFiltersBeforeDatabase(t *testing.T) {
 		{http.MethodPost, "/api/v1/stores/00000000-0000-4000-8000-000000000001/orders/sync?site=MLB"},
 		{http.MethodGet, "/api/v1/stores/00000000-0000-4000-8000-000000000001/orders?site=MLB&logistic_type=remote&offset=-1"},
 		{http.MethodGet, "/api/v1/stores/00000000-0000-4000-8000-000000000001/orders?site=MLB&logistic_type=remote&status=not%3Bvalid"},
+		{http.MethodGet, "/api/v1/stores/00000000-0000-4000-8000-000000000001/orders?site=MLB&logistic_type=remote&purchase=invalid"},
+		{http.MethodGet, "/api/v1/stores/00000000-0000-4000-8000-000000000001/orders?site=MLB&logistic_type=remote&purchase=linked&purchase=unlinked"},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequest(tt.method, tt.path, nil)

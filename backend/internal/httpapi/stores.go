@@ -87,6 +87,18 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 		a.orderBillingPreview(w, r, orderPath[0])
 		return
 	}
+	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && orderPath[3] == "sla" {
+		a.orderDispatchSLA(w, r, orderPath[0], orderPath[2])
+		return
+	}
+	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && orderPath[3] == "refresh" {
+		a.orderRefresh(w, r, orderPath[0], orderPath[2])
+		return
+	}
+	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && orderPath[3] == "image-refresh" {
+		a.orderImageRefresh(w, r, orderPath[0], orderPath[2])
+		return
+	}
 	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && orderPath[3] == "purchase" {
 		a.orderPurchase(w, r, orderPath[0], orderPath[2])
 		return
