@@ -385,6 +385,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     if (next === search) return;
     const timer = window.setTimeout(() => {
       setOffset(0);
+      setChecked(new Set());
       setSearch(next);
     }, 280);
     return () => window.clearTimeout(timer);
@@ -513,8 +514,8 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           {workspaceTab==="inbox" && <button type="button" className="refresh-button" onClick={reload} disabled={listLoading||draftDirty} aria-label="刷新采集箱"><Icon name="refresh" size={17} /> 刷新</button>}
         </div>
         <div className="workbench-tabs" role="tablist" aria-label="工作台分区">
-          <button type="button" role="tab" aria-selected={workspaceTab==="inbox"} onClick={()=>{if(!leavingDirty())return;setWorkspaceTab("inbox");}}>采集箱</button>
-          <button type="button" role="tab" aria-selected={workspaceTab==="products"} onClick={()=>{if(!leavingDirty())return;setWorkspaceTab("products");}}>产品箱</button>
+          <button type="button" role="tab" aria-selected={workspaceTab==="inbox"} onClick={()=>{if(!leavingDirty())return;setChecked(new Set());setWorkspaceTab("inbox");}}>采集箱</button>
+          <button type="button" role="tab" aria-selected={workspaceTab==="products"} onClick={()=>{if(!leavingDirty())return;setChecked(new Set());setWorkspaceTab("products");}}>产品箱</button>
         </div>
         {workspaceTab==="products"? <OwnProductsPage onDirtyChange={setOwnDirty} /> : <>
         <div className="workbench-approval">
@@ -570,8 +571,8 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               <div className="list-footer">
                 <span>第 {pageNumber} 页</span>
                 <div className="page-actions">
-                  <button type="button" disabled={offset === 0 || listLoading} aria-label="上一页" onClick={() => setOffset((n) => Math.max(0, n - PAGE_SIZE))}><Icon name="left" size={17} />上一页</button>
-                  <button type="button" disabled={!hasMore || listLoading} aria-label="下一页" onClick={() => setOffset((n) => n + PAGE_SIZE)}>下一页<Icon name="right" size={17} /></button>
+                  <button type="button" disabled={offset === 0 || listLoading} aria-label="上一页" onClick={() => {setChecked(new Set());setOffset((n) => Math.max(0, n - PAGE_SIZE));}}><Icon name="left" size={17} />上一页</button>
+                  <button type="button" disabled={!hasMore || listLoading} aria-label="下一页" onClick={() => {setChecked(new Set());setOffset((n) => n + PAGE_SIZE);}}>下一页<Icon name="right" size={17} /></button>
                 </div>
               </div>
             )}
