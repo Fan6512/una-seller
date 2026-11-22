@@ -1,4 +1,5 @@
 import { getAccessToken, rejectSession } from "./auth";
+import { readAPIError } from "./apiErrors";
 import { apiBase, type CollectionImage, type CollectionVariant } from "./collections";
 import type { ListingFields } from "./listingFields";
 
@@ -56,9 +57,12 @@ async function request<T>(path:string,signal:AbortSignal,method:"GET"|"POST"|"PU
     throw error;
   }
   if(res.status===202) throw new ProductRequestError(202,"服务器已接收更改，但读回未确认；请刷新列表核实");
-  if(!res.ok) throw new ProductRequestError(res.status,res.status===409
-    ?"数据已在另一窗口变化（409），请重新加载后操作"
-    :res.status===404?"商品不存在或无法访问":"操作失败（HTTP "+res.status+"）");
+  if(!res.ok) {
+    const fallback=res.status===409?"数据已在另一窗口变化（409），请重新加载后操作"
+      :res.status===404?"商品不存在或无法访问":"操作失败（HTTP "+res.status+"）";
+    const details=await readAPIError(res,fallback);
+    throw new ProductRequestError(res.status,details.message);
+  }
   return await res.json() as T;
 }
 export const OWN_PRODUCT_PAGE_SIZE = 24;
