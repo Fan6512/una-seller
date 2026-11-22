@@ -1,0 +1,65 @@
+#!/usr/bin/env node
+// Single explicit version change per distributable candidate, never per CI retry.
+// Usage: node scripts/desktop-version.mjs --check
+//        node scripts/desktop-version.mjs 0.3.0
+//        node scripts/desktop-version.mjs 1.0.0  # only after release approval
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const root=new URL("../",import.meta.url);
+const path=(name)=>fileURLToPath(new URL(name,root));
+const sources={
+  packageJSON:"apps/desktop/package.json",
+  npmLock:"apps/desktop/package-lock.json",
+  tauri:"apps/desktop/src-tauri/tauri.conf.json",
+  cargo:"apps/desktop/src-tauri/Cargo.toml",
+  cargoLock:"apps/desktop/src-tauri/Cargo.lock",
+};
+const files=Object.fromEntries(Object.entries(sources).map(([k,v])=>[k,readFileSync(path(v),"utf8")]));
+const pkg=JSON.parse(files.packageJSON);
+const lock=JSON.parse(files.npmLock);
+const tauri=JSON.parse(files.tauri);
+const cargoVersion=/^version = "([^"]+)"$/m.exec(files.cargo)?.[1];
+const cargoLockVersion=/\[\[package\]\]\nname = "una-seller"\nversion = "([^"]+)"/.exec(files.cargoLock)?.[1];
+const versions=[pkg.version,lock.version,lock.packages[""].version,tauri.version,cargoVersion,cargoLockVersion];
+const versionFormat=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+if(!versions.every(x=>x===versions[0]&&versionFormat.test(x)))
+  throw new Error("Desktop package versions disagree: "+JSON.stringify(versions));
+const current=versions[0];
+if(process.argv[2]==="--check"&&process.argv.length===3){
+  console.log("Desktop version files agree:",current);
+  process.exit(0);
+}
+const target=process.argv[2];
+if(process.argv.length!==3||!versionFormat.test(target))
+  throw new Error("Usage: node scripts/desktop-version.mjs --check | MAJOR.MINOR.PATCH");
+const parts=(s)=>s.split(".").map(Number);
+const [before,after]=[parts(current),parts(target)];
+const increasing=after[0]>before[0]||
+  after[0]===before[0]&&(after[1]>before[1]||after[1]===before[1]&&after[2]>before[2]);
+if(!increasing)throw new Error("Version must strictly increase: "+current+" -> "+target);
+if(before[0]>=1&&after[0]===0)throw new Error("A stable release must not downgrade into 0.x");
+const changeJSON=(original,keys)=>{
+  const copy=JSON.parse(original);
+  for(const key of keys){
+    if(key.length===1)copy[key[0]]=target;
+    else copy[key[0]][key[1]]=target;
+  }
+  return JSON.stringify(copy,null,2)+"\n";
+};
+const cargoName=files.cargo.replace(/^version = "[^"]+"$/m, 'version = "'+target+'"');
+const oldLock='[[package]]\nname = "una-seller"\nversion = "'+current+'"';
+if(files.cargoLock.split(oldLock).length!==2)throw new Error("Cargo.lock project package not unique");
+const cargoLocked=files.cargoLock.replace(oldLock,'[[package]]\nname = "una-seller"\nversion = "'+target+'"');
+const edits={
+  packageJSON:changeJSON(files.packageJSON,[["version"]]),
+  npmLock:changeJSON(files.npmLock,[["version"],["packages",""]]).replace(
+    '"": {\n      "name": "una-seller-desktop",\n      "version": "'+current+'"',
+    '"": {\n      "name": "una-seller-desktop",\n      "version": "'+target+'"'
+  ),
+  tauri:changeJSON(files.tauri,[["version"]]),
+  cargo:cargoName,
+  cargoLock:cargoLocked,
+};
+for(const [name,body] of Object.entries(edits))writeFileSync(path(sources[name]),body);
+console.log("Desktop candidate version:",current,"->",target);
