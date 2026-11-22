@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Single explicit version change per distributable candidate, never per CI retry.
 // Usage: node scripts/desktop-version.mjs --check
-//        node scripts/desktop-version.mjs 0.3.0
-//        node scripts/desktop-version.mjs 1.0.0  # only after release approval
+//        node scripts/desktop-version.mjs 0.3
+//        node scripts/desktop-version.mjs 1.0  # only after release approval
+// Package managers and Tauri store 0.3.0/1.0.0, while the product UI shows two parts.
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -30,13 +31,14 @@ if(process.argv[2]==="--check"&&process.argv.length===3){
   console.log("Desktop version files agree:",current);
   process.exit(0);
 }
-const target=process.argv[2];
-if(process.argv.length!==3||!versionFormat.test(target))
-  throw new Error("Usage: node scripts/desktop-version.mjs --check | MAJOR.MINOR.PATCH");
+const userVersion=process.argv[2];
+const publicFormat=/^(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+if(process.argv.length!==3||!publicFormat.test(userVersion))
+  throw new Error("Usage: node scripts/desktop-version.mjs --check | MAJOR.MINOR (e.g. 0.3 or 1.0)");
+const target=userVersion+".0";
 const parts=(s)=>s.split(".").map(Number);
 const [before,after]=[parts(current),parts(target)];
-const increasing=after[0]>before[0]||
-  after[0]===before[0]&&(after[1]>before[1]||after[1]===before[1]&&after[2]>before[2]);
+const increasing=after[0]>before[0]||(after[0]===before[0]&&after[1]>before[1]);
 if(!increasing)throw new Error("Version must strictly increase: "+current+" -> "+target);
 if(before[0]>=1&&after[0]===0)throw new Error("A stable release must not downgrade into 0.x");
 const changeJSON=(original,keys)=>{
@@ -60,4 +62,4 @@ const edits={
   cargoLock:cargoLocked,
 };
 for(const [name,body] of Object.entries(edits))writeFileSync(path(sources[name]),body);
-console.log("Desktop candidate version:",current,"->",target);
+console.log("Desktop candidate version:",current,"->",target,"(display V"+userVersion+")");
