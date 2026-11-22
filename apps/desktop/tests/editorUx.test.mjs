@@ -51,3 +51,20 @@ test("editing a variant attribute name never clobbers another attribute",()=>{
   assert.deepEqual(renameVariantAttribute(original,"Color","Size"),original);
   assert.deepEqual(original,{Color:"Gray",Size:"A"});
 });
+
+test("gallery can move an image directly to any position without mutating the source",()=>{
+  const original=[
+    {url:"https://cdn.example/1.jpg",type:"main"},
+    {url:"https://cdn.example/2.jpg",type:"additional"},
+    {url:"https://cdn.example/3.jpg",type:"additional"},
+    {url:"https://cdn.example/4.jpg",type:"additional"},
+  ];
+  const moved=moveGalleryImage(original,1,3);
+  assert.deepEqual(moved.map(x=>x.url),[original[0].url,original[2].url,original[3].url,original[1].url]);
+  assert.deepEqual(moved.map(x=>x.type),["main","additional","additional","additional"]);
+  assert.deepEqual(moveGalleryImage(original,2,2),original);
+  assert.deepEqual(original.map(x=>x.url),[
+    "https://cdn.example/1.jpg","https://cdn.example/2.jpg",
+    "https://cdn.example/3.jpg","https://cdn.example/4.jpg",
+  ]);
+});

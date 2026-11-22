@@ -126,7 +126,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       <span>{loadState === "loading" ? "读取中…" : loadState === "error" ? "状态未知 · 保存禁用"
         : saved ? (dirty ? "有未保存修改" : "已保存") : "尚未保存"}</span>
     </div>
-    <p>这里是转产品库前的暂存稿，原始采集标题、描述和图片不会被覆盖。</p>
     <ListingFieldsEditor value={fields.listing_fields} disabled={loadState !== "ready" || saving}
       onChange={listing_fields=>{
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
@@ -151,6 +150,5 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       onClick={refreshDraft}>重新加载工作稿</button>}
     <button type="button" className="primary-button" onClick={() => void save()}
       disabled={!valid || loadState !== "ready" || saving || !dirty}>{saving ? "保存中…" : "保存整理工作稿"}</button>
-    <p className="working-draft-hint">保存工作稿后可以选择「通过」，转入产品箱继续修改；不会自动刊登。</p>
   </section>;
 }

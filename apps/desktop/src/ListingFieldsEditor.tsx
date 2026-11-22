@@ -12,7 +12,6 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
   const [predictMessage,setPredictMessage]=useState("");
   const predictionRequest = useRef<AbortController|null>(null);
   const [copyMessage,setCopyMessage]=useState("");
-  const [activePanel,setActivePanel]=useState<"titles"|"basic"|"images"|"variants">("titles");
   const [activeLanguage,setActiveLanguage]=useState<"en"|"es"|"pt">("en");
   const [imagePreview,setImagePreview]=useState<number|null>(null);
   const [editingImage,setEditingImage]=useState<number|null>(null);
@@ -100,23 +99,10 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
   return <section className="listing-fields">
     <div className="listing-editor-header">
       <h3>上架资料整理</h3>
-      <p className="listing-fields-note">原始采集资料不会被覆盖；工作稿与产品箱共用此编辑器。当前分区切换不会丢失尚未保存的内容。</p>
     </div>
     {error&&<p className="listing-validation" role="alert">保存前请检查：{error}</p>}
-    <div className="listing-editor-tabs" role="group" aria-label="商品资料编辑分区">
-      {([
-        {key:"titles",label:"多语言标题"},
-        {key:"basic",label:"基础信息"},
-        {key:"images",label:"图片管理 ("+images.length+")"},
-        {key:"variants",label:"变体 SKU ("+variants.length+")"},
-      ] as const).map(item=><button key={item.key} type="button"
-        aria-pressed={activePanel===item.key} onClick={()=>setActivePanel(item.key)}>
-        {item.label}
-      </button>)}
-    </div>
-    {activePanel==="titles"&&<fieldset className="listing-editor-panel">
-      <legend>多语言商品标题</legend>
-      <p className="listing-fields-note">原始采集只填入识别的语言栏，不自动翻译。西语和葡语用于买家本地化，站点选择在刊登阶段完成。</p>
+    <fieldset className="listing-editor-panel">
+      <legend>多语言标题</legend>
       <div className="listing-language-tabs" role="group" aria-label="标题语言">
         {languages.map(item=><button key={item.key} type="button"
           aria-pressed={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
@@ -140,11 +126,9 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       </div>
       {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
       {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
-      <p className="listing-fields-note">商品卖点和描述目前是共用字段，并没有独立的三语版本；本次仅切换已有的三语标题。</p>
-    </fieldset>}
-    {activePanel==="basic"&&<>
+    </fieldset>
+    <h4 className="listing-editor-section-title">基础信息</h4>
     <fieldset><legend>分类建议与基本属性</legend>
-      <p className="listing-fields-note">采集后不立即分类。先修改好标题，再按需点击“推荐 CBT 类目”。结果由 Mercado Libre Global Selling 官方接口返回，必须由你确认，站点专属必填属性在上传阶段另行验证。</p>
       <div className="category-predict-row">
         <button type="button" disabled={disabled||predicting||!value.titles.en.trim()||value.titles.en.trim().split(/\s+/).length<2}
           onClick={()=>void predict()}>{predicting?"查询中…":"根据英文标题推荐 CBT 类目"}</button>
@@ -175,7 +159,6 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
         {field("采购成本（不是来源竞品售价）","purchase_price","留空表示未知")}
         {field("采购币种","purchase_currency","如 CNY、USD",3)}
       </div>
-      <p className="listing-fields-note">不在这里选择国家站点，也不填写各站点刊登售价。上传商品时再选择目标店铺、国家站点、对应售价及站点属性。</p>
     </fieldset>
 
     <fieldset><legend>重量与包装尺寸</legend>
@@ -185,7 +168,6 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
         {field("宽（cm）","width_cm","厘米",15)}
         {field("高（cm）","height_cm","厘米",15)}
       </div>
-      <p className="listing-fields-note">填写商品的实际包装重量和尺寸，留空表示待测量，不根据采集售价、图片估算。</p>
     </fieldset>
 
     <fieldset><legend>卖点与分类属性</legend>
@@ -203,13 +185,9 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       </div>)}
       <button type="button" disabled={disabled||value.attributes.length>=60}
         onClick={()=>set("attributes",[...value.attributes,{name:"",value:""}])}>+ 添加属性</button>
-      <p className="listing-fields-note">分类必填属性会在接入该站点官方分类规则后明确标识；目前不能把手工填写当作官方校验通过。</p>
     </fieldset>
-
-    </>}
-    {activePanel==="images"&&<fieldset className="listing-editor-panel">
-      <legend>商品图片</legend>
-      <p className="listing-fields-note">第一张是主图；点击缩略图看大图，图片地址默认收起。只管理已采集的 HTTPS 链接，不会自动上传或修图。</p>
+    <fieldset className="listing-editor-panel">
+      <legend>图片管理</legend>
       <div className="listing-gallery-toolbar">
         <strong>{images.length} 张图片</strong>
         <button type="button" disabled={disabled||duplicateCount===0}
@@ -230,6 +208,12 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
             <span className="listing-gallery-number">{i===0?"主图":String(i+1)}</span>
           </button>
           <div className="listing-gallery-actions">
+            <label className="listing-gallery-position">展示顺序
+              <select disabled={disabled||images.length<2} aria-label={"第 "+(i+1)+" 张图片的展示位置"} value={i}
+                onChange={e=>moveImage(i,Number(e.target.value))}>
+                {images.map((_,position)=><option key={position} value={position}>第 {position+1} 张</option>)}
+              </select>
+            </label>
             <button type="button" disabled={disabled||i===0} onClick={()=>moveMain(i)}>设为主图</button>
             <button type="button" disabled={disabled||i===0} onClick={()=>moveImage(i,i-1)} aria-label={"图片 "+(i+1)+" 前移"}>←</button>
             <button type="button" disabled={disabled||i===images.length-1} onClick={()=>moveImage(i,i+1)} aria-label={"图片 "+(i+1)+" 后移"}>→</button>
@@ -251,11 +235,9 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
           <img src={images[imagePreview].url} alt={"图片 "+(imagePreview+1)+" 大图"} referrerPolicy="no-referrer"/>:
           <span>该图片还没有有效的 HTTPS 链接。</span>}
       </div>}
-      <p className="listing-fields-note">“清理重复链接”仅移除 URL 完全重复的项目（忽略首尾空格），不同颜色/规格的图片不做视觉判重。删除图片不会悄悄抹掉变体已保存的独立图片关联。</p>
-    </fieldset>}
-    {activePanel==="variants"&&<fieldset className="listing-editor-panel">
-      <legend>规格与 SKU</legend>
-      <p className="listing-fields-note">每行代表一个真实规格。变体属性、SKU、价格和币种可直接在表格中编辑；价格留空代表未知，不自动填写库存或成本。</p>
+    </fieldset>
+    <fieldset className="listing-editor-panel">
+      <legend>变体 SKU</legend>
       <div className="listing-variant-toolbar">
         <strong>现有 {variants.length} 个变体</strong>
         <button type="button" disabled={disabled||variants.length>=100}
@@ -310,7 +292,6 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
           <strong>变体 {variantImageIndex+1} · 选择图片</strong>
           <button type="button" onClick={()=>setVariantImageIndex(null)}>完成</button>
         </div>
-        <p className="listing-fields-note">从商品图片墙中选择，或保留该变体已有的独立图片。只修改当前变体，不影响其他规格。</p>
         <div className="listing-variant-image-options">
           {Array.from(new Set([...images.map(im=>im.url),...variants[variantImageIndex].image_urls]))
             .filter(url=>url.trim()!=="").map(url=><label key={url}>
@@ -332,6 +313,6 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
             }}>添加链接</button>
         </div>
       </section>}
-    </fieldset>}
+    </fieldset>
   </section>;
 }

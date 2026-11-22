@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  approvalBlockReason,
   countApprovalOutcomes,
   emptyProductPageFallback,
   productSaveNeedsReadback,
@@ -29,4 +30,13 @@ test("empty last page returns to the previous page without trapping navigation",
   assert.equal(emptyProductPageFallback(24,0,24),0);
   assert.equal(emptyProductPageFallback(0,0,24),null);
   assert.equal(emptyProductPageFallback(48,2,24),null);
+});
+
+
+test("approve button gives actionable feedback without bypassing selection and save", () => {
+  assert.match(approvalBlockReason(0,false),/勾选/);
+  assert.match(approvalBlockReason(0,true),/勾选/);
+  assert.match(approvalBlockReason(1,true),/保存/);
+  assert.equal(approvalBlockReason(1,false),null);
+  assert.equal(approvalBlockReason(9,false),null);
 });

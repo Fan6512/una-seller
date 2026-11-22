@@ -10,7 +10,7 @@ import OrdersPage from "./OrdersPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
 import OwnProductsPage from "./OwnProductsPage";
 import { approveCollection } from "./ownProducts";
-import { countApprovalOutcomes, type ApprovalOutcome } from "./workbenchRules";
+import { approvalBlockReason, countApprovalOutcomes, type ApprovalOutcome } from "./workbenchRules";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import {
   apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getWorkingDraft, getHealth, PAGE_SIZE,
@@ -303,8 +303,9 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     setSelectedId(id);
   };
   const approveSelected=async()=>{
-    if(approving||checked.size===0)return;
-    if(draftDirty) {setApproveNotice("请先保存当前商品的整理工作稿，再执行通过。");return;}
+    if(approving)return;
+    const reason=approvalBlockReason(checked.size,draftDirty);
+    if(reason){setApproveNotice(reason);return;}
     setApproving(true);setApproveNotice("");
     const outcomes:ApprovalOutcome[]=[];
     const errors:string[]=[];
@@ -510,7 +511,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : !settings && <>
         <div className="page-heading">
-          <div><h1>工作台</h1><p>采集商品 → 整理工作稿 → 通过后进入独立产品箱</p></div>
+          <div><h1>工作台</h1></div>
           {workspaceTab==="inbox" && <button type="button" className="refresh-button" onClick={reload} disabled={listLoading||draftDirty} aria-label="刷新采集箱"><Icon name="refresh" size={17} /> 刷新</button>}
         </div>
         <div className="workbench-tabs" role="tablist" aria-label="工作台分区">
@@ -523,7 +524,14 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             onClick={e=>{if(draftDirty&&!leavingDirty())e.preventDefault();}}
             onChange={e=>{setShowTransferred(e.target.checked);setOffset(0);setChecked(new Set());}} /> 包含已转入来源</label>
           <span>已勾选 {checked.size} 件</span>
-          <button type="button" className="primary-button" disabled={!checked.size||approving||draftDirty} onClick={()=>void approveSelected()}>{approving?"转入中…":"通过并移入产品箱"}</button>
+          <button type="button" className="approval-select-current" disabled={!selectedId||approving||!items.some(item=>item.id===selectedId)}
+            aria-pressed={selectedId!==null&&checked.has(selectedId)}
+            onClick={()=>{
+              if(!selectedId)return;
+              setChecked(prev=>{const next=new Set(prev);if(next.has(selectedId))next.delete(selectedId);else next.add(selectedId);return next;});
+              setApproveNotice("");
+            }}>{selectedId&&checked.has(selectedId)?"取消勾选当前商品":"勾选当前商品"}</button>
+          <button type="button" className="primary-button" disabled={approving} onClick={()=>void approveSelected()}>{approving?"转入中…":"通过并移入产品箱"}</button>
         </div>
         {approveNotice&&<p className="workspace-feedback" role="status">{approveNotice}</p>}
         <div className={"workspace " + (!showDetail ? "workspace-single" : "")}>
@@ -552,7 +560,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
                     <article key={item.id} className={"product-card-tile " + (selectedId===item.id?"selected":"")}>
                       <label className="product-card-check" title="勾选待通过商品">
                         <input type="checkbox" aria-label={"选择 "+item.title} checked={checked.has(item.id)}
-                          onChange={event=>setChecked(prev=>{const next=new Set(prev);if(event.target.checked)next.add(item.id);else next.delete(item.id);return next;})} />
+                          onChange={event=>{setChecked(prev=>{const next=new Set(prev);if(event.target.checked)next.add(item.id);else next.delete(item.id);return next;});setApproveNotice("");}} />
                       </label>
                       <button type="button" onClick={()=>chooseSource(item.id)} aria-label={"查看采集商品 "+item.title}>
                         <ProductImage src={item.main_image_url} alt={item.title} className="card-image" />
