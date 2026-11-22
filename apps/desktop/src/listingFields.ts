@@ -65,8 +65,8 @@ export function detectTitleLanguage(title:string): TitleLanguage | "uncertain" {
   if (/[ñ¿¡]/u.test(text)) return "es";
   if (/[ãõç]/u.test(text)) return "pt";
   const words=text.match(/[\p{L}]+/gu)??[];
-  const spanish=new Set(["con","sin","para","mujer","hombre","niños","baño","zapatos","cuidado","juguete","herramienta","talla","impermeable","pantalones","lavable"]);
-  const portuguese=new Set(["com","sem","para","mulher","homem","crianças","banheiro","sapatos","cuidados","brinquedo","ferramenta","tamanho","impermeável","calças","lavável","não"]);
+  const spanish=new Set(["con","sin","limpiador","limpiadora","limpieza","invierno","mujer","hombre","niños","baño","zapatos","cuidado","juguete","herramienta","talla","impermeable","pantalones","lavable"]);
+  const portuguese=new Set(["com","sem","limpeza","limpador","inverno","mulher","homem","crianças","banheiro","sapatos","cuidados","brinquedo","ferramenta","tamanho","impermeável","calças","lavável","não"]);
   const english=new Set(["with","for","women","men","kids","bathroom","shoes","care","toy","tool","size","waterproof","pants","washable","and","set"]);
   const score=(set:Set<string>)=>words.reduce((n,w)=>n+(set.has(w)?1:0),0);
   const es=score(spanish),pt=score(portuguese),en=score(english);
