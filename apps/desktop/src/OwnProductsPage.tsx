@@ -78,9 +78,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
     setReload(n=>n+1);
   };
   const save=async()=>{
-    if(!product||saving||unknown||!dirty)return;
-    if(!fields.title.trim()||count(fields.title)>500||count(fields.description)>20000||count(fields.notes)>5000||
-      validateListingFields(fields.listing_fields))return;
+    if(!product||saving||unknown||!dirty||!valid)return;
     setSaving(true);setStatus("");
     try {
       const {product:next}=await updateOwnProduct(product.id,{...fields,revision:product.revision},new AbortController().signal);
@@ -100,8 +98,11 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
       if(productSaveNeedsReadback(code))setUnknown(true);
     } finally {setSaving(false);}
   };
-  const valid=fields.title.trim().length>0&&count(fields.title)<=500&&count(fields.description)<=20000&&count(fields.notes)<=5000&&
-    !validateListingFields(fields.listing_fields);
+  const validation = count(fields.description) > 20000 ? "商品描述不能超过 20000 字符"
+    : count(fields.notes) > 5000 ? "整理备注不能超过 5000 字符"
+    : count(fields.title) > 500 ? "商品标题不能超过 500 字符"
+    : validateListingFields(fields.listing_fields);
+  const valid = !validation && fields.title.trim().length > 0;
   return <div className="workspace">
     <section className="list-pane" aria-label="产品箱商品卡片">
       <div className="list-toolbar">
@@ -151,6 +152,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
               onChange={listing_fields=>setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}))}/>
             <label>商品描述<textarea rows={8} value={fields.description} onChange={e=>setFields(v=>({...v,description:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.description)} / 20000</small></label>
             <label>内部整理备注<textarea rows={4} value={fields.notes} onChange={e=>setFields(v=>({...v,notes:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.notes)} / 5000</small></label>
+            {validation && <p className="working-draft-error" role="alert">{validation}</p>}
             <div className="own-editor-actions">
               <span>{dirty?"有未保存修改":"内容已保存"} · 修订 {product.revision}</span>
               <button type="button" className="primary-button" disabled={!dirty||!valid||saving||unknown} onClick={()=>void save()}>{saving?"保存中…":"保存产品"}</button>

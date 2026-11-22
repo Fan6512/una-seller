@@ -19,6 +19,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
   const [variantImageUrlDraft,setVariantImageUrlDraft]=useState("");
   useEffect(()=>()=>predictionRequest.current?.abort(),[]);
   const chosenTitle=preferredTitle(value.titles);
+  const legacyPurchase = Boolean(value.purchase_price && value.purchase_currency !== "CNY");
   const setLocalizedTitle=(lang:"en"|"es"|"pt",title:string)=>{
     predictionRequest.current?.abort();
     setPredicting(false);
@@ -152,13 +153,13 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
 
     <fieldset className="listing-editor-plain"><legend>采购成本（人民币 CNY）</legend>
       <label className="listing-field">采购成本（¥）
-        <input value={value.purchase_price} disabled={disabled} placeholder="人民币金额"
-          onChange={e=>onChange({...value,purchase_price:e.target.value,purchase_currency:"CNY"})}/>
+        <input value={legacyPurchase ? "" : value.purchase_price} disabled={disabled}
+          placeholder={legacyPurchase ? "核实后输入人民币金额" : "人民币金额"}
+          onChange={event=>onChange({...value,purchase_price:event.target.value,purchase_currency:"CNY"})}/>
       </label>
-      {value.purchase_currency!==""&&value.purchase_currency!=="CNY"&&
-        <small className="listing-currency-legacy" role="status">历史记录币种为 {value.purchase_currency}。修改金额前请先按人民币核实，系统不会自动换算。</small>}
-      {value.purchase_currency===""&&value.purchase_price!==""&&
-        <small className="listing-currency-legacy" role="status">历史记录币种未确认。重新输入已核实的人民币金额后，才会改为 CNY。</small>}
+      {legacyPurchase && <small className="listing-currency-legacy" role="status">
+        历史采购成本 {value.purchase_price}（{value.purchase_currency || "币种未确认"}）。核实实际人民币金额后再填写。
+      </small>}
     </fieldset>
 
     <fieldset className="listing-editor-plain"><legend>重量与包装尺寸</legend>

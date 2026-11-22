@@ -67,9 +67,11 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   const titleCount = charCount(fields.title);
   const descriptionCount = charCount(fields.description);
   const notesCount = charCount(fields.notes);
-  const valid = fields.title.trim().length > 0 && titleCount <= 500 &&
-    descriptionCount <= 20000 && notesCount <= 5000 &&
-    !validateListingFields(fields.listing_fields);
+  const validation = descriptionCount > 20000 ? "商品描述不能超过 20000 字符"
+    : notesCount > 5000 ? "整理备注不能超过 5000 字符"
+    : titleCount > 500 ? "商品标题不能超过 500 字符"
+    : validateListingFields(fields.listing_fields);
+  const valid = !validation && fields.title.trim().length > 0;
 
   const change = (key: keyof DraftFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }));
@@ -142,9 +144,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         onChange={(e) => change("notes", e.target.value)} />
       <small>{notesCount} / 5000 字符</small>
     </label>
-    {loadState === "ready" && !valid && <p className="working-draft-error" role="alert">
-      请检查标题、描述、备注和上架资料中的字段格式；系统会标记不合规的具体输入。
-    </p>}
+    {loadState === "ready" && validation && <p className="working-draft-error" role="alert">{validation}</p>}
     {error && <p className="working-draft-error" role="alert">{error}</p>}
     {notice && <p className="working-draft-success" role="status">{notice}</p>}
     {loadState === "error" && <button type="button" className="refresh-button"
