@@ -2,15 +2,22 @@ import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, validateListingFields, preferredTitle } from "./listingFields";
 import { getCBTCategorySuggestions, type CBTCategorySuggestion } from "./collections";
 import { useEffect, useRef, useState } from "react";
+import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute } from "./editorUx";
 
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean};
- export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
+export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
   const [predicting,setPredicting]=useState(false);
   const [predictMessage,setPredictMessage]=useState("");
   const predictionRequest = useRef<AbortController|null>(null);
   const [copyMessage,setCopyMessage]=useState("");
+  const [activePanel,setActivePanel]=useState<"titles"|"basic"|"images"|"variants">("titles");
+  const [activeLanguage,setActiveLanguage]=useState<"en"|"es"|"pt">("en");
+  const [imagePreview,setImagePreview]=useState<number|null>(null);
+  const [editingImage,setEditingImage]=useState<number|null>(null);
+  const [variantImageIndex,setVariantImageIndex]=useState<number|null>(null);
+  const [variantImageUrlDraft,setVariantImageUrlDraft]=useState("");
   useEffect(()=>()=>predictionRequest.current?.abort(),[]);
   const chosenTitle=preferredTitle(value.titles);
   const setLocalizedTitle=(lang:"en"|"es"|"pt",title:string)=>{
@@ -63,6 +70,13 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
   };
   const images=value.images??[];
   const variants=value.variants??[];
+  const duplicateCount=images.length-removeDuplicateGalleryLinks(images).length;
+  const languages=[
+    {key:"en" as const,label:"英语 EN",full:"英文标题（源标题 / CBT 分类推荐）",target:"建议 45–55 字符"},
+    {key:"es" as const,label:"西语 MX",full:"墨西哥西语标题",target:"不超过 60 字符"},
+    {key:"pt" as const,label:"葡语 BR",full:"巴西葡语标题",target:"不超过 60 字符"},
+  ];
+  const selectedLanguage=languages.find(item=>item.key===activeLanguage)!;
   const error=validateListingFields(value);
   const field=(label:string,key:keyof ListingFields,placeholder="",maxLength=120)=>
     <label className="listing-field">{label}
@@ -72,45 +86,62 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
   const updateImage=(index:number,url:string)=>{
     set("images",images.map((im,i)=>i===index?{...im,url}:im));
   };
-  const moveMain=(index:number)=>{
-    const next=images.slice();
-    const [pick]=next.splice(index,1);
-    next.unshift(pick);
-    set("images",next.map((im,i)=>({...im,type:(i===0?"main":"additional") as "main" | "additional"})));
+  const moveMain=(index:number)=>set("images",moveGalleryImage(images,index,0));
+  const moveImage=(from:number,to:number)=>set("images",moveGalleryImage(images,from,to));
+  const removeImage=(index:number)=>{
+    set("images",images.filter((_,i)=>i!==index).map((im,i)=>({...im,type:(i===0?"main":"additional") as "main"|"additional"})));
+    setImagePreview(null);
+    setEditingImage(null);
   };
   const updateVariant=(index:number,patch:Partial<ListingVariant>)=>{
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
   };
   return <section className="listing-fields">
-    <h3>上架资料整理</h3>
-    <p className="listing-fields-note">采集数据只是参考；此处编辑的内容会保存到当前工作稿，转入产品箱后仍可继续修改。站点类目及属性须在刊登前用美客多官方规则验证。</p>
-
-    <fieldset><legend>三语商品标题</legend>
-      <p className="listing-fields-note">采集时仅把原标题放入识别的语言栏；不自动翻译。无法确定语言时暂放英文栏，可手动调整。编辑完成后再使用 CBT 分类推荐。</p>
-      <div className="localized-title-grid">
-        {([
-          {key:"en",label:"英文标题（源标题 / 类目推荐）",target:"建议 45–55 字符"},
-          {key:"es",label:"西班牙语标题（墨西哥买家）",target:"建议不超过 60 字符"},
-          {key:"pt",label:"葡萄牙语标题（巴西买家）",target:"建议不超过 60 字符"},
-        ] as const).map(item=><label className="listing-field" key={item.key}>
-          {item.label}
-          <textarea rows={2} disabled={disabled} maxLength={500} value={value.titles[item.key]}
-            onChange={e=>setLocalizedTitle(item.key,e.target.value)} placeholder="可人工填写或后续 AI 生成；不编造规格"/>
-          <div className="localized-title-actions">
-            <small className={"localized-title-count "+(item.key!=="en"&&Array.from(value.titles[item.key]).length>60?"title-over-limit":"")}>
-              {Array.from(value.titles[item.key]).length} 字符（含空格及符号）· {item.target}
-            </small>
-            <button type="button" disabled={!value.titles[item.key]} onClick={()=>void copyTitle(item.key)}>
-              复制{item.key==="en"?"英文":item.key==="es"?"西语":"葡语"}
-            </button>
-          </div>
-        </label>)}
+    <div className="listing-editor-header">
+      <h3>上架资料整理</h3>
+      <p className="listing-fields-note">原始采集资料不会被覆盖；工作稿与产品箱共用此编辑器。当前分区切换不会丢失尚未保存的内容。</p>
+    </div>
+    {error&&<p className="listing-validation" role="alert">保存前请检查：{error}</p>}
+    <div className="listing-editor-tabs" role="tablist" aria-label="商品资料编辑分区">
+      {([
+        {key:"titles",label:"多语言标题"},
+        {key:"basic",label:"基础信息"},
+        {key:"images",label:"图片管理 ("+images.length+")"},
+        {key:"variants",label:"变体 SKU ("+variants.length+")"},
+      ] as const).map(item=><button key={item.key} type="button" role="tab"
+        aria-selected={activePanel===item.key} onClick={()=>setActivePanel(item.key)}>
+        {item.label}
+      </button>)}
+    </div>
+    {activePanel==="titles"&&<fieldset className="listing-editor-panel">
+      <legend>多语言商品标题</legend>
+      <p className="listing-fields-note">原始采集只填入识别的语言栏，不自动翻译。西语和葡语用于买家本地化，站点选择在刊登阶段完成。</p>
+      <div className="listing-language-tabs" role="tablist" aria-label="标题语言">
+        {languages.map(item=><button key={item.key} type="button" role="tab"
+          aria-selected={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
+          {item.label} <small>{Array.from(value.titles[item.key]).length}</small>
+        </button>)}
+      </div>
+      <label className="listing-field listing-active-title">
+        <span>{selectedLanguage.full}</span>
+        <textarea rows={3} disabled={disabled} maxLength={500}
+          value={value.titles[activeLanguage]}
+          onChange={e=>setLocalizedTitle(activeLanguage,e.target.value)}
+          placeholder="可人工填写或后续 AI 生成；不编造产品属性"/>
+      </label>
+      <div className="localized-title-actions">
+        <small className={"localized-title-count "+(activeLanguage!=="en"&&Array.from(value.titles[activeLanguage]).length>60?"title-over-limit":"")}>
+          {Array.from(value.titles[activeLanguage]).length} 字符（含空格及符号） · {selectedLanguage.target}
+        </small>
+        <button type="button" disabled={!value.titles[activeLanguage]} onClick={()=>void copyTitle(activeLanguage)}>
+          复制{activeLanguage==="en"?"英文":activeLanguage==="es"?"西语":"葡语"}标题
+        </button>
       </div>
       {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
       {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
-      <p className="listing-fields-note">三语都属于同一个产品，站点与店铺在实际刊登时选择；英文标题优先作为 CBT 推荐依据。</p>
-    </fieldset>
-
+      <p className="listing-fields-note">商品卖点和描述目前是共用字段，并没有独立的三语版本；本次仅切换已有的三语标题。</p>
+    </fieldset>}
+    {activePanel==="basic"&&<>
     <fieldset><legend>分类建议与基本属性</legend>
       <p className="listing-fields-note">采集后不立即分类。先修改好标题，再按需点击“推荐 CBT 类目”。结果由 Mercado Libre Global Selling 官方接口返回，必须由你确认，站点专属必填属性在上传阶段另行验证。</p>
       <div className="category-predict-row">
@@ -174,59 +205,132 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
       <p className="listing-fields-note">分类必填属性会在接入该站点官方分类规则后明确标识；目前不能把手工填写当作官方校验通过。</p>
     </fieldset>
 
-    <fieldset><legend>商品图片</legend>
-      <div className="listing-image-grid">
-        {images.map((im,i)=><div className="listing-image-card" key={i}>
-          {/^https:\/\//.test(im.url)?<img src={im.url} alt={"商品图片 "+(i+1)} loading="lazy" referrerPolicy="no-referrer"/>:
-            <div className="image-fallback">待填图片 URL</div>}
-          <input value={im.url} disabled={disabled} aria-label={"第 "+(i+1)+" 张图片 URL"} placeholder="HTTPS 图片地址"
-            onChange={e=>updateImage(i,e.target.value)}/>
-          <div>
-            <button type="button" disabled={disabled||i===0} onClick={()=>moveMain(i)}>{i===0?"首图":"设为首图"}</button>
-            <button type="button" disabled={disabled} onClick={()=>set("images",images.filter((_,j)=>j!==i).map((x,j)=>({...x,type:(j===0?"main":"additional") as "main" | "additional"})))}>移除</button>
-          </div>
-        </div>)}
+    </>}
+    {activePanel==="images"&&<fieldset className="listing-editor-panel">
+      <legend>商品图片</legend>
+      <p className="listing-fields-note">第一张是主图；点击缩略图看大图，图片地址默认收起。只管理已采集的 HTTPS 链接，不会自动上传或修图。</p>
+      <div className="listing-gallery-toolbar">
+        <strong>{images.length} 张图片</strong>
+        <button type="button" disabled={disabled||duplicateCount===0}
+          onClick={()=>{set("images",removeDuplicateGalleryLinks(images));setImagePreview(null);setEditingImage(null);}}>
+          清理重复链接 {duplicateCount>0?"("+duplicateCount+")":""}
+        </button>
+        <button type="button" disabled={disabled||images.length>=60}
+          onClick={()=>{set("images",[...images,{url:"",type:images.length?"additional":"main"}]);setEditingImage(images.length);}}>
+          + 添加图片链接
+        </button>
       </div>
-      <button type="button" disabled={disabled||images.length>=60}
-        onClick={()=>set("images",[...images,{url:"",type:images.length?"additional":"main"}])}>+ 添加图片 URL</button>
-      <p className="listing-fields-note">这里支持调整顺序、移除和替换图片链接；真正上传本地图片、AI 修图、图片永久托管需要后续图片资产功能。仅有来源 URL 不保证美客多可直接使用。</p>
-    </fieldset>
-
-    <fieldset><legend>规格与 SKU</legend>
-      {variants.map((v,i)=><div className="listing-variant" key={i}>
-        <div className="listing-variant-heading"><strong>规格 {i+1}</strong>
-          <button type="button" disabled={disabled} onClick={()=>set("variants",variants.filter((_,j)=>j!==i))}>删除规格</button>
+      <div className="listing-gallery-wall">
+        {images.map((im,i)=><article className="listing-gallery-tile" key={i}>
+          <button type="button" className="listing-gallery-thumb" onClick={()=>setImagePreview(i)}
+            aria-label={"预览第 "+(i+1)+" 张商品图片"}>
+            {/^https:\/\//i.test(im.url)?<img src={im.url} alt={"第 "+(i+1)+" 张商品图片"} loading="lazy" referrerPolicy="no-referrer"/>:
+              <span className="image-fallback">待填图片</span>}
+            <span className="listing-gallery-number">{i===0?"主图":String(i+1)}</span>
+          </button>
+          <div className="listing-gallery-actions">
+            <button type="button" disabled={disabled||i===0} onClick={()=>moveMain(i)}>设为主图</button>
+            <button type="button" disabled={disabled||i===0} onClick={()=>moveImage(i,i-1)} aria-label={"图片 "+(i+1)+" 前移"}>←</button>
+            <button type="button" disabled={disabled||i===images.length-1} onClick={()=>moveImage(i,i+1)} aria-label={"图片 "+(i+1)+" 后移"}>→</button>
+            <button type="button" disabled={disabled} onClick={()=>setEditingImage(editingImage===i?null:i)}>链接</button>
+            <button type="button" disabled={disabled} onClick={()=>removeImage(i)}>删除</button>
+          </div>
+          {editingImage===i&&<label className="listing-gallery-url">图片 HTTPS URL
+            <input disabled={disabled} value={im.url} aria-label={"第 "+(i+1)+" 张图片 URL"}
+              onChange={e=>updateImage(i,e.target.value)} placeholder="https://..." />
+          </label>}
+        </article>)}
+      </div>
+      {images.length===0&&<p className="listing-fields-note">暂无图片，可以手动添加 HTTPS 图片链接。</p>}
+      {imagePreview!==null&&images[imagePreview]&&<div className="listing-gallery-preview" role="region" aria-label="大图预览">
+        <div><strong>预览图片 {imagePreview+1}</strong>
+          <button type="button" onClick={()=>setImagePreview(null)}>关闭预览</button>
         </div>
-        <div className="listing-field-grid">
-          <label className="listing-field">SKU
-            <input disabled={disabled} value={v.seller_sku} maxLength={120}
-              onChange={e=>updateVariant(i,{seller_sku:e.target.value})}/>
-          </label>
-          <label className="listing-field">规格价格（可选）
-            <input disabled={disabled} value={v.price} placeholder="留空" onChange={e=>updateVariant(i,{price:e.target.value})}/>
-          </label>
-          <label className="listing-field">币种
-            <input disabled={disabled} value={v.currency} maxLength={3} onChange={e=>updateVariant(i,{currency:e.target.value})}/>
-          </label>
+        {/^https:\/\//i.test(images[imagePreview].url)?
+          <img src={images[imagePreview].url} alt={"图片 "+(imagePreview+1)+" 大图"} referrerPolicy="no-referrer"/>:
+          <span>该图片还没有有效的 HTTPS 链接。</span>}
+      </div>}
+      <p className="listing-fields-note">“清理重复链接”仅移除 URL 完全重复的项目（忽略首尾空格），不同颜色/规格的图片不做视觉判重。删除图片不会悄悄抹掉变体已保存的独立图片关联。</p>
+    </fieldset>}
+    {activePanel==="variants"&&<fieldset className="listing-editor-panel">
+      <legend>规格与 SKU</legend>
+      <p className="listing-fields-note">每行代表一个真实规格。变体属性、SKU、价格和币种可直接在表格中编辑；价格留空代表未知，不自动填写库存或成本。</p>
+      <div className="listing-variant-toolbar">
+        <strong>现有 {variants.length} 个变体</strong>
+        <button type="button" disabled={disabled||variants.length>=100}
+          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[]}])}>
+          + 添加变体
+        </button>
+      </div>
+      <div className="listing-variant-table-scroll" role="region" aria-label="可横向滚动的变体表格" tabIndex={0}>
+        <table className="listing-variant-table">
+          <thead><tr><th scope="col">规格属性</th><th scope="col">SKU</th><th scope="col">价格</th><th scope="col">币种</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
+          <tbody>{variants.map((v,i)=><tr key={i}>
+            <td className="listing-variant-spec">
+              {Object.entries(v.attributes).map(([key,val],j)=><div className="listing-variant-attribute" key={j}>
+                <input disabled={disabled} aria-label={"变体 "+(i+1)+" 属性 "+(j+1)+" 名称"} value={key} placeholder="颜色 / 尺寸"
+                  onChange={e=>updateVariant(i,{attributes:renameVariantAttribute(v.attributes,key,e.target.value)})}/>
+                <input disabled={disabled} aria-label={"变体 "+(i+1)+" 属性 "+(j+1)+" 值"} value={val} placeholder="黑色 / M"
+                  onChange={e=>updateVariant(i,{attributes:{...v.attributes,[key]:e.target.value}})}/>
+                <button type="button" disabled={disabled} onClick={()=>{
+                  const next={...v.attributes};delete next[key];updateVariant(i,{attributes:next});
+                }} aria-label={"删除变体 "+(i+1)+" 属性 "+(j+1)}>×</button>
+              </div>)}
+              <button type="button" disabled={disabled||Object.keys(v.attributes).length>=12}
+                onClick={()=>{
+                  let j=1;while(Object.prototype.hasOwnProperty.call(v.attributes,"属性"+j))j++;
+                  updateVariant(i,{attributes:{...v.attributes,["属性"+j]:""}});
+                }}>+ 属性</button>
+            </td>
+            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" SKU"} value={v.seller_sku}
+              maxLength={120} onChange={e=>updateVariant(i,{seller_sku:e.target.value})} placeholder="自定义 SKU"/></td>
+            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 价格"} value={v.price}
+              onChange={e=>updateVariant(i,{price:e.target.value})} placeholder="可留空"/></td>
+            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 币种"} value={v.currency}
+              maxLength={3} onChange={e=>updateVariant(i,{currency:e.target.value})} placeholder="USD"/></td>
+            <td><button type="button" className="listing-variant-images-button" disabled={disabled}
+                onClick={()=>{setVariantImageIndex(variantImageIndex===i?null:i);setVariantImageUrlDraft("");}}>
+                选择图片 ({v.image_urls.length})
+              </button>
+              <div className="listing-variant-mini-images">
+                {v.image_urls.slice(0,3).map((url,j)=><img key={j} src={url} alt={"变体 "+(i+1)+" 图片 "+(j+1)} loading="lazy" referrerPolicy="no-referrer"/>)}
+              </div>
+            </td>
+            <td><button type="button" disabled={disabled} onClick={()=>{
+              set("variants",variants.filter((_,j)=>j!==i));
+              setVariantImageIndex(null);
+            }}>删除</button></td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      {variants.length===0&&<p className="listing-fields-note">未采集到变体，可点击“添加变体”手动填写真实规格。</p>}
+      {variantImageIndex!==null&&variants[variantImageIndex]&&<section className="listing-variant-image-picker" aria-label={"变体 "+(variantImageIndex+1)+" 图片选择"}>
+        <div className="listing-variant-image-picker-head">
+          <strong>变体 {variantImageIndex+1} · 选择图片</strong>
+          <button type="button" onClick={()=>setVariantImageIndex(null)}>完成</button>
         </div>
-        {Object.entries(v.attributes).map(([key,val],j)=><div className="listing-attribute-row" key={j}>
-          <input disabled={disabled} value={key} aria-label={"规格 "+(i+1)+" 的属性名"} placeholder="如颜色"
-            onChange={e=>{
-              const pairs=Object.entries(v.attributes);
-              pairs[j]=[e.target.value,val];
-              updateVariant(i,{attributes:Object.fromEntries(pairs)});
-            }}/>
-          <input disabled={disabled} value={val} aria-label={"规格 "+(i+1)+" 的属性值"} placeholder="如黑色"
-            onChange={e=>updateVariant(i,{attributes:{...v.attributes,[key]:e.target.value}})}/>
-          <button type="button" disabled={disabled} onClick={e=>{e.preventDefault();const next={...v.attributes};delete next[key];updateVariant(i,{attributes:next});}}>删除</button>
-        </div>)}
-        <button type="button" disabled={disabled||Object.keys(v.attributes).length>=12}
-          onClick={()=>updateVariant(i,{attributes:{...v.attributes,["新属性"+(Object.keys(v.attributes).length+1)]:""}})}>+ 规格属性</button>
-      </div>)}
-      <button type="button" disabled={disabled||variants.length>=100}
-        onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{颜色:""},price:"",currency:"",image_urls:[]}])}>+ 添加规格</button>
-    </fieldset>
-
-    {error&&<p className="listing-validation" role="alert">{error}</p>}
+        <p className="listing-fields-note">从商品图片墙中选择，或保留该变体已有的独立图片。只修改当前变体，不影响其他规格。</p>
+        <div className="listing-variant-image-options">
+          {Array.from(new Set([...images.map(im=>im.url),...variants[variantImageIndex].image_urls]))
+            .filter(url=>url.trim()!=="").map(url=><label key={url}>
+              <input type="checkbox" disabled={disabled} checked={variants[variantImageIndex].image_urls.includes(url)}
+                onChange={e=>updateVariant(variantImageIndex,{
+                  image_urls:toggleVariantImage(variants[variantImageIndex].image_urls,url,e.target.checked)
+                })}/>
+              <img src={url} alt="可选变体图片" loading="lazy" referrerPolicy="no-referrer"/>
+            </label>)}
+        </div>
+        <div className="listing-variant-url-row">
+          <input disabled={disabled} aria-label="追加变体图片 URL" placeholder="https://..." value={variantImageUrlDraft}
+            onChange={e=>setVariantImageUrlDraft(e.target.value)}/>
+          <button type="button" disabled={disabled||!/^https:\/\/\S+$/i.test(variantImageUrlDraft.trim())}
+            onClick={()=>{
+              updateVariant(variantImageIndex,{image_urls:toggleVariantImage(
+                variants[variantImageIndex].image_urls,variantImageUrlDraft.trim(),true)});
+              setVariantImageUrlDraft("");
+            }}>添加链接</button>
+        </div>
+      </section>}
+    </fieldset>}
   </section>;
 }
