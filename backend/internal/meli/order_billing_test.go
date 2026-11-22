@@ -1,10 +1,15 @@
 package meli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestBillingPreviewSanitizesAndDoesNotInventNet(t *testing.T) {
@@ -53,26 +58,122 @@ func TestBillingRequestLimitsAndMapping(t *testing.T) {
 		}
 	}
 }
+func TestBillingGroupsRetainNativeCurrenciesAndDuplicateIdentity(t *testing.T) {
+	raw := []byte(`{"results":[{"order_id":11,"payment_info":[{"status":"approved","money_release_status":"pending",
+ "tax_details":[{"mov_financial_entity":"iva","original_amount_usd":0.3,"refunded_amount_usd":0.15}]}],
+ "details":[
+ {"charge_info":{"detail_id":1,"detail_type":"CHARGE","detail_sub_type":"COMMISSION","detail_amount":0.10000001},"currency_info":{"currency_id":"USD"}},
+ {"charge_info":{"detail_id":1,"detail_type":"CHARGE","detail_sub_type":"COMMISSION","detail_amount":0.10000001},"currency_info":{"currency_id":"USD"}},
+ {"charge_info":{"detail_id":2,"detail_type":"CHARGE","detail_sub_type":"COMMISSION","detail_amount":0.2},"currency_info":{"currency_id":"USD"}},
+ {"charge_info":{"detail_id":3,"detail_type":"CHARGE","detail_sub_type":"COMMISSION","detail_amount":0.9},"currency_info":{"currency_id":"BRL"}},
+ {"charge_info":{"detail_id":4,"detail_type":"BONUS","detail_sub_type":"COMMISSION","detail_amount":-0.10000001,"charge_bonified_id":1},"currency_info":{"currency_id":"USD"}}
+ ]}]}`)
+	page, err := parseBillingPreview(raw, []string{"11"})
+	if err != nil || page.NetIncomeUSD != nil || len(page.Items[0].Charges) != 4 || len(page.Items[0].ChargeGroups) != 3 {
+		t.Fatalf("failed to preserve original billing identity: %+v %v", page, err)
+	}
+	order := page.Items[0]
+	if order.Payments[0].MoneyReleaseStatus != "pending" || order.Taxes[0].RefundedUSD != "0.15" ||
+		order.Charges[3].ReversalOf != "1" || order.ChargeGroups[0].OriginalTotal != "0.30000001" ||
+		order.ChargeGroups[1].Currency != "BRL" || order.ChargeGroups[1].OriginalTotal != "0.9" ||
+		order.ChargeGroups[2].OriginalTotal != "-0.10000001" {
+		t.Fatalf("native currency or adjustment changed: %+v", order)
+	}
+	conflicting := []byte(strings.Replace(string(raw), `"detail_id":2`, `"detail_id":1`, 1))
+	if _, err = parseBillingPreview(conflicting, []string{"11"}); !errors.Is(err, ErrOrderBillingInvalid) {
+		t.Fatal("conflicting charge identity accepted")
+	}
+}
+
+func TestOfficialBillingChecksOwnerAndMappingBeforeAndAfterRead(t *testing.T) {
+	service, db, owner, store := setupRefreshTest(t)
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET access_token_expires_at=now()+interval '1 hour' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,order_items)
+ VALUES ($1::uuid,'MLB','remote','987654','10001','paid','USD',20,now(),now(),'[]')`, store); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	var revoke atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Method != http.MethodGet || r.URL.Path != "/billing/integration/group/ML/order/details" ||
+			r.URL.Query().Get("seller_id") != "987654" || r.URL.Query().Get("order_ids") != "10001" ||
+			r.Header.Get("Authorization") != "Bearer synthetic_old_access" {
+			t.Error("unexpected fiscal request or mapping")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if revoke.Load() {
+			if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces_status='unverified' WHERE id=$1::uuid`, store); err != nil {
+				t.Error(err)
+			}
+		}
+		_, _ = w.Write([]byte(`{"results":[{"order_id":10001,"payment_info":[{"status":"approved","money_release_status":"released"}]}]}`))
+	}))
+	defer server.Close()
+	service.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	_, err := service.PreviewOrderBilling(ctx, "00000000-0000-4000-8000-000000000099", store, scope, []string{"10001"})
+	if !errors.Is(err, ErrStoreNotFound) {
+		t.Fatalf("foreign owner: %v", err)
+	}
+	_, err = service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10002"})
+	if !errors.Is(err, ErrOrderNotFound) || calls.Load() != 0 {
+		t.Fatalf("foreign order reached platform: %v", err)
+	}
+	page, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
+	if err != nil || len(page.Items) != 1 || page.NetIncomeUSD != nil {
+		t.Fatalf("unexpected billing preview: %+v %v", page, err)
+	}
+	revoke.Store(true)
+	page, err = service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
+	if !errors.Is(err, ErrOrderAuthorizationChanged) || len(page.Items) != 0 {
+		t.Fatalf("revoked mapping leaked billing: %+v %v", page, err)
+	}
+}
+
 func TestProfitFromVerifiedNetUSD(t *testing.T) {
-	x, err := EstimateProfitFromVerifiedNet("20", "7", "85", "5")
-	if err != nil || x.NetCNY != "140.00" || x.ProfitCNY != "50.00" ||
+	asOf := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	fx := ProfitFXRate{CNYPerUSD: "7", Source: "test bank receipt", AsOf: asOf}
+	net := func(amount string) VerifiedUSDNet {
+		return VerifiedUSDNet{Amount: amount, Source: "test settlement", SettledAt: asOf}
+	}
+	x, err := EstimateProfitFromVerifiedNet(net("20"), fx, "85", "5")
+	if err != nil || x.NetUSD != "20.00" || x.ProfitUSD != "7.14" || x.FX != fx ||
 		x.MarginPercent == nil || *x.MarginPercent != "35.7" {
 		t.Fatalf("verified-net calculation %+v %v", x, err)
 	}
-	x, err = EstimateProfitFromVerifiedNet("0", "7", "85", "5")
-	if err != nil || x.ProfitCNY != "-90.00" || x.MarginPercent != nil {
+	x, err = EstimateProfitFromVerifiedNet(net("0"), fx, "85", "5")
+	if err != nil || x.ProfitUSD != "-12.86" || x.MarginPercent != nil {
 		t.Fatalf("zero net %+v %v", x, err)
 	}
-	x, err = EstimateProfitFromVerifiedNet("-0.12", "7", "0", "0")
-	if err != nil || x.ProfitCNY != "-0.84" || x.MarginPercent != nil {
+	x, err = EstimateProfitFromVerifiedNet(net("-0.125"), fx, "0", "0")
+	if err != nil || x.ProfitUSD != "-0.13" || x.MarginPercent != nil {
 		t.Fatalf("refund net %+v %v", x, err)
 	}
-	for _, net := range []string{"", "NaN", "5e3", "1.333333333", " 30", "100000000000000000"} {
-		if _, err = EstimateProfitFromVerifiedNet(net, "7", "1", "0"); !errors.Is(err, ErrProfitInputsInvalid) {
-			t.Fatalf("invalid net accepted %q", net)
+	for _, bad := range []string{"", "NaN", "5e3", "1.333333333", " 30", "100000000000000000"} {
+		if _, err = EstimateProfitFromVerifiedNet(net(bad), fx, "1", "0"); !errors.Is(err, ErrProfitInputsInvalid) {
+			t.Fatalf("invalid net accepted %q", bad)
 		}
 	}
-	if _, err = EstimateProfitFromVerifiedNet("20", "0", "5", "0"); err == nil {
-		t.Fatal("zero fx accepted")
+	for _, rate := range []ProfitFXRate{
+		{CNYPerUSD: "0", Source: "bank receipt", AsOf: asOf},
+		{CNYPerUSD: "7", AsOf: asOf},
+		{CNYPerUSD: "7", Source: "bank receipt"},
+	} {
+		if _, err := EstimateProfitFromVerifiedNet(net("20"), rate, "5", "0"); err == nil {
+			t.Fatalf("unverified rate accepted: %+v", rate)
+		}
+	}
+	if _, err := EstimateProfitFromVerifiedNet(net("20"), fx, "", "0"); err == nil {
+		t.Fatal("missing cost accepted")
+	}
+	if _, err := EstimateProfitFromVerifiedNet(VerifiedUSDNet{Amount: "20"}, fx, "5", "0"); err == nil {
+		t.Fatal("unverified receipt accepted")
 	}
 }

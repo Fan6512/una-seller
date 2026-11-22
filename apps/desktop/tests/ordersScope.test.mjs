@@ -40,6 +40,7 @@ const searchRequests = [];
 const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD",
   shipment_id: "87123456" };
 let slaFetchCount = 0;
+let billingFetches = 0;
 window.fetch = (path, options) => {
   const { pathname } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
@@ -49,6 +50,17 @@ window.fetch = (path, options) => {
     order.dispatch_sla_status = "on_time";
     order.dispatch_checked_at = new Date().toISOString();
     return Promise.resolve(Response.json(order));
+  }
+  if (pathname.endsWith("/orders/billing-preview")) {
+    billingFetches++;
+    const q = new URL(path, location.href).searchParams;
+    assert(q.get("site") === "MLB" && q.get("logistic_type") === "remote", "billing used the wrong scope");
+    assert(JSON.parse(options.body).order_ids.join(",") === "102", "billing requested the wrong order");
+    return Promise.resolve(Response.json({ net_income_usd: null, items: [{ order_id: "102", available: true,
+      payments: [{ status: "approved", money_release_status: "released" }], taxes: [],
+      charges: [{ detail_id: "1", type: "CHARGE", amount: "1.25", currency: "BRL" }],
+      charge_groups: [{ type: "CHARGE", currency: "BRL", original_total: "1.25" }],
+    }] }));
   }
   if (pathname.endsWith("/orders/102/refresh")) {
     order.status = "partially_refunded";
@@ -305,7 +317,13 @@ try {
     "manual order refresh did not display refunded state");
   assert(!document.querySelector(".orders-money-net") &&
     ![...document.querySelectorAll("button")].some((item) => item.textContent === "订单设置"),
-    "nonexistent finance editor should not be visible");
+    "nonexistent finance settings should not be visible");
+  const profit = () => document.querySelector('section[aria-label="订单账单与利润"]');
+  assert(billingFetches === 0 && profit()?.textContent.includes("待核账"), "billing ran automatically or invented net proceeds");
+  flushSync(() => profit().querySelector("button").click());
+  await waitFor(() => billingFetches === 1 && profit()?.textContent.includes("BRL") &&
+    profit()?.textContent.includes("1.25") && profit()?.textContent.includes("待核账"),
+    "billing must show native fiscal amounts and keep net proceeds pending");
 
   // Issue #53: numeric Order ID crosses sites; title searches respect selected site.
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());

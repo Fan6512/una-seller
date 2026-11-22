@@ -7,6 +7,7 @@ import {
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
+import OrderProfitCard from "./OrderProfitCard";
 import "./orders.css";
 
 const PAGE_SIZE = 20;
@@ -875,8 +876,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       </div>
                     </td>
                     <td className="orders-money-cell"><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong>
-                      <small title="净收益待官方结算费用数据，尚未核算">净收益：—</small>
-                      <small title="利润待实际采购成本、费用和汇率核算">利润：—</small>
+                      <small>净收益（USD）：待核账</small>
+                      <small>预计利润（USD）：待核账</small>
                     </td>
                     <td><span className={"orders-status " + safeOrderStatus(order.status)}>{displayOrderStatus(order)}</span>
                       {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
@@ -961,6 +962,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 </dl>
                 <p className="orders-muted">平台运单及签收信息尚未读取，不会将内部物流记录或发货截止时间视为已发货、已签收。</p>
               </section>
+              <OrderProfitCard key={orderRecordKey(detail, selectedRowScope ?? scope) + "|" + detail.last_updated}
+                order={detail} scope={selectedRowScope ?? scope} disabled={running || installingUpdate}/>
               <section className="orders-detail-block">
                 <div className="orders-detail-block-title">
                   <h3>采购</h3>

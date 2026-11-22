@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -21,8 +23,18 @@ type BillingCharge struct {
 	Subtype              string `json:"subtype,omitempty"`
 	Amount               string `json:"amount"`
 	Currency             string `json:"currency"`
-	DebitedFromOperation bool   `json:"debited_from_operation"`
+	DebitedFromOperation string `json:"debited_from_operation,omitempty"`
+	Description          string `json:"description,omitempty"`
+	ReversalOf           string `json:"reversal_of,omitempty"`
+	Status               string `json:"status,omitempty"`
 }
+type BillingChargeGroup struct {
+	Currency      string `json:"currency"`
+	Type          string `json:"type"`
+	Subtype       string `json:"subtype,omitempty"`
+	OriginalTotal string `json:"original_total"`
+}
+
 type BillingPayment struct {
 	Status             string `json:"status"`
 	MoneyReleaseStatus string `json:"money_release_status"`
@@ -34,12 +46,13 @@ type BillingTax struct {
 	RefundedUSD string `json:"refunded_usd,omitempty"`
 }
 type BillingOrderPreview struct {
-	OrderID        string           `json:"order_id"`
-	Available      bool             `json:"available"`
-	Payments       []BillingPayment `json:"payments"`
-	Taxes          []BillingTax     `json:"taxes"`
-	Charges        []BillingCharge  `json:"charges"`
-	Reconciliation string           `json:"reconciliation"`
+	OrderID        string               `json:"order_id"`
+	Available      bool                 `json:"available"`
+	Payments       []BillingPayment     `json:"payments"`
+	Taxes          []BillingTax         `json:"taxes"`
+	Charges        []BillingCharge      `json:"charges"`
+	Reconciliation string               `json:"reconciliation"`
+	ChargeGroups   []BillingChargeGroup `json:"charge_groups,omitempty"`
 }
 type BillingPreviewPage struct {
 	Items        []BillingOrderPreview `json:"items"`
@@ -100,6 +113,9 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 					DetailType           string      `json:"detail_type"`
 					DetailSubtype        string      `json:"detail_sub_type"`
 					DetailAmount         json.Number `json:"detail_amount"`
+					Description          string      `json:"transaction_detail"`
+					Status               string      `json:"status"`
+					ReversalOf           json.Number `json:"charge_bonified_id"`
 					DebitedFromOperation string      `json:"debited_from_operation"`
 				} `json:"charge_info"`
 				CurrencyInfo struct {
@@ -144,18 +160,31 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 				out.Taxes = append(out.Taxes, BillingTax{Type: tax.FinancialEntity, OriginalUSD: original, RefundedUSD: refunded})
 			}
 		}
+		chargeIDs := make(map[string]BillingCharge, len(bill.Details))
 		for _, line := range bill.Details {
 			c := line.ChargeInfo
 			amount, err := billingAmount(c.DetailAmount)
 			if err != nil || amount == "" || len(c.DetailType) > 80 || len(c.DetailSubtype) > 80 ||
-				len(line.CurrencyInfo.CurrencyID) > 8 || len(c.DetailID) > 30 {
+				len(line.CurrencyInfo.CurrencyID) > 8 || len(c.DetailID) > 30 || len(c.ReversalOf) > 30 ||
+				len(c.Description) > 160 || len(c.Status) > 40 || len(c.DebitedFromOperation) > 10 {
 				return BillingPreviewPage{}, ErrOrderBillingInvalid
 			}
-			out.Charges = append(out.Charges, BillingCharge{DetailID: c.DetailID.String(),
-				Type: c.DetailType, Subtype: c.DetailSubtype, Amount: amount,
-				Currency:             line.CurrencyInfo.CurrencyID,
-				DebitedFromOperation: strings.EqualFold(c.DebitedFromOperation, "YES")})
+			charge := BillingCharge{DetailID: c.DetailID.String(), Type: c.DetailType,
+				Subtype: c.DetailSubtype, Amount: amount, Currency: line.CurrencyInfo.CurrencyID,
+				DebitedFromOperation: c.DebitedFromOperation, Description: c.Description,
+				ReversalOf: c.ReversalOf.String(), Status: c.Status}
+			if charge.DetailID != "" {
+				if previous, exists := chargeIDs[charge.DetailID]; exists {
+					if previous != charge {
+						return BillingPreviewPage{}, ErrOrderBillingInvalid
+					}
+					continue
+				}
+				chargeIDs[charge.DetailID] = charge
+			}
+			out.Charges = append(out.Charges, charge)
 		}
+		out.ChargeGroups = groupBillingCharges(out.Charges)
 		records[id] = out
 	}
 	page := BillingPreviewPage{Items: make([]BillingOrderPreview, 0, len(requested))}
@@ -168,6 +197,35 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 		}
 	}
 	return page, nil
+}
+
+// Group only identifiable records, using platform signs and native currencies.
+func groupBillingCharges(charges []BillingCharge) []BillingChargeGroup {
+	var entries []BillingChargeGroup
+	var totals []*big.Rat
+	index := make(map[[3]string]int)
+	for _, charge := range charges {
+		if charge.DetailID == "" || len(charge.Currency) != 3 || charge.Type == "" {
+			return nil
+		}
+		key := [3]string{charge.Currency, charge.Type, charge.Subtype}
+		i, found := index[key]
+		if !found {
+			i = len(entries)
+			index[key] = i
+			entries = append(entries, BillingChargeGroup{Currency: charge.Currency, Type: charge.Type, Subtype: charge.Subtype})
+			totals = append(totals, new(big.Rat))
+		}
+		amount, err := ratOf(charge.Amount)
+		if err != nil {
+			return nil
+		}
+		totals[i].Add(totals[i], amount)
+	}
+	for i, total := range totals {
+		entries[i].OriginalTotal = strings.TrimRight(strings.TrimRight(total.FloatString(8), "0"), ".")
+	}
+	return entries
 }
 
 // PreviewOrderBilling is an explicitly triggered, read-only batch (max 60).
@@ -186,40 +244,47 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 	if err != nil {
 		return BillingPreviewPage{}, err
 	}
-	rows, err := s.db.Query(ctx, `WITH connection AS (`+orderConnection+`)
- SELECT o.order_id FROM app.meli_orders o
+	checkScope := func() (bool, error) {
+		var count int
+		err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+`)
+ SELECT count(*) FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
- WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4
- AND o.order_id=ANY($5::text[])`, store, owner, scope.Site, scope.Logistic, ids)
+ JOIN app.meli_store_connections verified ON verified.id=c.id
+ WHERE c.status='connected' AND o.site_id=$3 AND o.logistic_type=$4
+ AND o.order_id=ANY($5::text[]) AND c.child_id=$6 AND verified.seller_id=$7`,
+			store, owner, scope.Site, scope.Logistic, ids, child, auth.SellerID).Scan(&count)
+		return count == len(ids), err
+	}
+	scoped, err := checkScope()
 	if err != nil {
 		return BillingPreviewPage{}, err
 	}
-	found := map[string]bool{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			break
-		}
-		found[id] = true
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return BillingPreviewPage{}, err
-	}
-	if len(found) != len(ids) {
+	if !scoped {
 		return BillingPreviewPage{}, ErrOrderNotFound
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var raw json.RawMessage
-	_, err = s.orderGET(fetchCtx, auth.AccessToken, path, &raw)
+	status, err := s.orderGET(fetchCtx, auth.AccessToken, path, &raw)
 	if err != nil {
 		return BillingPreviewPage{}, err
 	}
-	return parseBillingPreview(raw, ids)
+	// Partial and ambiguous documents are unsuitable for accounting previews.
+	if status != http.StatusOK {
+		return BillingPreviewPage{}, ErrOrderInvalidResponse
+	}
+	scoped, err = checkScope()
+	if err != nil {
+		return BillingPreviewPage{}, err
+	}
+	if !scoped {
+		return BillingPreviewPage{}, ErrOrderAuthorizationChanged
+	}
+	page, err := parseBillingPreview(raw, ids)
+	if err != nil {
+		return BillingPreviewPage{}, ErrOrderInvalidResponse
+	}
+	return page, nil
 }
 
 // No billing data is persisted or classified as final in this preview slice.
