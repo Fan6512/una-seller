@@ -13,7 +13,33 @@ import (
 var ErrCBTPredictorInput = errors.New("CBT category prediction requires a descriptive edited title")
 var ErrCBTPredictorStore = errors.New("connect a Mercado Libre CBT store before requesting official category predictions")
 
-var cbtCategoryID = regexp.MustCompile(`^CBT[0-9]{1,15}$`)
+var cbtCategoryID = regexp.MustCompile(`^CBT[0-9]{1,15}package meli
+
+import (
+	"context"
+	"errors"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+var ErrCBTPredictorInput = errors.New("CBT category prediction requires a descriptive edited title")
+var ErrCBTPredictorStore = errors.New("connect a Mercado Libre CBT store before requesting official category predictions")
+
+)
+
+// A token-expired store remains authorized to refresh via RequireStoreConnection.
+// Never skip it and incorrectly claim that no store is connected.
+func preferredCBTStore(stores []Store) string {
+	for _, store := range stores {
+		if store.Status == "connected" || store.Status == "token_expired" {
+			return store.ID
+		}
+	}
+	return ""
+}
 
 // CBTCategorySuggestion is a suggestion, not a validated marketplace listing
 // category. User must confirm and site-specific fields are checked at upload.
@@ -36,13 +62,7 @@ func (s *Service) PredictCBTCategories(ctx context.Context, owner, editedEnglish
 	if err != nil {
 		return nil, err
 	}
-	var storeID string
-	for _, store := range stores {
-		if store.Status == "connected" {
-			storeID = store.ID
-			break
-		}
-	}
+	storeID := preferredCBTStore(stores)
 	if storeID == "" {
 		return nil, ErrCBTPredictorStore
 	}
