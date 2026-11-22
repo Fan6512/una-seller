@@ -24,6 +24,10 @@ func (a storeAPI) predictCBTCategory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if a.service == nil {
+		writeError(w, http.StatusServiceUnavailable, "Mercado Libre category predictor is not configured")
+		return
+	}
 	title := strings.TrimSpace(r.URL.Query().Get("q"))
 	items, err := a.service.PredictCBTCategories(r.Context(), owner, title)
 	if errors.Is(err, meli.ErrCBTPredictorInput) {
