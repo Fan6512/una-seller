@@ -49,6 +49,8 @@ test("capture title is classified into the correct language slot without transla
   assert.equal(detectTitleLanguage("Waterproof Winter Plant Cleaning Spray"),"en");
   assert.equal(detectTitleLanguage("Limpiador para plantas de invierno con aroma"),"es");
   assert.equal(detectTitleLanguage("Spray para limpeza de plantas com aroma"),"pt");
+  assert.equal(detectTitleLanguage("Limpiador para plantas"),"es");
+  assert.equal(detectTitleLanguage("Spray para limpeza de plantas"),"pt");
   assert.equal(en.titles.en,"Waterproof Winter Plant Cleaning Spray");
   assert.equal(en.titles.es,"");
   assert.equal(es.titles.es,"Limpiador para plantas de invierno con aroma");
