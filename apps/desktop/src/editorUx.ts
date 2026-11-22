@@ -3,7 +3,7 @@ type GalleryImage = { url: string; type: "main" | "additional" };
 
 function withFirstAsMain(images: GalleryImage[]): GalleryImage[] {
   return images.map((image, index) => ({
-    ...image, type: index === 0 ? "main" : "additional",
+    ...image, type: (index === 0 ? "main" : "additional") as "main" | "additional",
   }));
 }
 
