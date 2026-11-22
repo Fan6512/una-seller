@@ -54,7 +54,7 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 			return
 		}
 		if err := in.Validate(); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid working draft fields")
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		draft, err := a.store.SaveWorkingDraft(r.Context(), owner, id, in)
