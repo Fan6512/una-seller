@@ -1,16 +1,16 @@
 # #57 · Una Seller 远程 Go API 受控升级 / 产品箱验收
 
-> 状态：**PRECHECK_PARTIAL / BACKUP_NOT_VERIFIED / SERVER_NOT_VERIFIED / NO_PRODUCTION_WRITE**。
-> 此文档和本分支只是升级准备，**不授权执行生产操作**。不要把 #59 代码合并或 Windows 构建成功误写成远程产品箱已验收。
+> 状态（2026-11-22）：**SERVER_BASELINE_PASS / BACKUP_VERIFIED / PRODUCTION_MIGRATION_NOT_RUN / NO_PRODUCTION_WRITE**。核验依据：[Issue #57 服务器与恢复回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002)。这里记录的是负责执行方的脱敏证据，不代表此 PR 自行拥有服务器 SSH 凭据。
+> 本 PR 只收敛生产升级门禁和操作顺序；**尚未获得生产写操作批准**。不要把 #59 代码合并或 Windows 构建成功误写成远程产品箱已验收。
 
 ## 当前已独立核对（2026-11-22）
 
 - 主干固定待部署代码：`5bdac9660dbde39ae60d5de98c3ff1081fb94efa`（#59 Squash Merge），对应 [main CI #44979845433](https://github.com/Fan6512/una-seller/actions/runs/44979845433) **4/4 PASS**，Go/PG17 自动化集成测试已过。
 - 生产 Supabase **una-seller**：PostgreSQL **17.11**、`ACTIVE_HEALTHY`；`app.source_products`、`app.collection_working_drafts` 已存在，**`app.own_products` 不存在、工作稿 `listing_fields` 不存在**。私有 `app` schema 对 `anon`、`authenticated` 不开放 USAGE。
 - 已有业务资料（仅读取聚合计数，不查询个人数据）：采集商品 3、工作稿 0、订单 72、CBT 店铺连接 1。**不可清库、覆盖原订单或重建账号。**
-- 该 Supabase 组织当前为 **Free**；按 [官方 Backups 文档](https://supabase.com/docs/guides/platform/backups)，不能依赖 Pro/Team 的自动日备份。**未证实任何可恢复备份**。
+- 该 Supabase 组织当前为 **Free**；按 [官方 Backups 文档](https://supabase.com/docs/guides/platform/backups)，不能依赖 Pro/Team 的自动日备份。**2026-11-22 已收到备份与独立恢复验证 PASS 的脱敏回执**，其证据范围是 `app` 数据与结构（15 张表、142 列、66 约束、26 索引、逐表行摘要）；所有者/ACL、Supabase Auth、异地恢复未验证。AES-256 私有归档不得进入 Git。
 - 仓库的 `0008_own_products.sql` 新增独立产品箱（RLS、owner FK、source FK `ON DELETE SET NULL`），`0009_listing_editor_fields.sql` 对工作稿与产品箱加 `jsonb listing_fields`。迁移代码是**显式**执行，不会在 API 启动时自动迁移。
-- 无可用 SSH 执行入口来读取生产 Ubuntu 当前二进制、现役 Nginx vhost 或备份文件，故不能声称远程 Go 已升级或已验收；当前远程 HTTP 探测也没有获得可验证响应。
+- 已收到 Ubuntu 执行方脱敏结果：Ubuntu 26.04 LTS x86_64，Go 与 Nginx 正常运行，Go 只监听 `127.0.0.1:8787`；公网和回环健康检查均 200，匿名采集 401、产品箱和类目推荐仍 404，`nginx -t` 通过；旧 Go / vhost / systemd 已留私有校验副本。**不等于升级已执行**。本会话不具备 Ubuntu SSH 执行通道，不可自行声称现网二进制已经切换。
 
 ## 门禁 0：Ubuntu 只读核对（不含任何写入）
 
@@ -57,6 +57,12 @@ sha256sum una-seller-api.issue57
 ```
 
 检查 `uname -m` 与待运行平台相符、构建产物正常。**不要覆盖 `/opt/una-seller/una-seller-api`**。若已有同名临时目录，停止并核对来源，不能贸然删已有数据。不得修改其他业务容器。
+
+## 门禁 2.5：一次性迁移演练（生产写入前）
+
+从已经验证可恢复的同一份加密 `app` 归档，重新恢复到**隔离 PG17 空库**，用 pin 的新 Go 候选运行一次 `migrate`，核对 `app.own_products`、两处 `listing_fields`、RLS 与旧 15 张表的数据摘要，随后在这套临时库再运行一次 `migrate` 检查幂等；演练结束销毁临时测试库。
+
+**重要：`backend/migrations.Apply` 每次都会按顺序运行 `0001`～`0009`，而非只运行 `0008/0009`**。因此这次演练特别用于核实旧 `0001-0007` 在当前有订单与店铺数据的数据库上重放时不会产生副作用；不能因新增的两份 SQL 是追加式就跳过此项。仅记录 `MIGRATION_REHEARSAL_PASS/FAIL` 和脱敏行数/摘要，不贴数据库连接串、token、原始归档或敏感日志。演练失败即终止升级，不进生产。
 
 ## 门禁 3：升级窗口（仅备份与服务器证据完成、负责人明确批准后）
 
