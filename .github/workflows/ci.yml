@@ -159,6 +159,12 @@ jobs:
       - name: Verify editable listing field defaults and validation
         run: node --experimental-strip-types --test tests/listingFields.test.mjs
 
+      - name: Verify desktop version files agree
+        run: node ../../scripts/desktop-version.mjs --check
+
+      - name: Verify two-part version display
+        run: node --experimental-strip-types --test tests/desktopVersion.test.mjs
+
       - name: Verify readable and bounded API errors
         run: node --experimental-strip-types --test tests/apiErrors.test.mjs
 
