@@ -134,16 +134,16 @@ function Description({ value }: { value: string }) {
   );
 }
 
-function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyChange }: {
+function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyChange, approving }: {
   product: CollectionDetail; onDelete: () => void; deleting: boolean; deleteError: string | null;
-  onDraftDirtyChange: (dirty:boolean)=>void;
+  onDraftDirtyChange: (dirty:boolean)=>void; approving: boolean;
 }) {
   return (
     <article className="product-detail">
       <div className="detail-toolbar">
         <span className="detail-eyebrow">商品详情</span>
         <div className="detail-actions">
-          <button type="button" className="delete-source-button" onClick={onDelete} disabled={deleting}>{deleting ? "删除中…" : "删除商品"}</button>
+          <button type="button" className="delete-source-button" onClick={onDelete} disabled={deleting || approving}>{deleting ? "删除中…" : "删除商品"}</button>
           <a href={product.source_url} target="_blank" rel="noopener noreferrer" className="source-link">查看原商品 <Icon name="external" size={15} /></a>
         </div>
       </div>
@@ -163,7 +163,7 @@ function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyC
       {product.own_product_id
         ? <p className="converted-draft-hint" role="status">此商品已移入产品箱，原工作稿停止编辑。请切换到「产品箱」继续修改商品。</p>
         : <WorkingDraftEditor key={product.id} collectionId={product.id}
-            sourceTitle={product.title} sourceDescription={product.description} sourceProduct={product} onDirtyChange={onDraftDirtyChange} />}
+            sourceTitle={product.title} sourceDescription={product.description} sourceProduct={product} locked={approving} onDirtyChange={onDraftDirtyChange} />}
 
       {product.collection_warnings.length > 0 && (
         <details className="capture-notice">
@@ -293,17 +293,18 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   }, []);
 
   const leavingDirty = () => {
+    if (approving) return false;
     if ((workspaceTab==="inbox"&&draftDirty)||(workspaceTab==="products"&&ownDirty)) {
       return window.confirm("当前工作台存在未保存的修改，离开将丢失这些修改。确定继续吗？");
     }
     return true;
   };
   const chooseSource = (id:string) => {
-    if(id!==selectedId && draftDirty && !leavingDirty())return;
+    if (id !== selectedId && !leavingDirty()) return;
     setSelectedId(id);
   };
   const approveSelected=async()=>{
-    if(approving)return;
+    if (approving || listLoading || deletingId) return;
     const reason=approvalBlockReason(checked.size,draftDirty);
     if(reason){setApproveNotice(reason);return;}
     setApproving(true);setApproveNotice("");
@@ -314,14 +315,14 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
       try {
         // Read the revision immediately before POST; unknown saves are never
         // retried automatically and a concurrent edit is rejected by the API.
-        const {draft}=await getWorkingDraft(id,new AbortController().signal);
-        const result=await approveCollection(id,draft?.revision??0,new AbortController().signal);
+        const {draft}=await getWorkingDraft(id,AbortSignal.timeout(15_000));
+        const result=await approveCollection(id,draft?.revision??0,AbortSignal.timeout(20_000));
         outcomes.push(result.result);
       } catch(e) {
         outcomes.push("failed");
         failed.add(id);
         const item=items.find(x=>x.id===id);
-        errors.push((item?.title.slice(0,24)??id)+": "+(e instanceof Error?e.message:"转入未确认"));
+        errors.push((item?.title.slice(0,24)??id)+": "+(e instanceof Error && e.name !== "TimeoutError" ? e.message : "转入结果未确认，请刷新产品箱后再决定是否重试"));
       }
     }
     const summary=countApprovalOutcomes(outcomes);
@@ -381,7 +382,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   }, [checkHealth, refresh]);
 
   useEffect(() => {
-    if (isComposing) return;
+    if (isComposing || approving || draftDirty) return;
     const next = searchDraft.trim();
     if (next === search) return;
     const timer = window.setTimeout(() => {
@@ -390,7 +391,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
       setSearch(next);
     }, 280);
     return () => window.clearTimeout(timer);
-  }, [searchDraft, isComposing, search]);
+  }, [searchDraft, isComposing, search, approving, draftDirty]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -512,7 +513,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1></div>
-          {workspaceTab==="inbox" && <button type="button" className="refresh-button" onClick={reload} disabled={listLoading||draftDirty} aria-label="刷新采集箱"><Icon name="refresh" size={17} /> 刷新</button>}
+          {workspaceTab==="inbox" && <button type="button" className="refresh-button" onClick={reload} disabled={listLoading || draftDirty || approving} aria-label="刷新采集箱"><Icon name="refresh" size={17} /> 刷新</button>}
         </div>
         <div className="workbench-tabs" role="tablist" aria-label="工作台分区">
           <button type="button" role="tab" aria-selected={workspaceTab==="inbox"} onClick={()=>{if(!leavingDirty())return;setChecked(new Set());setWorkspaceTab("inbox");}}>采集箱</button>
@@ -520,7 +521,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         </div>
         {workspaceTab==="products"? <OwnProductsPage onDirtyChange={setOwnDirty} /> : <>
         <div className="workbench-approval">
-          <label><input type="checkbox" checked={showTransferred}
+          <label><input type="checkbox" checked={showTransferred} disabled={approving}
             onClick={e=>{if(draftDirty&&!leavingDirty())e.preventDefault();}}
             onChange={e=>{setShowTransferred(e.target.checked);setOffset(0);setChecked(new Set());}} /> 包含已转入来源</label>
           <span>已勾选 {checked.size} 件</span>
@@ -531,7 +532,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               setChecked(prev=>{const next=new Set(prev);if(next.has(selectedId))next.delete(selectedId);else next.add(selectedId);return next;});
               setApproveNotice("");
             }}>{selectedId&&checked.has(selectedId)?"取消勾选当前商品":"勾选当前商品"}</button>
-          <button type="button" className="primary-button" disabled={approving} onClick={()=>void approveSelected()}>{approving?"转入中…":"通过并移入产品箱"}</button>
+          <button type="button" className="primary-button" disabled={approving || listLoading || deletingId !== null} onClick={()=>void approveSelected()}>{approving?"转入中…":"通过并移入产品箱"}</button>
         </div>
         {approveNotice&&<p className="workspace-feedback" role="status">{approveNotice}</p>}
         <div className={"workspace " + (!showDetail ? "workspace-single" : "")}>
@@ -539,7 +540,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             <div className="list-toolbar">
               <label className="search-box">
                 <Icon name="search" size={18} />
-                <input type="search" placeholder="搜索商品名称" aria-label="搜索商品名称" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onCompositionStart={() => setIsComposing(true)} onCompositionEnd={(event) => { setIsComposing(false); setSearchDraft(event.currentTarget.value); }} maxLength={200} />
+                <input type="search" placeholder="搜索商品名称" aria-label="搜索商品名称" value={searchDraft} disabled={approving || draftDirty} onChange={(event) => setSearchDraft(event.target.value)} onCompositionStart={() => setIsComposing(true)} onCompositionEnd={(event) => { setIsComposing(false); setSearchDraft(event.currentTarget.value); }} maxLength={200} />
               </label>
               <div className="list-meta">
                 <span>{listLoading ? "正在更新…" : listError ? "加载失败" : search ? "搜索结果" : "全部商品"}</span>
@@ -559,7 +560,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
                   {items.map((item) => (
                     <article key={item.id} className={"product-card-tile " + (selectedId===item.id?"selected":"")}>
                       <label className="product-card-check" title="勾选待通过商品">
-                        <input type="checkbox" aria-label={"选择 "+item.title} checked={checked.has(item.id)}
+                        <input type="checkbox" aria-label={"选择 "+item.title} checked={checked.has(item.id)} disabled={approving}
                           onChange={event=>{setChecked(prev=>{const next=new Set(prev);if(event.target.checked)next.add(item.id);else next.delete(item.id);return next;});setApproveNotice("");}} />
                       </label>
                       <button type="button" onClick={()=>chooseSource(item.id)} aria-label={"查看采集商品 "+item.title}>
@@ -579,8 +580,8 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               <div className="list-footer">
                 <span>第 {pageNumber} 页</span>
                 <div className="page-actions">
-                  <button type="button" disabled={offset === 0 || listLoading} aria-label="上一页" onClick={() => {setChecked(new Set());setOffset((n) => Math.max(0, n - PAGE_SIZE));}}><Icon name="left" size={17} />上一页</button>
-                  <button type="button" disabled={!hasMore || listLoading} aria-label="下一页" onClick={() => {setChecked(new Set());setOffset((n) => n + PAGE_SIZE);}}>下一页<Icon name="right" size={17} /></button>
+                  <button type="button" disabled={offset === 0 || listLoading || draftDirty || approving} aria-label="上一页" onClick={() => {setChecked(new Set());setOffset((n) => Math.max(0, n - PAGE_SIZE));}}><Icon name="left" size={17} />上一页</button>
+                  <button type="button" disabled={!hasMore || listLoading || draftDirty || approving} aria-label="下一页" onClick={() => {setChecked(new Set());setOffset((n) => n + PAGE_SIZE);}}>下一页<Icon name="right" size={17} /></button>
                 </div>
               </div>
             )}
@@ -593,7 +594,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               ) : detailLoading || !detail || detail.id !== selectedId ? (
                 <div className="loading-state detail-loading" role="status"><span className="spinner" />正在加载详情…</div>
               ) : (
-                <ProductDetail key={detail.id} product={detail} onDelete={() => void removeCollection(detail)} deleting={deletingId !== null} deleteError={deleteError} onDraftDirtyChange={setDraftDirty} />
+                <ProductDetail key={detail.id} product={detail} onDelete={() => void removeCollection(detail)} deleting={deletingId !== null} deleteError={deleteError} onDraftDirtyChange={setDraftDirty} approving={approving} />
               )}
             </section>
           )}
