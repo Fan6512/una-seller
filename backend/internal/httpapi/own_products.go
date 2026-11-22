@@ -92,7 +92,7 @@ func (a collectionAPI) ownProductDetail(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := input.Validate(); err != nil {
-			writeError(w, 400, "invalid product edit fields")
+			writeError(w, 400, err.Error())
 			return
 		}
 		p, err := a.store.UpdateOwnProduct(r.Context(), owner, id, input)
