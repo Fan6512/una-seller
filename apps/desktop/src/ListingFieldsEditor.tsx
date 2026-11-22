@@ -1,7 +1,7 @@
 import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, validateListingFields, preferredTitle } from "./listingFields";
 import { getCBTCategorySuggestions, type CBTCategorySuggestion } from "./collections";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean};
  export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
@@ -9,23 +9,57 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
   const [predicting,setPredicting]=useState(false);
   const [predictMessage,setPredictMessage]=useState("");
+  const predictionRequest = useRef<AbortController|null>(null);
+  const [copyMessage,setCopyMessage]=useState("");
+  useEffect(()=>()=>predictionRequest.current?.abort(),[]);
   const chosenTitle=preferredTitle(value.titles);
   const setLocalizedTitle=(lang:"en"|"es"|"pt",title:string)=>{
-    set("titles",{...value.titles,[lang]:title});
+    predictionRequest.current?.abort();
+    setPredicting(false);
     setSuggestions([]);
-    setPredictMessage(value.category_id?"标题已修改，原类目需要重新核实。":"");
+    const titles={...value.titles,[lang]:title};
+    // CBT predictions depend on the English title, not the country languages.
+    // Never leave a category that was chosen for a different English title.
+    if(lang==="en" && title!==value.titles.en && value.category_id) {
+      onChange({...value,titles,category_id:"",category_path:""});
+      setPredictMessage("英文标题已修改，请重新选择或手动填写 CBT 类目。");
+    } else {
+      set("titles",titles);
+      setPredictMessage("");
+    }
+  };
+  const copyTitle=async(lang:"en"|"es"|"pt")=>{
+    const title=value.titles[lang];
+    if(!title)return;
+    try {
+      if(!navigator.clipboard?.writeText)throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(title);
+      setCopyMessage(lang+" 已复制");
+    }catch{
+      setCopyMessage("复制未完成，请手动选择标题文本");
+    }
   };
   const predict=async()=>{
     const english=value.titles.en.trim();
     if(!english || english.split(/\s+/u).length<2)return;
+    predictionRequest.current?.abort();
+    const controller=new AbortController();
+    predictionRequest.current=controller;
     setPredicting(true);setPredictMessage("");setSuggestions([]);
     try{
-      const result=await getCBTCategorySuggestions(english,new AbortController().signal);
+      const result=await getCBTCategorySuggestions(english,controller.signal);
+      if(controller.signal.aborted)return;
       setSuggestions(result.items);
       setPredictMessage(result.items.length?"请核对分类并点击确认候选；不会自动选中。":"官方未返回候选，请手动填写 CBT 类目。");
     }catch(e){
-      setPredictMessage(e instanceof Error?e.message:"暂时无法获取官方 CBT 分类推荐，请手动填写。");
-    }finally{setPredicting(false)}
+      if(!controller.signal.aborted)
+        setPredictMessage(e instanceof Error?e.message:"暂时无法获取官方 CBT 分类推荐，请手动填写。");
+    }finally{
+      if(predictionRequest.current===controller) {
+        predictionRequest.current=null;
+        setPredicting(false);
+      }
+    }
   };
   const images=value.images??[];
   const variants=value.variants??[];
@@ -62,11 +96,17 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
           {item.label}
           <textarea rows={2} disabled={disabled} maxLength={500} value={value.titles[item.key]}
             onChange={e=>setLocalizedTitle(item.key,e.target.value)} placeholder="可人工填写或后续 AI 生成；不编造规格"/>
-          <small className={"localized-title-count "+(item.key!=="en"&&Array.from(value.titles[item.key]).length>60?"title-over-limit":"")}>
-            {Array.from(value.titles[item.key]).length} 字符（含空格及符号）· {item.target}
-          </small>
+          <div className="localized-title-actions">
+            <small className={"localized-title-count "+(item.key!=="en"&&Array.from(value.titles[item.key]).length>60?"title-over-limit":"")}>
+              {Array.from(value.titles[item.key]).length} 字符（含空格及符号）· {item.target}
+            </small>
+            <button type="button" disabled={!value.titles[item.key]} onClick={()=>void copyTitle(item.key)}>
+              复制{item.key==="en"?"英文":item.key==="es"?"西语":"葡语"}
+            </button>
+          </div>
         </label>)}
       </div>
+      {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
       {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
       <p className="listing-fields-note">三语都属于同一个产品，站点与店铺在实际刊登时选择；英文标题优先作为 CBT 推荐依据。</p>
     </fieldset>
