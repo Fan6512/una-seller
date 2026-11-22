@@ -107,7 +107,9 @@ func (s *Store) ListOwnProducts(ctx context.Context, owner, q string, limit, off
 		return nil, fmt.Errorf("invalid paging")
 	}
 	rows, err := s.DB.Query(ctx, `SELECT id::text,source_product_id::text,title,source_platform,source_site,price::text,
-    currency,COALESCE(NULLIF(listing_fields->'images'->0->>'url',''),images->0->>'url'),updated_at FROM app.own_products
+    currency,CASE WHEN listing_fields ? 'images'
+      THEN NULLIF(listing_fields->'images'->0->>'url','')
+      ELSE images->0->>'url' END,updated_at FROM app.own_products
     WHERE owner_user_id=$1::uuid AND ($2='' OR title ILIKE '%'||$2||'%')
     ORDER BY updated_at DESC,id DESC LIMIT $3 OFFSET $4`, owner, q, limit, offset)
 	if err != nil {
