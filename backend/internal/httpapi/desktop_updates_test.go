@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestDesktopUpdateReleaseEligibility(t *testing.T) {
@@ -74,5 +78,151 @@ func TestDesktopUpdateHttpGateAndNoRelease(t *testing.T) {
 			rec.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("no release must be a 204 without a body: status=%d body=%q", rec.Code, rec.Body.String())
 		}
+	}
+}
+
+type desktopUpdaterRewriteTransport struct {
+	server *httptest.Server
+}
+
+func (transport desktopUpdaterRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	copyRequest := req.Clone(req.Context())
+	copyRequest.URL.Scheme = "http"
+	copyRequest.URL.Host = strings.TrimPrefix(transport.server.URL, "http://")
+	return transport.server.Client().Transport.RoundTrip(copyRequest)
+}
+
+func desktopUpdaterMockClient(server *httptest.Server) *http.Client {
+	return &http.Client{Transport: desktopUpdaterRewriteTransport{server: server}, Timeout: 2 * time.Second}
+}
+
+func TestDesktopManifestVerification(t *testing.T) {
+	const tag = "desktop-v1.0.0"
+	const prefix = desktopAssetPrefix + tag + "/"
+	for _, tc := range []struct {
+		name        string
+		manifestURL string
+		version     string
+		installer   string
+		wantStatus  int
+	}{
+		{name: "valid", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusOK},
+		{name: "untrusted_manifest_location", manifestURL: "https://evil.example/latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
+		{name: "wrong_manifest_version", manifestURL: prefix + "latest.json", version: "1.1.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
+		{name: "untrusted_installer_location", manifestURL: prefix + "latest.json", version: "1.0.0", installer: "https://evil.example/Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var manifestReads atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/releases":
+					_ = json.NewEncoder(w).Encode([]map[string]any{{
+						"tag_name": tag, "draft": false, "prerelease": false,
+						"assets": []map[string]string{{"name": "latest.json", "browser_download_url": tc.manifestURL}},
+					}})
+				case "/Fan6512/una-seller/releases/download/" + tag + "/latest.json":
+					manifestReads.Add(1)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"version": tc.version,
+						"platforms": map[string]any{"windows-x86_64": map[string]string{
+							"url": tc.installer, "signature": "non-empty-test-signature",
+						}},
+					})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer upstream.Close()
+			handler := desktopUpdaterHandler(desktopUpdaterMockClient(upstream), upstream.URL+"/releases")
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/updates", nil)
+			res := httptest.NewRecorder()
+			handler(res, req)
+			if res.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d body=%q", res.Code, tc.wantStatus, res.Body.String())
+			}
+			if tc.name == "untrusted_manifest_location" && manifestReads.Load() != 0 {
+				t.Fatal("must reject the untrusted URL before any asset request")
+			}
+			if tc.wantStatus == http.StatusOK && !strings.Contains(res.Body.String(), "\"version\":\"1.0.0\"") {
+				t.Fatalf("valid signed manifest not returned: %q", res.Body.String())
+			}
+		})
+	}
+}
+
+func TestDesktopUpdateSharedCacheConcurrentRefreshAndStale(t *testing.T) {
+	const tag = "desktop-v1.0.0"
+	const prefix = desktopAssetPrefix + tag + "/"
+	var releaseReads, manifestReads atomic.Int32
+	var fail atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases":
+			releaseReads.Add(1)
+			if fail.Load() {
+				http.Error(w, "upstream down", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"tag_name": tag, "draft": false, "prerelease": false,
+				"assets": []map[string]string{{"name": "latest.json", "browser_download_url": prefix + "latest.json"}},
+			}})
+		case "/Fan6512/una-seller/releases/download/" + tag + "/latest.json":
+			manifestReads.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": "1.0.0",
+				"platforms": map[string]any{"windows-x86_64": map[string]string{
+					"url": prefix + "Una-Seller_1.0.0_x64-setup.exe", "signature": "non-empty-test-signature",
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	handler := desktopUpdaterHandlerWithTTL(desktopUpdaterMockClient(upstream), upstream.URL+"/releases", 25*time.Millisecond)
+	get := func(tests bool) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/updates", nil)
+		if tests {
+			req.Header.Set("X-Una-Include-Prerelease", "1")
+		}
+		res := httptest.NewRecorder()
+		handler(res, req)
+		return res.Code
+	}
+	if get(false) != http.StatusOK || get(false) != http.StatusOK || get(true) != http.StatusOK {
+		t.Fatal("initial requests must return signed manifest for both channels")
+	}
+	if releaseReads.Load() != 1 || manifestReads.Load() != 2 {
+		t.Fatalf("expected shared Releases request and per-channel manifest fetch, list=%d manifest=%d", releaseReads.Load(), manifestReads.Load())
+	}
+	time.Sleep(40 * time.Millisecond)
+	const workers = 12
+	var wg sync.WaitGroup
+	results := make(chan int, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- get(false)
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for code := range results {
+		if code != http.StatusOK {
+			t.Fatalf("concurrent refresh got status %d", code)
+		}
+	}
+	if releaseReads.Load() != 2 || manifestReads.Load() != 3 {
+		t.Fatalf("concurrent refresh not merged: list=%d manifest=%d", releaseReads.Load(), manifestReads.Load())
+	}
+	time.Sleep(40 * time.Millisecond)
+	fail.Store(true)
+	if get(false) != http.StatusOK || get(false) != http.StatusOK {
+		t.Fatal("previously validated manifest must survive upstream failure")
+	}
+	if releaseReads.Load() != 3 {
+		t.Fatalf("retry backoff should suppress repeated upstream requests: got %d", releaseReads.Load())
 	}
 }

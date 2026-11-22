@@ -115,22 +115,82 @@ func pickDesktopRelease(releases []desktopRelease, acceptTests bool) (desktopRel
 	return best, bestName, found
 }
 
+// The releases listing is shared by both channels. A single mutex also merges
+// simultaneous refreshes; this endpoint has low traffic and no extra worker.
+const desktopCacheTTL = 10 * time.Minute
+const desktopRetryDelay = time.Minute
+
+type desktopCachedManifest struct {
+	content []byte
+	until   time.Time
+}
+
 type desktopManifestCache struct {
 	sync.Mutex
-	entries map[bool]struct {
-		content []byte
-		until   time.Time
+	releases      []desktopRelease
+	releasesUntil time.Time
+	entries       map[bool]desktopCachedManifest
+	retryAfter    map[bool]time.Time
+}
+
+func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, releasesURL string, includeTests bool, ttl time.Duration) ([]byte, error) {
+	c.Lock()
+	defer c.Unlock()
+
+	now := time.Now()
+	last, found := c.entries[includeTests]
+	if found && now.Before(last.until) {
+		return last.content, nil
 	}
+	// Only a previously validated signed release manifest is safe to serve stale.
+	staleOrError := func(err error) ([]byte, error) {
+		if found && len(last.content) > 0 {
+			return last.content, nil
+		}
+		return nil, err
+	}
+	if now.Before(c.retryAfter[includeTests]) {
+		return staleOrError(errors.New("updater upstream retry backoff"))
+	}
+	if !now.Before(c.releasesUntil) {
+		var releases []desktopRelease
+		if err := readDesktopJSON(ctx, client, releasesURL, &releases); err != nil {
+			// A canceled client request must not poison the shared retry window.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			c.retryAfter[includeTests] = time.Now().Add(desktopRetryDelay)
+			return staleOrError(err)
+		}
+		c.releases = releases
+		c.releasesUntil = time.Now().Add(ttl)
+	}
+
+	data, err := desktopManifestForReleases(ctx, client, c.releases, includeTests)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		c.retryAfter[includeTests] = time.Now().Add(desktopRetryDelay)
+		return staleOrError(err)
+	}
+	delete(c.retryAfter, includeTests)
+	c.entries[includeTests] = desktopCachedManifest{content: data, until: time.Now().Add(ttl)}
+	return data, nil
 }
 
 func desktopUpdaterHandler(client *http.Client, releasesURL string) http.HandlerFunc {
+	return desktopUpdaterHandlerWithTTL(client, releasesURL, desktopCacheTTL)
+}
+
+func desktopUpdaterHandlerWithTTL(client *http.Client, releasesURL string, ttl time.Duration) http.HandlerFunc {
 	if client == nil {
 		client = &http.Client{Timeout: 7 * time.Second}
 	}
-	cache := &desktopManifestCache{entries: make(map[bool]struct {
-		content []byte
-		until   time.Time
-	})}
+	cache := &desktopManifestCache{
+		entries: make(map[bool]desktopCachedManifest),
+		retryAfter: make(map[bool]time.Time),
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodGet {
@@ -139,24 +199,11 @@ func desktopUpdaterHandler(client *http.Client, releasesURL string) http.Handler
 			return
 		}
 		includeTests := r.Header.Get("X-Una-Include-Prerelease") == "1"
-		cache.Lock()
-		entry, cached := cache.entries[includeTests]
-		cache.Unlock()
-		if cached && time.Now().Before(entry.until) {
-			respondDesktopManifest(w, entry.content)
-			return
-		}
-		data, err := latestDesktopManifest(r.Context(), client, releasesURL, includeTests)
+		data, err := cache.lookup(r.Context(), client, releasesURL, includeTests, ttl)
 		if err != nil {
 			http.Error(w, "update information temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		cache.Lock()
-		cache.entries[includeTests] = struct {
-			content []byte
-			until   time.Time
-		}{content: data, until: time.Now().Add(2 * time.Minute)}
-		cache.Unlock()
 		respondDesktopManifest(w, data)
 	}
 }
@@ -191,11 +238,7 @@ func readDesktopJSON(ctx context.Context, client *http.Client, uri string, out a
 	return nil
 }
 
-func latestDesktopManifest(ctx context.Context, client *http.Client, releasesURL string, includeTests bool) ([]byte, error) {
-	var releases []desktopRelease
-	if err := readDesktopJSON(ctx, client, releasesURL, &releases); err != nil {
-		return nil, err
-	}
+func desktopManifestForReleases(ctx context.Context, client *http.Client, releases []desktopRelease, includeTests bool) ([]byte, error) {
 	release, expectedVersion, found := pickDesktopRelease(releases, includeTests)
 	if !found {
 		return nil, nil // No eligible published release yet
