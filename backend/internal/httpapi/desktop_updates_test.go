@@ -180,7 +180,7 @@ func TestDesktopUpdateSharedCacheConcurrentRefreshAndStale(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	handler := desktopUpdaterHandlerWithTTL(desktopUpdaterMockClient(upstream), upstream.URL+"/releases", 25*time.Millisecond)
+	handler := desktopUpdaterHandlerWithTTL(desktopUpdaterMockClient(upstream), upstream.URL+"/releases", 500*time.Millisecond)
 	get := func(tests bool) int {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/updates", nil)
 		if tests {
@@ -196,7 +196,7 @@ func TestDesktopUpdateSharedCacheConcurrentRefreshAndStale(t *testing.T) {
 	if releaseReads.Load() != 1 || manifestReads.Load() != 2 {
 		t.Fatalf("expected shared Releases request and per-channel manifest fetch, list=%d manifest=%d", releaseReads.Load(), manifestReads.Load())
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 	const workers = 12
 	var wg sync.WaitGroup
 	results := make(chan int, workers)
@@ -217,7 +217,7 @@ func TestDesktopUpdateSharedCacheConcurrentRefreshAndStale(t *testing.T) {
 	if releaseReads.Load() != 2 || manifestReads.Load() != 3 {
 		t.Fatalf("concurrent refresh not merged: list=%d manifest=%d", releaseReads.Load(), manifestReads.Load())
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 	fail.Store(true)
 	if get(false) != http.StatusOK || get(false) != http.StatusOK {
 		t.Fatal("previously validated manifest must survive upstream failure")
