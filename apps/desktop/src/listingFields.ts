@@ -11,7 +11,6 @@ export type LocalizedTitles = { en: string; es: string; pt: string };
 export type TitleLanguage = keyof LocalizedTitles;
 export type ListingFields = {
   titles: LocalizedTitles;
-  category_site: string; // deprecated persisted field; never used to select a listing site
   category_id: string;
   category_path: string;
   brand: string;
@@ -24,7 +23,6 @@ export type ListingFields = {
   length_cm: string;
   width_cm: string;
   height_cm: string;
-  site_prices: {site:string;price:string;currency:string}[];
   bullet_points: string[];
   attributes: {name:string;value:string}[];
   images?: CollectionImage[];
@@ -36,18 +34,12 @@ export type ListingSource = {
   bullet_points: string[];
 };
 
-const siteDefaultPrices: ListingFields["site_prices"] = []; // selected only at listing time
-export const SITE_NAMES:Record<string,string> = {
-  MLB:"巴西",MLM:"墨西哥",MLA:"阿根廷",MLC:"智利",MCO:"哥伦比亚",
-};
-
 export function initialListingFields(saved?: Partial<ListingFields> | null, source?: ListingSource, capturedTitle = ""): ListingFields {
   const defaults: ListingFields = {
     titles: titlesFromSource(capturedTitle),
-    category_site:"",category_id:"",category_path:"",brand:"",model:"",
+    category_id:"",category_path:"",brand:"",model:"",
     seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"",
     weight_g:"",length_cm:"",width_cm:"",height_cm:"",
-    site_prices:siteDefaultPrices.map(p=>({...p})),
     bullet_points:source?.bullet_points.slice()??[],
     attributes:[],
     images:source?.images.map(x=>({...x}))??[],
@@ -62,7 +54,6 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   if(!saved)return defaults;
   const result:ListingFields={...defaults,...saved,
     titles:saved.titles ? {...defaults.titles,...saved.titles} : defaults.titles};
-  result.site_prices=saved.site_prices!==undefined?saved.site_prices.map(p=>({...p})):defaults.site_prices;
   result.bullet_points=saved.bullet_points?.slice()??defaults.bullet_points;
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
@@ -101,7 +92,7 @@ export function validateListingFields(v:ListingFields):string {
   if(v.category_id && !/^CBT[0-9]{1,15}$/.test(v.category_id))return "请填写 CBT 通用类目 ID，站点类目应在上传时选择";
   if(v.category_path.length>400||v.category_id.length>60||v.brand.length>120||
     v.model.length>120||v.seller_sku.length>120||v.gtin.length>50) return "类目或基础属性过长";
-  if(!isMoney(v.purchase_price)||v.site_prices.some(p=>!isMoney(p.price)))return "采购价或站点售价格式不正确，最多保留四位小数";
+  if(!isMoney(v.purchase_price))return "采购成本格式不正确，最多保留四位小数";
   if(!isDecimal(v.weight_g,1000000,true))return "重量请输入正整数，单位为克";
   for(const [n,k] of [["长","length_cm"],["宽","width_cm"],["高","height_cm"]] as const) {
     if(!isDecimal(v[k],10000,false))return n+"度必须是大于零的厘米数字";
