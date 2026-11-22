@@ -35,7 +35,10 @@ func (a storeAPI) predictCBTCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, meli.ErrCBTPredictorStore) {
-		writeError(w, http.StatusConflict, "connect a Mercado Libre store to use the official CBT category predictor")
+		writeJSON(w, http.StatusPreconditionFailed, map[string]string{
+			"error": "connect a Mercado Libre store to use the official CBT category predictor",
+			"code":  "CBT_STORE_REQUIRED",
+		})
 		return
 	}
 	if err != nil {
