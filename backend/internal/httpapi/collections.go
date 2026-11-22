@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -35,6 +36,11 @@ func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, st
 	mux.HandleFunc("/api/v1/products", api.ownProducts)
 	mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
 	s := storeAPI{auth: api, service: storeService, translator: translator}
+	if translator != nil {
+		s.localizeCategory = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
+			return translator.translate(ctx, "", categoryTranslationTexts(rules))
+		}
+	}
 	mux.HandleFunc("/api/v1/stores/order-title-translations", s.orderTitleTranslations)
 	mux.HandleFunc("/api/v1/categories/predict", s.predictCBTCategory)
 	mux.HandleFunc("/api/v1/stores", s.stores)
