@@ -171,3 +171,10 @@
 @media (max-width: 900px) {
   .category-suggestion-list { grid-template-columns: 1fr; }
 }
+
+.localized-title-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; justify-content: space-between; }
+.localized-title-actions button {
+  border: 1px solid #bacfe9; background: #f6faff; color: #28578f;
+  border-radius: 7px; padding: 5px 10px; font-size: 11px;
+}
+.localized-title-actions button:disabled { opacity: .5; }
