@@ -100,15 +100,17 @@ func TestDesktopManifestVerification(t *testing.T) {
 	const tag = "desktop-v1.0.0"
 	const prefix = desktopAssetPrefix + tag + "/"
 	for _, tc := range []struct {
-		name        string
-		manifestURL string
-		version     string
-		installer   string
-		wantStatus  int
+		name             string
+		manifestURL      string
+		version          string
+		installer        string
+		missingInstaller bool
+		wantStatus       int
 	}{
 		{name: "valid", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusOK},
 		{name: "untrusted_manifest_location", manifestURL: "https://evil.example/latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
 		{name: "wrong_manifest_version", manifestURL: prefix + "latest.json", version: "1.1.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
+		{name: "installer_missing_from_release", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", missingInstaller: true, wantStatus: http.StatusServiceUnavailable},
 		{name: "untrusted_installer_location", manifestURL: prefix + "latest.json", version: "1.0.0", installer: "https://evil.example/Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,9 +118,13 @@ func TestDesktopManifestVerification(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/releases":
+					assets := []map[string]string{{"name": "latest.json", "browser_download_url": tc.manifestURL}}
+					if !tc.missingInstaller {
+						assets = append(assets, map[string]string{"name": "Una-Seller_1.0.0_x64-setup.exe", "browser_download_url": prefix + "Una-Seller_1.0.0_x64-setup.exe"})
+					}
 					_ = json.NewEncoder(w).Encode([]map[string]any{{
 						"tag_name": tag, "draft": false, "prerelease": false,
-						"assets": []map[string]string{{"name": "latest.json", "browser_download_url": tc.manifestURL}},
+						"assets": assets,
 					}})
 				case "/Fan6512/una-seller/releases/download/" + tag + "/latest.json":
 					manifestReads.Add(1)
@@ -163,9 +169,9 @@ func TestDesktopUpdateSharedCacheConcurrentRefreshAndStale(t *testing.T) {
 				http.Error(w, "upstream down", http.StatusServiceUnavailable)
 				return
 			}
-			_ = json.NewEncoder(w).Encode([]map[string]any{{
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"tag_name": "desktop-v1.1.0"}, {"tag_name": "desktop-test-v1.2.0-beta.1", "prerelease": true}, {
 				"tag_name": tag, "draft": false, "prerelease": false,
-				"assets": []map[string]string{{"name": "latest.json", "browser_download_url": prefix + "latest.json"}},
+				"assets": []map[string]string{{"name": "latest.json", "browser_download_url": prefix + "latest.json"}, {"name": "Una-Seller_1.0.0_x64-setup.exe", "browser_download_url": prefix + "Una-Seller_1.0.0_x64-setup.exe"}},
 			}})
 		case "/Fan6512/una-seller/releases/download/" + tag + "/latest.json":
 			manifestReads.Add(1)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,14 +23,16 @@ var (
 	testTag     = regexp.MustCompile(`^desktop-test-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.0(?:-beta\.([1-9][0-9]*))?$`)
 )
 
+type desktopReleaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
 type desktopRelease struct {
-	TagName    string `json:"tag_name"`
-	Draft      bool   `json:"draft"`
-	Prerelease bool   `json:"prerelease"`
-	Assets     []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
+	TagName    string                `json:"tag_name"`
+	Draft      bool                  `json:"draft"`
+	Prerelease bool                  `json:"prerelease"`
+	Assets     []desktopReleaseAsset `json:"assets"`
 }
 
 type desktopManifest struct {
@@ -166,7 +169,9 @@ func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, 
 		c.releasesUntil = time.Now().Add(ttl)
 	}
 
-	data, err := desktopManifestForReleases(ctx, client, c.releases, includeTests)
+	fetchCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	data, err := desktopManifestForReleases(fetchCtx, client, c.releases, includeTests)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -217,6 +222,12 @@ func respondDesktopManifest(w http.ResponseWriter, data []byte) {
 	_, _ = w.Write(data)
 }
 
+type desktopSourceStatus int
+
+func (status desktopSourceStatus) Error() string {
+	return fmt.Sprintf("updater source status %d", status)
+}
+
 func readDesktopJSON(ctx context.Context, client *http.Client, uri string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
@@ -230,7 +241,7 @@ func readDesktopJSON(ctx context.Context, client *http.Client, uri string, out a
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("updater source status %d", response.StatusCode)
+		return desktopSourceStatus(response.StatusCode)
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(out); err != nil {
 		return err
@@ -239,31 +250,56 @@ func readDesktopJSON(ctx context.Context, client *http.Client, uri string, out a
 }
 
 func desktopManifestForReleases(ctx context.Context, client *http.Client, releases []desktopRelease, includeTests bool) ([]byte, error) {
-	release, expectedVersion, found := pickDesktopRelease(releases, includeTests)
-	if !found {
-		return nil, nil // No eligible published release yet
+	candidates := slices.Clone(releases)
+	var lastInvalid error
+	for {
+		release, expectedVersion, found := pickDesktopRelease(candidates, includeTests)
+		if !found {
+			return nil, lastInvalid
+		}
+		manifest, err := readDesktopManifest(ctx, client, release, expectedVersion)
+		if !errors.Is(err, errDesktopManifestInvalid) {
+			return manifest, err
+		}
+		lastInvalid = err
+		candidates = slices.DeleteFunc(candidates, func(candidate desktopRelease) bool {
+			return candidate.TagName == release.TagName
+		})
 	}
+}
+
+var errDesktopManifestInvalid = errors.New("release does not have a valid signed installer manifest")
+
+func readDesktopManifest(ctx context.Context, client *http.Client, release desktopRelease, expectedVersion string) ([]byte, error) {
+	prefix := desktopAssetPrefix + release.TagName + "/"
 	var manifestURL string
 	for _, asset := range release.Assets {
-		if asset.Name == "latest.json" {
+		if asset.Name == "latest.json" && asset.BrowserDownloadURL == prefix+asset.Name {
 			manifestURL = asset.BrowserDownloadURL
 			break
 		}
 	}
-	// No SSRF: only fetch the manifest from the matching official GitHub tag.
-	if !strings.HasPrefix(manifestURL, desktopAssetPrefix+release.TagName+"/") ||
-		!strings.HasSuffix(manifestURL, "/latest.json") {
-		return nil, errors.New("signed release manifest not published")
+	if manifestURL == "" {
+		return nil, errDesktopManifestInvalid
 	}
 	var manifest desktopManifest
 	if err := readDesktopJSON(ctx, client, manifestURL, &manifest); err != nil {
+		var sourceStatus desktopSourceStatus
+		var syntax *json.SyntaxError
+		var badType *json.UnmarshalTypeError
+		if (errors.As(err, &sourceStatus) && (sourceStatus == http.StatusNotFound || sourceStatus == http.StatusGone)) ||
+			errors.As(err, &syntax) || errors.As(err, &badType) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, errDesktopManifestInvalid
+		}
 		return nil, err
 	}
 	windows, ok := manifest.Platforms["windows-x86_64"]
-	if !ok || manifest.Version != expectedVersion ||
-		!strings.HasPrefix(windows.URL, desktopAssetPrefix+release.TagName+"/") ||
-		!strings.HasSuffix(windows.URL, "_x64-setup.exe") || strings.TrimSpace(windows.Signature) == "" {
-		return nil, errors.New("release manifest does not match published tag and signed installer")
+	if !ok || manifest.Version != expectedVersion || strings.TrimSpace(windows.Signature) == "" ||
+		!slices.ContainsFunc(release.Assets, func(asset desktopReleaseAsset) bool {
+			return strings.HasSuffix(asset.Name, "_x64-setup.exe") && windows.URL == prefix+asset.Name &&
+				asset.BrowserDownloadURL == windows.URL
+		}) {
+		return nil, errDesktopManifestInvalid
 	}
 	return json.Marshal(manifest)
 }

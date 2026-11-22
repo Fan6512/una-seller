@@ -99,4 +99,12 @@
 6. **故障处理**：Go 进程仍可用但 GitHub API/manifest 请求失败时，返回内存中上一次**成功校验**的已发布 manifest，并短暂退避；Go 或 Nginx 自身不可用时此策略无法救援。`releases/latest/download/latest.json` 只有在确认 GitHub latest 一直指向符合 `desktop-vMAJOR.MINOR.0` 的桌面正式版时才能作为第二 endpoint；目前 GitHub latest 是旧 `desktop-v0.1.1`，**不得直接启用**。签名客户端更新链路依赖当前路由，运维需留意。
 7. **后续 Beta 边界**：服务端已能识别 `desktop-test-v1.1.0-beta.N`，但 `windows-desktop.yml` 的 Tag 校验及生成 manifest 的版本比较**尚不支持**带 `-beta.N` 的 Tag；V1.0 以后要实际发布 Beta 时另改 workflow 和测试。本轮不提前开放。
 
-V1.0 正式版仍须先完成授权商品读回/更新、编辑器 Windows 实机验收及相应签名 OTA 验收，不以 V0.3 CI 通过替代。
+| 发布门禁 | 当前状态 | 通过条件 |
+| --- | --- | --- |
+| #57 授权产品箱与 #65 Windows GUI | MANUAL_PENDING(AUTH, GUI) | 用受控来源完成保存工作稿、勾选转库、编辑独立产品和客户端重启读回。再复核三语标题、图片顺序、9 变体及采购成本。 |
+| Go/Nginx 更新路由 | MANUAL_PENDING(DEPLOY) | 对候选版本单独批准部署，验证开关请求头透传，检查无候选 204、有候选 200 和原业务路由。 |
+| Windows 安装器与签名 | MANUAL_PENDING(GUI, SIGNING) | 核对候选 HEAD 的 x64 安装器；正式安装器及 manifest 对应同一版本和可信密钥。 |
+| 测试版及正式版 OTA | MANUAL_PENDING(SIGNING, GUI) | 在之前的签名客户端分别验证开关 ON/OFF、拒绝更新、网络与签名失败、安装和重启。已安装版本高于或等于候选时不提示升级。 |
+| 发布回退 | MANUAL_PENDING(DEPLOY, GUI) | 演练 Go/Nginx 回退及 Windows 恢复。记录可用的可信安装包与恢复操作；自动更新继续禁止降级。 |
+
+V1.0 正式版使用 `desktop-v1.0.0`，所有版本文件对齐 `1.0.0`。发布前需确认授权商品读回/更新、编辑器 Windows 实机、正式通道签名 OTA 和回退验证均已通过。
