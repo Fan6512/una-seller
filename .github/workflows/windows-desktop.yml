@@ -102,6 +102,10 @@ jobs:
       - name: Build test NSIS installer
         if: github.event_name != 'push' && !inputs.signed_smoke
         env:
+          # QA installers use the artifact's separate loopback Go API. Never
+          # send test product-box writes to the existing cloud production API.
+          # Release-tag builds use their own signing step and remain cloud-based.
+          VITE_API_BASE_URL: http://127.0.0.1:8787
           VITE_UNA_SELLER_DEV_DIAGNOSTICS: '1'
         run: npm run tauri:build -- --bundles nsis -- --locked
 
