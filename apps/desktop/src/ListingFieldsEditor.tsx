@@ -7,6 +7,8 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
  export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
+  const [categoryTranslations, setCategoryTranslations] = useState<Record<string, string>>({});
+  const [chosenPath, setChosenPath] = useState<string[]>([]);
   const [predicting,setPredicting]=useState(false);
   const [predictMessage,setPredictMessage]=useState("");
   const predictionRequest = useRef<AbortController|null>(null);
@@ -50,6 +52,7 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
       const result=await getCBTCategorySuggestions(english,controller.signal);
       if(controller.signal.aborted)return;
       setSuggestions(result.items);
+      setCategoryTranslations(result.translations_zh ?? {});
       setPredictMessage(result.items.length?"请核对分类并点击确认候选；不会自动选中。":"官方未返回候选，请手动填写 CBT 类目。");
     }catch(e){
       if(!controller.signal.aborted)
@@ -120,14 +123,26 @@ type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:bo
       </div>
       {predictMessage&&<p className="listing-fields-note" role="status">{predictMessage}</p>}
       {suggestions.length>0&&<div className="category-suggestion-list">
-        {suggestions.map(item=><button key={item.category_id} type="button" disabled={disabled}
-          onClick={()=>{
-            onChange({...value,category_id:item.category_id,category_path:item.category_name});
-            setPredictMessage("已填入所选 CBT 类目，仍需在刊登前核对官方必填属性。");
-          }}>
-          <strong>{item.category_name}</strong><small>{item.category_id} · {item.domain_name}</small>
-        </button>)}
+        {suggestions.map(item => {
+          const names = item.path?.length ? item.path.map(node => node.name) : [item.category_name];
+          const official = names.join(" / ");
+          const translated = names.every(name => Object.hasOwn(categoryTranslations, name))
+            ? names.map(name => categoryTranslations[name]).join(" / ") : "";
+          return <button key={item.category_id} type="button" disabled={disabled}
+            onClick={() => {
+              onChange({...value,category_id:item.category_id,category_path:official.length <= 400 ? official : item.category_name});
+              setChosenPath(names);
+              setSuggestions([]);
+              setPredictMessage("已填入所选 CBT 类目，仍需在刊登前核对官方必填属性。");
+            }}>
+            {translated && <strong>{translated}</strong>}
+            <span>{official}</span><small>{item.category_id}</small>
+          </button>;
+        })}
       </div>}
+      {chosenPath.join(" / ") === value.category_path && chosenPath.length > 0 &&
+        chosenPath.every(name => Object.hasOwn(categoryTranslations, name)) &&
+        <p className="listing-fields-note">{chosenPath.map(name => categoryTranslations[name]).join(" / ")}</p>}
       <div className="listing-field-grid">
         {field("CBT 分类名称 / 路径（可手动修改）","category_path","整理完标题后再填写或选择官方推荐",400)}
         {field("CBT 通用分类 ID（非 MLB/MLM）","category_id","例如 CBT12345；可手动填写",60)}

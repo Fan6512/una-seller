@@ -15,8 +15,9 @@ import (
 )
 
 type storeAPI struct {
-	auth    collectionAPI
-	service *meli.Service
+	auth       collectionAPI
+	service    *meli.Service
+	translator *TranslationService
 }
 
 func (a storeAPI) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {

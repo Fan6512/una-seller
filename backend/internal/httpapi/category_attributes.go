@@ -28,7 +28,14 @@ func (a storeAPI) categoryRules(w http.ResponseWriter, r *http.Request, owner, s
 	}
 	result, err := a.service.GetCategoryRules(r.Context(), owner, store, scope, category)
 	if err == nil {
-		writeJSON(w, http.StatusOK, result)
+		var translations map[string]string
+		if a.translator != nil {
+			translations = a.translator.translate(r.Context(), "", categoryTranslationTexts(result))
+		}
+		writeJSON(w, http.StatusOK, struct {
+			meli.CategoryRules
+			Translations map[string]string `json:"translations_zh,omitempty"`
+		}{result, translations})
 		return
 	}
 	var platform meli.ListingPlatformError

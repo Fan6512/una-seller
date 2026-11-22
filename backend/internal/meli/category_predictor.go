@@ -29,10 +29,11 @@ func preferredCBTStore(stores []Store) string {
 // CBTCategorySuggestion is a suggestion, not a validated marketplace listing
 // category. User must confirm and site-specific fields are checked at upload.
 type CBTCategorySuggestion struct {
-	CategoryID   string `json:"category_id"`
-	CategoryName string `json:"category_name"`
-	DomainID     string `json:"domain_id"`
-	DomainName   string `json:"domain_name"`
+	CategoryID   string             `json:"category_id"`
+	CategoryName string             `json:"category_name"`
+	DomainID     string             `json:"domain_id"`
+	DomainName   string             `json:"domain_name"`
+	Path         []CategoryPathNode `json:"path,omitempty"`
 }
 
 func (s *Service) PredictCBTCategories(ctx context.Context, owner, editedEnglishTitle string) ([]CBTCategorySuggestion, error) {
@@ -73,6 +74,22 @@ func (s *Service) PredictCBTCategories(ctx context.Context, owner, editedEnglish
 		suggestions = append(suggestions, item)
 		if len(suggestions) == 8 {
 			break
+		}
+	}
+	pathCtx, stop := context.WithTimeout(readCtx, 2500*time.Millisecond)
+	defer stop()
+	for i := range suggestions {
+		if pathCtx.Err() != nil {
+			break
+		}
+		var info struct {
+			ID   string             `json:"id"`
+			Path []CategoryPathNode `json:"path_from_root"`
+		}
+		id := suggestions[i].CategoryID
+		if _, err := s.listingGET(pathCtx, auth.AccessToken, "/categories/"+id, &info, nil); err == nil &&
+			info.ID == id && len(info.Path) != 0 && info.Path[len(info.Path)-1].ID == id {
+			suggestions[i].Path = info.Path
 		}
 	}
 	return suggestions, nil

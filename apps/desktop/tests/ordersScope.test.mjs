@@ -43,6 +43,12 @@ let slaFetchCount = 0;
 window.fetch = (path, options) => {
   const { pathname } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
+  if (pathname === "/api/v1/stores/order-title-translations") {
+    const refs = JSON.parse(options.body);
+    assert(refs.every(ref => Object.keys(ref).sort().join(",") === "logistic_type,order_id,site_id,store_id"),
+      "translation must send scoped IDs only");
+    return Promise.resolve(Response.json({ "Lemon massage tool": "柠檬按摩工具" }));
+  }
   if (pathname.endsWith("/orders/102/sla")) {
     slaFetchCount++;
     order.dispatch_deadline = new Date(Date.now() + 3 * 86_400_000).toISOString();
@@ -327,6 +333,11 @@ try {
     document.querySelector(".orders-id")?.textContent === "200002",
     "cross-site Order ID must change to all sites and show exactly the matching order");
   assert(document.querySelectorAll(".orders-id").length === 1, "numeric search returned extra orders");
+  await waitFor(() => document.querySelector(".orders-product-title")?.title.includes("柠檬按摩工具"),
+    "cached Chinese hover translation did not load");
+  assert(document.querySelector(".orders-product-title")?.textContent === "Lemon massage tool" &&
+    document.querySelector(".orders-product-title")?.title.includes("Lemon massage tool"),
+    "translation changed the official title or removed it from the tooltip");
   flushSync(() => document.querySelector(".orders-row-purchase").click());
   const crossSitePurchase = await takePurchase("GET");
   assert(new URL(crossSitePurchase.path, location.href).searchParams.get("site") === "MLM" &&
