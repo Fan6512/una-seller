@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { getWorkingDraft, isDraftConflict, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
+import ListingFieldsEditor from "./ListingFieldsEditor";
+import { initialListingFields, preferredTitle, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
+import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
 
-type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes">;
+type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes"> & {listing_fields: ListingFields};
 type LoadState = "loading" | "ready" | "error";
 const charCount = (value: string) => Array.from(value).length;
 
-export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDescription }: {
+export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDescription, sourceProduct, onDirtyChange }: {
   collectionId: string; sourceTitle: string; sourceDescription: string | null;
+  sourceProduct: ListingSource; onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [fields, setFields] = useState<DraftFields>({
     title: sourceTitle, description: sourceDescription ?? "", notes: "",
+    listing_fields: initialListingFields(null,sourceProduct,sourceTitle),
   });
   const [saved, setSaved] = useState<DraftFields | null>(null);
   const [touched, setTouched] = useState(false);
@@ -30,8 +34,10 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     void getWorkingDraft(collectionId, controller.signal).then(({ draft }) => {
       if (controller.signal.aborted) return;
       const next = draft
-        ? { title: draft.title, description: draft.description, notes: draft.notes }
-        : { title: sourceTitle, description: sourceDescription ?? "", notes: "" };
+        ? { title: draft.title, description: draft.description, notes: draft.notes,
+            listing_fields: initialListingFields(draft.listing_fields,sourceProduct,draft.title) }
+        : { title: sourceTitle, description: sourceDescription ?? "", notes: "",
+            listing_fields: initialListingFields(null,sourceProduct,sourceTitle) };
       setFields(next);
       setSaved(draft ? next : null);
       setTouched(false);
@@ -44,18 +50,25 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       }
     });
     return () => controller.abort();
-  }, [collectionId, sourceTitle, sourceDescription, reload]);
+  }, [collectionId, sourceTitle, sourceDescription, sourceProduct, reload]);
 
   // The GET effect owns its request; this cleanup also cancels any active PUT.
   useEffect(() => () => active.current?.abort(), []);
 
   const dirty = !saved || fields.title !== saved.title ||
-    fields.description !== saved.description || fields.notes !== saved.notes;
+    fields.description !== saved.description || fields.notes !== saved.notes ||
+    JSON.stringify(fields.listing_fields) !== JSON.stringify(saved.listing_fields);
+  // Only edited text is unsaved: an untouched source copy is not an obstacle.
+  useEffect(() => {
+    onDirtyChange?.(touched && dirty);
+    return () => onDirtyChange?.(false);
+  }, [touched,dirty,onDirtyChange]);
   const titleCount = charCount(fields.title);
   const descriptionCount = charCount(fields.description);
   const notesCount = charCount(fields.notes);
   const valid = fields.title.trim().length > 0 && titleCount <= 500 &&
-    descriptionCount <= 20000 && notesCount <= 5000;
+    descriptionCount <= 20000 && notesCount <= 5000 &&
+    !validateListingFields(fields.listing_fields);
 
   const change = (key: keyof DraftFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }));
@@ -83,7 +96,8 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         ...fields, expected_revision: revision,
       }, controller.signal);
       if (controller.signal.aborted) return;
-      const next = { title: draft.title, description: draft.description, notes: draft.notes };
+      const next = { title: draft.title, description: draft.description, notes: draft.notes,
+        listing_fields: initialListingFields(draft.listing_fields,sourceProduct,draft.title) };
       setFields(next);
       setSaved(next);
       setTouched(false);
@@ -93,7 +107,9 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       if (!controller.signal.aborted) {
         // A timed-out PUT may have committed. Never blindly retry the same revision.
         if (!isDraftRejected(e)) setLoadState("error");
-        setError(isDraftConflict(e)
+        setError(isDraftConverted(e)
+          ? "商品已在另一窗口转入产品箱，原工作稿停止编辑。请先复制当前修改，再到「工作台 → 产品箱」编辑商品。"
+          : isDraftConflict(e)
           ? "工作稿已被其他窗口或上一次提交修改（409），本次没有覆盖服务器内容。请复制需要保留的文本，再重新加载。"
           : isDraftRejected(e)
             ? "服务器拒绝保存（请求格式或长度不符合要求），内容没有写入。请修改后重新保存。"
@@ -111,11 +127,11 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         : saved ? (dirty ? "有未保存修改" : "已保存") : "尚未保存"}</span>
     </div>
     <p>这里是转产品库前的暂存稿，原始采集标题、描述和图片不会被覆盖。</p>
-    <label>商品标题
-      <input value={fields.title} readOnly={loadState !== "ready" || saving}
-        onChange={(e) => change("title", e.target.value)} />
-      <small>{titleCount} / 500 字符</small>
-    </label>
+    <ListingFieldsEditor value={fields.listing_fields} disabled={loadState !== "ready" || saving}
+      onChange={listing_fields=>{
+        setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
+        setTouched(true);setNotice("");
+      }} />
     <label>整理后的商品描述
       <textarea rows={5} value={fields.description} readOnly={loadState !== "ready" || saving}
         onChange={(e) => change("description", e.target.value)} />
@@ -127,7 +143,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       <small>{notesCount} / 5000 字符</small>
     </label>
     {loadState === "ready" && !valid && <p className="working-draft-error" role="alert">
-      请填写商品标题，并将标题、描述、备注分别控制在 500 / 20000 / 5000 字符以内。
+      请检查标题、描述、备注和上架资料中的字段格式；系统会标记不合规的具体输入。
     </p>}
     {error && <p className="working-draft-error" role="alert">{error}</p>}
     {notice && <p className="working-draft-success" role="status">{notice}</p>}
@@ -135,6 +151,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       onClick={refreshDraft}>重新加载工作稿</button>}
     <button type="button" className="primary-button" onClick={() => void save()}
       disabled={!valid || loadState !== "ready" || saving || !dirty}>{saving ? "保存中…" : "保存整理工作稿"}</button>
-    <p className="working-draft-hint">下一阶段才会将工作稿复制为独立产品库草稿；当前不会自动刊登。</p>
+    <p className="working-draft-hint">保存工作稿后可以选择「通过」，转入产品箱继续修改；不会自动刊登。</p>
   </section>;
 }

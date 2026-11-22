@@ -70,6 +70,7 @@ type Variant struct {
 
 type Product struct {
 	ID               string    `json:"id"`
+	OwnProductID     *string   `json:"own_product_id"`
 	Platform         string    `json:"source_platform"`
 	Site             string    `json:"source_site"`
 	SourceURL        string    `json:"source_url"`
@@ -90,6 +91,7 @@ type Product struct {
 
 type Summary struct {
 	ID              string  `json:"id"`
+	OwnProductID    *string `json:"own_product_id"`
 	Title           string  `json:"title"`
 	Platform        string  `json:"source_platform"`
 	Site            string  `json:"source_site"`

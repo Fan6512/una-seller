@@ -29,6 +29,12 @@ var orderDispatchSLASQL string
 //go:embed 0007_collection_working_drafts.sql
 var collectionWorkingDraftSQL string
 
+//go:embed 0008_own_products.sql
+var ownProductsSQL string
+
+//go:embed 0009_listing_editor_fields.sql
+var listingEditorFieldsSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -63,6 +69,14 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, collectionWorkingDraftSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply collection working draft schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, ownProductsSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply own product-box schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, listingEditorFieldsSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply listing editor fields schema: %w", err)
 	}
 	return nil
 }

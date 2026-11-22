@@ -54,12 +54,17 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 			return
 		}
 		if err := in.Validate(); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid working draft fields")
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		draft, err := a.store.SaveWorkingDraft(r.Context(), owner, id, in)
 		if errors.Is(err, collections.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "collection not found")
+		} else if errors.Is(err, collections.ErrDraftConverted) {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "working draft is read-only after product-box approval; edit the product instead",
+				"code":  "WORKING_DRAFT_CONVERTED",
+			})
 		} else if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, http.StatusConflict, "working draft updated; reload before saving")
 		} else if err != nil {

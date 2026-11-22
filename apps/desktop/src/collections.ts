@@ -1,4 +1,6 @@
 import { getAccessToken, rejectSession } from "./auth";
+import { readAPIError } from "./apiErrors";
+import type { ListingFields } from "./listingFields";
 
 export type CaptureStatus = "complete" | "partial";
 export const PAGE_SIZE = 24;
@@ -17,6 +19,7 @@ export type CollectionVariant = {
 
 export type CollectionSummary = {
   id: string;
+  own_product_id: string | null;
   title: string;
   source_platform: string;
   source_site: string;
@@ -29,6 +32,7 @@ export type CollectionSummary = {
 
 export type CollectionDetail = {
   id: string;
+  own_product_id: string | null;
   title: string;
   source_platform: string;
   source_site: string;
@@ -58,7 +62,7 @@ const defaultApiBase = import.meta.env.DEV ? "http://127.0.0.1:8787" : "https://
 export const apiBase = (import.meta.env.VITE_API_BASE_URL || defaultApiBase).replace(/\/$/, "");
 
 class CollectionRequestError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly code?: string) {
     super(message);
     this.name = "CollectionRequestError";
   }
@@ -102,21 +106,36 @@ async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = 
       : response.status === 404
         ? "商品不存在或不可访问"
         : "请求失败（HTTP " + response.status + "）";
-    throw new CollectionRequestError(response.status, message);
+    const details=await readAPIError(response,message);
+    throw new CollectionRequestError(response.status,details.message,details.code);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
-export async function getCollectionPage(q: string, offset: number, signal: AbortSignal) {
+export async function getCollectionPage(q: string, offset: number, signal: AbortSignal, inboxOnly = false) {
   const params = new URLSearchParams({
     q,
     // One extra row tells the desktop whether another page exists.
     limit: String(PAGE_SIZE + 1),
     offset: String(offset),
+    inbox: inboxOnly ? "1" : "0",
   });
   const page = await requestJSON<CollectionPage>("/api/v1/collections?" + params.toString(), signal);
   return { items: page.items.slice(0, PAGE_SIZE), hasMore: page.items.length > PAGE_SIZE };
+}
+
+export type CBTCategorySuggestion = {
+  category_id: string;
+  category_name: string;
+  domain_id: string;
+  domain_name: string;
+};
+export function getCBTCategorySuggestions(editedEnglishTitle:string,signal:AbortSignal){
+  const q=editedEnglishTitle.trim();
+  if(!q||q.split(/\s+/u).length<2)throw new Error("请先填写完整英文标题，再请求 CBT 类目推荐");
+  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean}>(
+    "/api/v1/categories/predict?q="+encodeURIComponent(q),signal);
 }
 
 export function getCollection(id: string, signal: AbortSignal) {
@@ -129,14 +148,22 @@ export type CollectionWorkingDraft = {
   title: string;
   description: string;
   notes: string;
+  listing_fields: Partial<ListingFields>;
   updated_at: string;
 };
 export type WorkingDraftInput = Pick<CollectionWorkingDraft, "title" | "description" | "notes"> & {
+  listing_fields?: ListingFields;
   expected_revision: number;
 };
 
+export function isDraftConverted(error: unknown) {
+  return error instanceof CollectionRequestError && error.status === 409 &&
+    error.code === "WORKING_DRAFT_CONVERTED";
+}
+
 export function isDraftConflict(error: unknown) {
-  return error instanceof CollectionRequestError && error.status === 409;
+  return error instanceof CollectionRequestError && error.status === 409 &&
+    !isDraftConverted(error);
 }
 
 export function isDraftRejected(error: unknown) {

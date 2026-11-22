@@ -153,6 +153,15 @@ jobs:
       - name: Verify order workbench scope switching
         run: node --test tests/ordersScope.test.mjs
 
+      - name: Verify product-box workflow decisions
+        run: node --experimental-strip-types --test tests/workbenchRules.test.mjs
+
+      - name: Verify editable listing field defaults and validation
+        run: node --experimental-strip-types --test tests/listingFields.test.mjs
+
+      - name: Verify readable and bounded API errors
+        run: node --experimental-strip-types --test tests/apiErrors.test.mjs
+
       - name: TypeScript check and Vite build
         run: npm run build
 

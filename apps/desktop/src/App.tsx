@@ -8,9 +8,12 @@ import { checkStoresOnLogin, resolveManualStoreCheck, storeHealthFromList, type 
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
+import OwnProductsPage from "./OwnProductsPage";
+import { approveCollection } from "./ownProducts";
+import { countApprovalOutcomes, type ApprovalOutcome } from "./workbenchRules";
 import DesktopUpdates, { useDesktopUpdates } from "./DesktopUpdates";
 import {
-  apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getHealth, PAGE_SIZE,
+  apiBase, deleteCollection, formatDate, formatShortDate, formatMoney, getCollection, getCollectionPage, getWorkingDraft, getHealth, PAGE_SIZE,
   type CollectionDetail, type CollectionSummary,
 } from "./collections";
 
@@ -131,7 +134,10 @@ function Description({ value }: { value: string }) {
   );
 }
 
-function ProductDetail({ product, onDelete, deleting, deleteError }: { product: CollectionDetail; onDelete: () => void; deleting: boolean; deleteError: string | null }) {
+function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyChange }: {
+  product: CollectionDetail; onDelete: () => void; deleting: boolean; deleteError: string | null;
+  onDraftDirtyChange: (dirty:boolean)=>void;
+}) {
   return (
     <article className="product-detail">
       <div className="detail-toolbar">
@@ -148,13 +154,16 @@ function ProductDetail({ product, onDelete, deleting, deleteError }: { product: 
           <p className="source-name">{siteName(product.source_platform, product.source_site)}</p>
           <h2>{product.title}</h2>
           <div className="product-price">{formatMoney(product.price, product.currency)}</div>
+          {product.category && <p className="date-note">采集来源分类：{product.category}（仅供参考，非美客多正式类目）</p>}
           <div className="product-status"><CapturePill status={product.collection_status} /></div>
           <p className="date-note">最近更新 {formatDate(product.last_collected_at)}</p>
         </div>
       </div>
 
-      <WorkingDraftEditor key={product.id} collectionId={product.id}
-        sourceTitle={product.title} sourceDescription={product.description} />
+      {product.own_product_id
+        ? <p className="converted-draft-hint" role="status">此商品已移入产品箱，原工作稿停止编辑。请切换到「产品箱」继续修改商品。</p>
+        : <WorkingDraftEditor key={product.id} collectionId={product.id}
+            sourceTitle={product.title} sourceDescription={product.description} sourceProduct={product} onDirtyChange={onDraftDirtyChange} />}
 
       {product.collection_warnings.length > 0 && (
         <details className="capture-notice">
@@ -227,6 +236,13 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   beginSync: () => (() => void) | undefined; syncCount: number;
 }) {
   const [section, setSection] = useState<"collections" | "published" | "orders">("collections");
+  const [workspaceTab,setWorkspaceTab] = useState<"inbox"|"products">("inbox");
+  const [showTransferred,setShowTransferred] = useState(false);
+  const [checked,setChecked] = useState<Set<string>>(()=>new Set());
+  const [approving,setApproving] = useState(false);
+  const [approveNotice,setApproveNotice] = useState("");
+  const [draftDirty,setDraftDirty] = useState(false);
+  const [ownDirty,setOwnDirty] = useState(false);
   const [settings, setSettings] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"updates" | "stores">("updates");
   const [storeHealth, setStoreHealth] = useState<StoreHealth>({
@@ -276,6 +292,43 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     return () => { active = false; unwatch(); };
   }, []);
 
+  const leavingDirty = () => {
+    if ((workspaceTab==="inbox"&&draftDirty)||(workspaceTab==="products"&&ownDirty)) {
+      return window.confirm("当前工作台存在未保存的修改，离开将丢失这些修改。确定继续吗？");
+    }
+    return true;
+  };
+  const chooseSource = (id:string) => {
+    if(id!==selectedId && draftDirty && !leavingDirty())return;
+    setSelectedId(id);
+  };
+  const approveSelected=async()=>{
+    if(approving||checked.size===0)return;
+    if(draftDirty) {setApproveNotice("请先保存当前商品的整理工作稿，再执行通过。");return;}
+    setApproving(true);setApproveNotice("");
+    const outcomes:ApprovalOutcome[]=[];
+    const errors:string[]=[];
+    const failed=new Set<string>();
+    for(const id of checked) {
+      try {
+        // Read the revision immediately before POST; unknown saves are never
+        // retried automatically and a concurrent edit is rejected by the API.
+        const {draft}=await getWorkingDraft(id,new AbortController().signal);
+        const result=await approveCollection(id,draft?.revision??0,new AbortController().signal);
+        outcomes.push(result.result);
+      } catch(e) {
+        outcomes.push("failed");
+        failed.add(id);
+        const item=items.find(x=>x.id===id);
+        errors.push((item?.title.slice(0,24)??id)+": "+(e instanceof Error?e.message:"转入未确认"));
+      }
+    }
+    const summary=countApprovalOutcomes(outcomes);
+    setChecked(failed);
+    setApproveNotice(`本次新转入 ${summary.created} 件；此前已转入 ${summary.alreadyApproved} 件；${summary.failed} 件未确认。`+(errors.length?" "+errors.join("；"):""));
+    setApproving(false);
+    if(summary.created>0||summary.alreadyApproved>0)reload();
+  };
   const reload = () => {
     detailCache.current.clear();
     setRefresh((n) => n + 1);
@@ -332,6 +385,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     if (next === search) return;
     const timer = window.setTimeout(() => {
       setOffset(0);
+      setChecked(new Set());
       setSearch(next);
     }, 280);
     return () => window.clearTimeout(timer);
@@ -341,7 +395,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     const controller = new AbortController();
     setListLoading(true);
     setListError(null);
-    void getCollectionPage(search, offset, controller.signal).then((page) => {
+    void getCollectionPage(search, offset, controller.signal,!showTransferred).then((page) => {
       if (controller.signal.aborted) return;
       if (offset > 0 && page.items.length === 0) {
         setOffset(Math.max(0, offset - PAGE_SIZE));
@@ -365,7 +419,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
       if (!controller.signal.aborted) setListLoading(false);
     });
     return () => controller.abort();
-  }, [search, offset, refresh]);
+  }, [search, offset, refresh, showTransferred]);
 
   useEffect(() => {
     setDeleteError(null);
@@ -409,10 +463,10 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         <div className="brand"><span className="brand-mark" aria-hidden="true">U</span><span className="brand-name">Una Seller</span></div>
         <span className="topbar-divider" aria-hidden="true" />
         <nav aria-label="商品工作台">
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { setSettings(false); setSection("collections"); }}>采集箱</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { setSettings(false); setSection("published"); }}>已刊登商品</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { setSettings(false); setSection("orders"); }}>订单管理</button>
-          <button type="button" className="logout-action" aria-pressed={settings} onClick={() => { setSettings(true); setSettingsSection("updates"); }}>{updates.update ? "设置 · 有更新" : "设置"}</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("collections"); }}>工作台</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("published"); }}>已刊登商品</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("orders"); }}>订单管理</button>
+          <button type="button" className="logout-action" aria-pressed={settings} onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("updates"); }}>{updates.update ? "设置 · 有更新" : "设置"}</button>
         </nav>
         <div className="topbar-spacer" />
         <span className={"connection-indicator " + connectionStatus} role="status">
@@ -422,14 +476,14 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         <button type="button"
           className={"store-health-button " + (storeHealth.status === "connected" ? "online" : storeHealth.status)}
           title={storeHealth.message}
-          onClick={() => { setSettings(true); setSettingsSection("stores"); }}>
+          onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("stores"); }}>
           <span className="connection-dot" aria-hidden="true" />
           {storeHealth.status === "checking" ? "店铺检查中"
             : storeHealth.status === "connected" ? "店铺已连接"
               : storeHealth.status === "empty" ? "未绑定店铺" : "店铺需检查"}
         </button>
         <span className="account-email" title={email}>{email || "当前用户"}</span>
-        <button type="button" className="logout-action" onClick={onLogout}>退出登录</button>
+        <button type="button" className="logout-action" onClick={() => { if(leavingDirty())onLogout(); }}>退出登录</button>
       </header>
 
       <main className="main-content">
@@ -456,10 +510,22 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : !settings && <>
         <div className="page-heading">
-          <div><h1>采集箱</h1><p>查看已保存的商品资料</p></div>
-          <button type="button" className="refresh-button" onClick={reload} disabled={listLoading} aria-label="刷新商品列表"><Icon name="refresh" size={17} /> 刷新</button>
+          <div><h1>工作台</h1><p>采集商品 → 整理工作稿 → 通过后进入独立产品箱</p></div>
+          {workspaceTab==="inbox" && <button type="button" className="refresh-button" onClick={reload} disabled={listLoading||draftDirty} aria-label="刷新采集箱"><Icon name="refresh" size={17} /> 刷新</button>}
         </div>
-
+        <div className="workbench-tabs" role="tablist" aria-label="工作台分区">
+          <button type="button" role="tab" aria-selected={workspaceTab==="inbox"} onClick={()=>{if(!leavingDirty())return;setChecked(new Set());setWorkspaceTab("inbox");}}>采集箱</button>
+          <button type="button" role="tab" aria-selected={workspaceTab==="products"} onClick={()=>{if(!leavingDirty())return;setChecked(new Set());setWorkspaceTab("products");}}>产品箱</button>
+        </div>
+        {workspaceTab==="products"? <OwnProductsPage onDirtyChange={setOwnDirty} /> : <>
+        <div className="workbench-approval">
+          <label><input type="checkbox" checked={showTransferred}
+            onClick={e=>{if(draftDirty&&!leavingDirty())e.preventDefault();}}
+            onChange={e=>{setShowTransferred(e.target.checked);setOffset(0);setChecked(new Set());}} /> 包含已转入来源</label>
+          <span>已勾选 {checked.size} 件</span>
+          <button type="button" className="primary-button" disabled={!checked.size||approving||draftDirty} onClick={()=>void approveSelected()}>{approving?"转入中…":"通过并移入产品箱"}</button>
+        </div>
+        {approveNotice&&<p className="workspace-feedback" role="status">{approveNotice}</p>}
         <div className={"workspace " + (!showDetail ? "workspace-single" : "")}>
           <section className="list-pane" aria-label="采集商品列表">
             <div className="list-toolbar">
@@ -481,18 +547,22 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               ) : items.length === 0 ? (
                 <EmptyState searching={Boolean(search)} />
               ) : (
-                <div className="product-list">
+                <div className="product-card-grid">
                   {items.map((item) => (
-                    <button type="button" key={item.id} className={"product-row " + (selectedId === item.id ? "selected" : "")} aria-current={selectedId === item.id ? "true" : undefined} onClick={() => setSelectedId(item.id)}>
-                      <ProductImage src={item.main_image_url} alt={item.title} className="row-image" />
-                      <span className="row-body">
-                        <strong className="row-title" title={item.title}>{item.title}</strong>
-                        <span className="row-price">{formatMoney(item.price, item.currency)}</span>
-                        <span className="row-meta">{siteName(item.source_platform, item.source_site)} · {formatShortDate(item.last_collected_at)}</span>
-                        {item.collection_status !== "complete" && <span className="row-badge"><CapturePill status={item.collection_status} /></span>}
-                      </span>
-                      <span className="row-chevron"><Icon name="right" size={17} /></span>
-                    </button>
+                    <article key={item.id} className={"product-card-tile " + (selectedId===item.id?"selected":"")}>
+                      <label className="product-card-check" title="勾选待通过商品">
+                        <input type="checkbox" aria-label={"选择 "+item.title} checked={checked.has(item.id)}
+                          onChange={event=>setChecked(prev=>{const next=new Set(prev);if(event.target.checked)next.add(item.id);else next.delete(item.id);return next;})} />
+                      </label>
+                      <button type="button" onClick={()=>chooseSource(item.id)} aria-label={"查看采集商品 "+item.title}>
+                        <ProductImage src={item.main_image_url} alt={item.title} className="card-image" />
+                        <strong title={item.title}>{item.title}</strong>
+                        <small>{formatMoney(item.price,item.currency)}</small>
+                        <small>{siteName(item.source_platform,item.source_site)} · {formatShortDate(item.last_collected_at)}</small>
+                        {item.own_product_id && <span className="converted-card-label">已转入产品箱</span>}
+                        {item.collection_status!=="complete"&&<CapturePill status={item.collection_status}/>}
+                      </button>
+                    </article>
                   ))}
                 </div>
               )}
@@ -501,8 +571,8 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               <div className="list-footer">
                 <span>第 {pageNumber} 页</span>
                 <div className="page-actions">
-                  <button type="button" disabled={offset === 0 || listLoading} aria-label="上一页" onClick={() => setOffset((n) => Math.max(0, n - PAGE_SIZE))}><Icon name="left" size={17} />上一页</button>
-                  <button type="button" disabled={!hasMore || listLoading} aria-label="下一页" onClick={() => setOffset((n) => n + PAGE_SIZE)}>下一页<Icon name="right" size={17} /></button>
+                  <button type="button" disabled={offset === 0 || listLoading} aria-label="上一页" onClick={() => {setChecked(new Set());setOffset((n) => Math.max(0, n - PAGE_SIZE));}}><Icon name="left" size={17} />上一页</button>
+                  <button type="button" disabled={!hasMore || listLoading} aria-label="下一页" onClick={() => {setChecked(new Set());setOffset((n) => n + PAGE_SIZE);}}>下一页<Icon name="right" size={17} /></button>
                 </div>
               </div>
             )}
@@ -515,11 +585,12 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               ) : detailLoading || !detail || detail.id !== selectedId ? (
                 <div className="loading-state detail-loading" role="status"><span className="spinner" />正在加载详情…</div>
               ) : (
-                <ProductDetail key={detail.id} product={detail} onDelete={() => void removeCollection(detail)} deleting={deletingId !== null} deleteError={deleteError} />
+                <ProductDetail key={detail.id} product={detail} onDelete={() => void removeCollection(detail)} deleting={deletingId !== null} deleteError={deleteError} onDraftDirtyChange={setDraftDirty} />
               )}
             </section>
           )}
         </div>
+        </>}
         </>}
       </main>
     </div>
