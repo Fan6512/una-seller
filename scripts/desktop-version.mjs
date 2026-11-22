@@ -24,8 +24,8 @@ const cargoVersion=/^version = "([^"]+)"$/m.exec(files.cargo)?.[1];
 const cargoLockVersion=/\[\[package\]\]\nname = "una-seller"\nversion = "([^"]+)"/.exec(files.cargoLock)?.[1];
 const versions=[pkg.version,lock.version,lock.packages[""].version,tauri.version,cargoVersion,cargoLockVersion];
 const versionFormat=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-if(!versions.every(x=>x===versions[0]&&versionFormat.test(x)))
-  throw new Error("Desktop package versions disagree: "+JSON.stringify(versions));
+if(!versions.every(x=>x===versions[0]&&versionFormat.test(x)&&x.endsWith(".0")))
+  throw new Error("Desktop version files must agree and use internal MAJOR.MINOR.0: "+JSON.stringify(versions));
 const current=versions[0];
 if(process.argv[2]==="--check"&&process.argv.length===3){
   console.log("Desktop version files agree:",current);
