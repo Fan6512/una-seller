@@ -112,7 +112,7 @@ func probe(client *http.Client, base, token string) (accountEvidence, error) {
 		result.Marketplaces = append(result.Marketplaces, marketplaceEvidence{
 			SellerAlias:   alias,
 			SiteID:        entry.SiteID,
-			LogisticType:  knownValue(entry.LogisticType, "remote", "fulfillment", "cross_docking"),
+			LogisticType:  knownValue(entry.LogisticType, "remote", "fulfillment", "cross_docking", "self_service"),
 			BusinessModel: knownValue(entry.BusinessModel, "CBT CN Fulfillment Managed"),
 			PricingModel:  knownValue(entry.PricingModel, "net_proceeds", "listing_price", "price"),
 			UserProduct:   capabilityStatus(entry.UserProduct),
@@ -146,7 +146,11 @@ func knownValue(value string, known ...string) string {
 	if slices.Contains(known, value) {
 		return value
 	}
-	return unverified
+	if value == "" {
+		return unverified
+	}
+	// Unknown nonempty enum is distinct from a missing field. Never print arbitrary provider data.
+	return "unrecognized"
 }
 
 func readJSON(client *http.Client, base, path, label, token string, out any) error {

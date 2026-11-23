@@ -60,9 +60,9 @@ func TestProbeRedactsAccountEvidence(t *testing.T) {
 		SellAllowed:       "enabled",
 		Marketplaces: []marketplaceEvidence{
 			{SellerAlias: "seller-1", SiteID: "MLM", LogisticType: "fulfillment", BusinessModel: "CBT CN Fulfillment Managed", PricingModel: "net_proceeds", UserProduct: "enabled"},
-			{SellerAlias: "seller-2", SiteID: "MLM", LogisticType: "remote", BusinessModel: unverified, PricingModel: unverified, UserProduct: "disabled"},
+			{SellerAlias: "seller-2", SiteID: "MLM", LogisticType: "remote", BusinessModel: "unrecognized", PricingModel: "unrecognized", UserProduct: "disabled"},
 			{SellerAlias: "seller-3", SiteID: "MCO", LogisticType: "remote", BusinessModel: unverified, PricingModel: "listing_price", UserProduct: unverified},
-			{SellerAlias: "seller-4", SiteID: "MLB", LogisticType: unverified, BusinessModel: unverified, PricingModel: unverified, UserProduct: unverified},
+			{SellerAlias: "seller-4", SiteID: "MLB", LogisticType: "unrecognized", BusinessModel: unverified, PricingModel: unverified, UserProduct: unverified},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -115,6 +115,24 @@ func TestProbeDoesNotTreatMissingTagsAsAbsent(t *testing.T) {
 				t.Fatalf("evidence = %+v, err = %v", got, err)
 			}
 		})
+	}
+}
+
+func TestProbeEnumAndNumericIDs(t *testing.T) {
+	if got := knownValue("", "remote"); got != unverified { t.Fatalf("missing enum = %q", got) }
+	if got := knownValue("self_service", "self_service"); got != "self_service" { t.Fatalf("valid enum = %q", got) }
+	if got := knownValue("Bearer private-token", "remote"); got != "unrecognized" { t.Fatalf("unsafe enum leaked: %q", got) }
+	for _, input := range []string{`{"id":123}`, `{"id":"123"}`} {
+		var item struct { ID json.Number `json:"id"` }
+		if err := json.Unmarshal([]byte(input), &item); err != nil || item.ID.String() != "123" {
+			t.Fatalf("numeric identifier: %s: %v", input, err)
+		}
+	}
+	for _, input := range []string{`{"id":"abc"}`, `{"id":"123456789012345678901234567890123456789"}`} {
+		var item struct { ID json.Number `json:"id"` }
+		err := json.Unmarshal([]byte(input), &item)
+		if strings.Contains(input, "abc") && err == nil { t.Fatal("nonnumeric ID accepted") }
+		if err == nil && userIDFormat.MatchString(item.ID.String()) { t.Fatal("oversized numeric ID accepted") }
 	}
 }
 
