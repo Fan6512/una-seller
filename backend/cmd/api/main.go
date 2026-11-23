@@ -93,6 +93,10 @@ func main() {
 	dictionary := cbtcategory.NewReader(dictionaryDir)
 	status := dictionary.Status()
 	log.Printf("CBT category dictionary: state=%s translated=%d version=%s (paths use official English if untranslated)", status.State, status.Translated, status.Version)
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, dictionary), ReadHeaderTimeout: 5 * time.Second}
+	aiCopy, err := httpapi.NewAICopyService(os.Getenv("AI_BASE_URL"), os.Getenv("AI_API_KEY"), os.Getenv("AI_MODEL"))
+	if err != nil {
+		log.Printf("AI listing copy disabled: %v", err)
+	}
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, dictionary, aiCopy), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }

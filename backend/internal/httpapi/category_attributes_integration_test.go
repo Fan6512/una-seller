@@ -179,7 +179,7 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	dictionary := cbtcategory.NewReader(dictionaryDir)
-	handler = HandlerWithCategoryDictionary(cs, stubVerifier{id: owner}, svc, nil, dictionary)
+	handler = HandlerWithCategoryDictionary(cs, stubVerifier{id: owner}, svc, nil, dictionary, nil)
 	offline := check("GET", cbt+"CBT771", "session", 200, "")
 	if !reflect.DeepEqual(offline["path_zh"], []any{"家居", "水壶"}) || offline["translations_zh"] != nil {
 		t.Fatalf("offline dictionary failed without provider: %#v", offline)
@@ -222,7 +222,7 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
 	})
-	handler = HandlerWithCategoryDictionary(cs, stubVerifier{id: owner}, svc, translator, dictionary)
+	handler = HandlerWithCategoryDictionary(cs, stubVerifier{id: owner}, svc, translator, dictionary, nil)
 	localized := check("GET", cbt+"CBT771", "session", 200, "")
 	labels, ok := localized["translations_zh"].(map[string]any)
 	if !ok || labels["Brand"] != "品牌" || labels["Glass"] != "玻璃" || labels["Style"] != "风格" {

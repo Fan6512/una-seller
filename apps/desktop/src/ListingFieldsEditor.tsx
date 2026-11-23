@@ -1,12 +1,13 @@
 import CategoryAttributesForm from "./CategoryAttributesForm";
+import AICopyPanel from "./AICopyPanel";
 import type { ListingFields, ListingVariant } from "./listingFields";
-import { detectTitleLanguage, preferredTitle } from "./listingFields";
-import { getCBTCategorySuggestions, type CBTCategorySuggestion } from "./collections";
+import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTitle } from "./listingFields";
+import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion } from "./collections";
 import { useEffect, useRef, useState } from "react";
 import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute } from "./editorUx";
 
-type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean};
-export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
+type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean;aiProduct?:AICopyProduct;aiSaved?:Partial<ListingFields>};
+export default function ListingFieldsEditor({value,onChange,disabled=false,aiProduct,aiSaved}:Props) {
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
   const [predicting,setPredicting]=useState(false);
@@ -27,7 +28,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     setSuggestions([]);
     const titles={...value.titles,[lang]:title};
     // Invalidate the category selected for the old English title, keeping its attribute history.
-    if(lang==="en" && title!==value.titles.en && value.category_id) {
+    if(lang==="en" && title.normalize("NFC")!==value.titles.en.normalize("NFC") && value.category_id) {
       onChange({...value,titles,category_id:"",category_path:""});
       setPredictMessage("英文标题已修改，请重新选择或手动填写 CBT 类目。");
     } else {
@@ -35,15 +36,24 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       setPredictMessage("");
     }
   };
-  const copyTitle=async(lang:"en"|"es"|"pt")=>{
-    const title=value.titles[lang];
-    if(!title)return;
+  const setLocalizedDescription=(lang:"en"|"es"|"pt", text:string, sourceDigest?:string)=>{
+    const descriptions={en:"",es:"",pt:"",...value.descriptions,[lang]:text};
+    if(lang!=="en") {
+      onChange({...value,descriptions,description_translation:{
+        ...value.description_translation,[`${lang}_source_digest`]:sourceDigest??"",
+      }});
+    } else {
+      set("descriptions",descriptions);
+    }
+  };
+  const copyListingText=async(text:string,label:string)=>{
+    if(!text)return;
     try {
       if(!navigator.clipboard?.writeText)throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(title);
-      setCopyMessage(lang+" 已复制");
+      await navigator.clipboard.writeText(text);
+      setCopyMessage("已复制"+label);
     }catch{
-      setCopyMessage("复制未完成，请手动选择标题文本");
+      setCopyMessage("复制未完成，请手动选择文本");
     }
   };
   const predict=async()=>{
@@ -98,31 +108,56 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
   };
   return <section className="listing-fields">
     <fieldset className="listing-editor-panel">
-      <legend>多语言标题</legend>
+      <legend>多语言标题与描述</legend>
       <div className="listing-language-tabs" role="group" aria-label="标题语言">
         {languages.map(item=><button key={item.key} type="button"
           aria-pressed={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
-          {item.label} <small>{Array.from(value.titles[item.key]).length}</small>
+          {item.label} <small>{listingTextCount(value.titles[item.key])}</small>
         </button>)}
       </div>
       <label className="listing-field listing-active-title">
         <span>{selectedLanguage.full}</span>
-        <textarea rows={3} disabled={disabled} maxLength={500}
+        <textarea rows={3} disabled={disabled}
           value={value.titles[activeLanguage]}
           onChange={e=>setLocalizedTitle(activeLanguage,e.target.value)}
-          placeholder="可人工填写或后续 AI 生成；不编造产品属性"/>
+          placeholder="填写商品标题"/>
       </label>
       <div className="localized-title-actions">
-        <small className={"localized-title-count "+(activeLanguage!=="en"&&Array.from(value.titles[activeLanguage]).length>60?"title-over-limit":"")}>
-          {Array.from(value.titles[activeLanguage]).length} 字符（含空格及符号） · {selectedLanguage.target}
+        <small className={"localized-title-count "+(listingTextCount(value.titles[activeLanguage])>localizedTitleLimit?"title-over-limit":"")}>
+          {listingTextCount(value.titles[activeLanguage])} 字符（含空格及符号） · {selectedLanguage.target}
+          {activeLanguage==="en"&&listingTextCount(value.titles.en)>localizedTitleLimit?" · 已超过 60 字符":""}
         </small>
-        <button type="button" disabled={!value.titles[activeLanguage]} onClick={()=>void copyTitle(activeLanguage)}>
+        <button type="button" disabled={!value.titles[activeLanguage]} onClick={()=>void copyListingText(value.titles[activeLanguage],"标题")}>
           复制{activeLanguage==="en"?"英文":activeLanguage==="es"?"西语":"葡语"}标题
         </button>
       </div>
       {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
       {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
+      <label className="listing-field">{selectedLanguage.label}商品描述
+        <textarea rows={5} disabled={disabled} value={value.descriptions?.[activeLanguage]??""}
+          onChange={e=>setLocalizedDescription(activeLanguage,e.target.value)} placeholder="填写纯文本商品描述"/>
+        <small>{listingTextCount(value.descriptions?.[activeLanguage]??"")} / 20000 字符</small>
+      </label>
+      <div className="localized-title-actions">
+        <button type="button" disabled={!value.descriptions?.[activeLanguage]}
+          onClick={()=>void copyListingText(value.descriptions?.[activeLanguage]??"","详情")}>复制详情</button>
+      </div>
     </fieldset>
+    {aiProduct&&<AICopyPanel product={aiProduct} value={value} saved={aiSaved} disabled={disabled} onAdoptPoints={points=>{
+      if(value.bullet_points.some(text=>text.trim()) &&
+        JSON.stringify(value.bullet_points)!==JSON.stringify(points) &&
+        !window.confirm("采纳 AI 卖点会替换当前全部商品卖点，是否继续？"))return;
+      set("bullet_points",points);
+    }} onAdopt={(field,lang,text,sourceDigest)=>{
+      if(field==="descriptions"){
+        setLocalizedDescription(lang,text,sourceDigest);
+        return;
+      }
+      if(lang==="en"&&value.category_id&&text!==value.titles.en.normalize("NFC")&&!window.confirm(
+        "采纳新的英文标题会清空当前 CBT 类目及路径，但已填写属性会保留为历史参考。"
+      ))return;
+      setLocalizedTitle(lang,text);
+    }}/>}
     <h4 className="listing-editor-section-title">基础信息</h4>
     <fieldset><legend>分类建议与基本属性</legend>
       <div className="category-predict-row">

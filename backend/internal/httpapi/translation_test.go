@@ -99,7 +99,7 @@ func TestTranslationServiceFallsBackAndHonorsCooldown(t *testing.T) {
 
 func TestOrderTitleTranslationsAuthAndPayload(t *testing.T) {
 	const route = "/api/v1/stores/order-title-translations"
-	h := HandlerWithServices(&collections.Store{}, stubVerifier{id: "6cbe41df-69cb-4594-9bad-a5473aa1a5fb"}, &meli.Service{}, nil)
+	h := HandlerWithServices(&collections.Store{}, stubVerifier{id: "6cbe41df-69cb-4594-9bad-a5473aa1a5fb"}, &meli.Service{}, nil, nil)
 	for _, tc := range []struct {
 		token, body string
 		status      int
