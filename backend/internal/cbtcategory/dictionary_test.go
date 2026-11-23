@@ -346,9 +346,9 @@ func TestSpecialSeparatorFallsBackToLeaf(t *testing.T) {
 
 func TestDictionaryFallbackForFullWidthAndLongAncestors(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		path []PathNode
-		want string
+		name     string
+		path     []PathNode
+		want     string
 		segments int
 	}{
 		{
