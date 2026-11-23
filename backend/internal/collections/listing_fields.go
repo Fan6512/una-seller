@@ -3,6 +3,7 @@ package collections
 import (
 	"errors"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -26,29 +27,40 @@ func (titles LocalizedTitles) Preferred() string {
 }
 
 type ListingFields struct {
-	Titles           LocalizedTitles    `json:"titles"`
-	CategoryID       string             `json:"category_id"`
-	CategoryPath     string             `json:"category_path"`
-	Brand            string             `json:"brand"`
-	Model            string             `json:"model"`
-	SellerSKU        string             `json:"seller_sku"`
-	GTIN             string             `json:"gtin"`
-	PurchasePrice    string             `json:"purchase_price"`
-	PurchaseCurrency string             `json:"purchase_currency"`
-	WeightG          string             `json:"weight_g"`
-	LengthCM         string             `json:"length_cm"`
-	WidthCM          string             `json:"width_cm"`
-	HeightCM         string             `json:"height_cm"`
-	BulletPoints     []string           `json:"bullet_points"`
-	Attributes       []ListingAttribute `json:"attributes"`
-	Images           *[]Image           `json:"images,omitempty"`
-	Variants         *[]ListingVariant  `json:"variants,omitempty"`
+	Titles             LocalizedTitles             `json:"titles"`
+	CategoryID         string                      `json:"category_id"`
+	CategoryPath       string                      `json:"category_path"`
+	Brand              string                      `json:"brand"`
+	Model              string                      `json:"model"`
+	SellerSKU          string                      `json:"seller_sku"`
+	GTIN               string                      `json:"gtin"`
+	PurchasePrice      string                      `json:"purchase_price"`
+	PurchaseCurrency   string                      `json:"purchase_currency"`
+	WeightG            string                      `json:"weight_g"`
+	LengthCM           string                      `json:"length_cm"`
+	WidthCM            string                      `json:"width_cm"`
+	HeightCM           string                      `json:"height_cm"`
+	BulletPoints       []string                    `json:"bullet_points"`
+	Attributes         []ListingAttribute          `json:"attributes"`
+	CategoryAttributes *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
+	Images             *[]Image                    `json:"images,omitempty"`
+	Variants           *[]ListingVariant           `json:"variants,omitempty"`
 }
 
 type ListingAttribute struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
+type ListingCategoryAttribute struct {
+	CategoryID string `json:"category_id"`
+	ID         string `json:"id"`
+	ValueID    string `json:"value_id,omitempty"`
+	Value      string `json:"value"`
+	UnitID     string `json:"unit_id,omitempty"`
+}
+
+var listingCategoryAttributeID = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,79}$`)
+
 type ListingVariant struct {
 	SellerSKU  string            `json:"seller_sku"`
 	Attributes map[string]string `json:"attributes"`
@@ -127,6 +139,22 @@ func (f ListingFields) Validate() error {
 	for _, attribute := range f.Attributes {
 		if !validListingText(attribute.Name, 120) || !validListingText(attribute.Value, 500) {
 			return errors.New("attribute too long")
+		}
+	}
+	if f.CategoryAttributes != nil {
+		if len(*f.CategoryAttributes) > 180 {
+			return errors.New("too many category attribute fields")
+		}
+		seen := make(map[[2]string]bool)
+		for _, field := range *f.CategoryAttributes {
+			key := [2]string{field.CategoryID, field.ID}
+			if !strings.HasPrefix(field.CategoryID, "CBT") || !allNumeric(strings.TrimPrefix(field.CategoryID, "CBT")) ||
+				!listingCategoryAttributeID.MatchString(field.ID) || seen[key] ||
+				!validListingText(field.Value, 500) || !validListingText(field.ValueID, 80) ||
+				!validListingText(field.UnitID, 80) || (field.ValueID != "" && strings.TrimSpace(field.Value) == "") {
+				return errors.New("invalid category attribute field")
+			}
+			seen[key] = true
 		}
 	}
 	if f.Images != nil {

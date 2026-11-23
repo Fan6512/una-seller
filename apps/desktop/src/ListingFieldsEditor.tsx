@@ -1,3 +1,4 @@
+import CategoryAttributesForm from "./CategoryAttributesForm";
 import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, preferredTitle } from "./listingFields";
 import { getCBTCategorySuggestions, type CBTCategorySuggestion } from "./collections";
@@ -27,8 +28,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     setPredicting(false);
     setSuggestions([]);
     const titles={...value.titles,[lang]:title};
-    // CBT predictions depend on the English title, not the country languages.
-    // Never leave a category that was chosen for a different English title.
+    // Invalidate the category selected for the old English title, keeping its attribute history.
     if(lang==="en" && title!==value.titles.en && value.category_id) {
       onChange({...value,titles,category_id:"",category_path:""});
       setPredictMessage("英文标题已修改，请重新选择或手动填写 CBT 类目。");
@@ -158,13 +158,25 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
         <p className="listing-fields-note">{chosenPath.map(name => categoryTranslations[name]).join(" / ")}</p>}
       <div className="listing-field-grid">
         {field("CBT 分类名称 / 路径（可手动修改）","category_path","整理完标题后再填写或选择官方推荐",400)}
-        {field("CBT 通用分类 ID（非 MLB/MLM）","category_id","例如 CBT12345；可手动填写",60)}
+        <label className="listing-field">CBT 通用分类 ID
+          <input value={value.category_id} maxLength={60} disabled={disabled} placeholder="例如 CBT12345"
+            onChange={event => {
+              predictionRequest.current?.abort();
+              setPredicting(false);
+              setSuggestions([]);
+              setPredictMessage("");
+              onChange({...value,category_id:event.target.value.trim().toUpperCase(),category_path:""});
+            }}/>
+        </label>
         {field("品牌","brand","无品牌请留空")}
         {field("型号","model")}
         {field("主商品 SKU（内部编码）","seller_sku","例如：FLOOR-001")}
         {field("条码 GTIN / EAN（有则填）","gtin","不编造条码",50)}
       </div>
     </fieldset>
+
+    <CategoryAttributesForm category={value.category_id} values={value.category_attributes ?? []}
+      onChange={fields => set("category_attributes",fields)} disabled={disabled}/>
 
     <fieldset className="listing-editor-plain"><legend>采购成本（人民币 CNY）</legend>
       <label className="listing-field">采购成本（¥）

@@ -16,6 +16,40 @@ func (a storeAPI) writeCategoryRules(w http.ResponseWriter, r *http.Request, rul
 	writeJSON(w, http.StatusOK, rules)
 }
 
+func (a storeAPI) cbtCategoryRules(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	owner, ok := a.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	ids := r.URL.Query()["category_id"]
+	if len(ids) != 1 {
+		writeError(w, http.StatusBadRequest, "provide a single CBT category_id")
+		return
+	}
+	rules, err := a.service.GetCBTCategoryRules(r.Context(), owner, ids[0])
+	var platform meli.ListingPlatformError
+	switch {
+	case err == nil:
+		a.writeCategoryRules(w, r, rules)
+	case errors.Is(err, meli.ErrCategoryInvalid):
+		writeError(w, http.StatusBadRequest, "invalid CBT category ID")
+	case errors.Is(err, meli.ErrCBTPredictorStore), errors.Is(err, meli.ErrReauthorizationRequired):
+		writeError(w, http.StatusPreconditionFailed, "connect a Mercado Libre CBT store first")
+	case errors.As(err, &platform) && int(platform) == http.StatusTooManyRequests:
+		writeError(w, http.StatusTooManyRequests, "Mercado Libre category request rate limited")
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(w, http.StatusGatewayTimeout, "official category rule request timed out")
+	default:
+		writeError(w, http.StatusBadGateway, "official CBT category rules unavailable")
+	}
+}
+
 // Read-only, store-scoped category rules for the dynamic listing editor.
 // The caller must already pass requireOwner, and the service verifies
 // the CBT parent / marketplace child association before calling the platform.

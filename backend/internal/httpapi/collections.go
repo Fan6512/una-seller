@@ -45,6 +45,7 @@ func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, st
 	}
 	mux.HandleFunc("/api/v1/stores/order-title-translations", s.orderTitleTranslations)
 	mux.HandleFunc("/api/v1/categories/predict", s.predictCBTCategory)
+	mux.HandleFunc("/api/v1/stores/cbt-category-attributes", s.cbtCategoryRules)
 	mux.HandleFunc("/api/v1/stores", s.stores)
 	mux.HandleFunc("/api/v1/stores/oauth/start", s.start)
 	mux.HandleFunc("/api/v1/stores/", s.storeAction)

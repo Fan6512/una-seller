@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,25 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 		}
 		var body string
 		switch r.URL.Path {
+		case "/categories/CBT771/attributes":
+			body = `[{"id":"BRAND","name":"Brand","value_type":"string","tags":{"required":true}},
+ {"id":"CAPACITY","name":"Capacity","value_type":"number_unit","tags":{"new_required":true},"allowed_units":[{"id":"l","name":"L"}]},
+ {"id":"MATERIAL","name":"Material","value_type":"list","values":[{"id":"200","name":"Glass"}]},
+ {"id":"COUNT","name":"Count","value_type":"number","tags":{"required":true}}]`
+		case "/categories/CBT771":
+			body = `{"id":"CBT771","path_from_root":[{"id":"CBT1","name":"Home"},{"id":"CBT771","name":"Jugs"}]}`
+		case "/categories/CBT771/technical_specs/input":
+			body = `{"groups":[{"components":[{"component":"TEXT_INPUT","attributes":[
+ {"id":"BRAND","tags":["required"]},{"id":"SIZE","tags":["conditional_required"]},
+ {"id":"STYLE","tags":["required"]}]}]}]}`
+		case "/categories/CBT772/attributes":
+			body = `[]`
+		case "/categories/CBT772":
+			body = `{"id":"CBT772"}`
+		case "/categories/CBT772/technical_specs/input":
+			body = `{"groups":[]}`
+		case "/categories/CBT773/attributes":
+			body = `{"not":"an attribute array"}`
 		case "/categories/MLB9891/attributes":
 			body = `[{"id":"BRAND","name":"Marca","value_type":"string","tags":{"required":true}},
 				{"id":"COLOR","name":"Color","value_type":"list","tags":{"conditional_required":true},
@@ -128,7 +148,62 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 	if _, ok := valid["path"].([]any); !ok {
 		t.Fatalf("missing category breadcrumb: %#v", valid)
 	}
-	if strings.Contains(fmt.Sprint(valid), access) {
+	cbt := "/api/v1/stores/cbt-category-attributes?category_id="
+	check("GET", cbt+"CBT771", "", 401, "")
+	check("GET", cbt+"MLB9891", "session", 400, "")
+	check("GET", cbt+"CBT773", "session", 502, "")
+	global := check("GET", cbt+"CBT771", "session", 200, "")
+	if global["category_id"] != "CBT771" || global["technical_specs_verified"] != true ||
+		global["special_requirements"] != true || len(global["technical_requirements"].([]any)) != 2 ||
+		len(global["path"].([]any)) != 2 || len(global["attributes"].([]any)) != 4 {
+		t.Fatalf("incomplete CBT rule response: %#v", global)
+	}
+	empty := check("GET", cbt+"CBT772", "session", 200, "")
+	if len(empty["attributes"].([]any)) != 0 || empty["technical_specs_verified"] != true {
+		t.Fatalf("empty category misinterpreted: %#v", empty)
+	}
+	if _, ok := global["translations_zh"]; ok {
+		t.Fatal("unconfigured translator supplied translations")
+	}
+
+	translator := NewAzureTranslationService("fixture-key", "")
+	translator.client.Transport = listingTestTransport(func(r *http.Request) (*http.Response, error) {
+		var texts []struct{ Text string }
+		if err := json.NewDecoder(r.Body).Decode(&texts); err != nil {
+			t.Fatal(err)
+		}
+		if r.URL.Query().Get("to") != "zh-Hans" || r.Header.Get("Authorization") != "" {
+			t.Fatal("invalid translation request")
+		}
+		labels := map[string]string{"Brand": "品牌", "Glass": "玻璃"}
+		results := make([]map[string][]map[string]string, 0, len(texts))
+		for _, item := range texts {
+			label := labels[item.Text]
+			if label == "" {
+				label = item.Text
+			}
+			results = append(results, map[string][]map[string]string{
+				"translations": {{"text": label, "to": "zh-Hans"}},
+			})
+		}
+		data, err := json.Marshal(results)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+	})
+	handler = HandlerWithServices(cs, stubVerifier{id: owner}, svc, translator)
+	localized := check("GET", cbt+"CBT771", "session", 200, "")
+	labels, ok := localized["translations_zh"].(map[string]any)
+	if !ok || labels["Brand"] != "品牌" || labels["Glass"] != "玻璃" {
+		t.Fatalf("missing CBT translations: %#v", localized["translations_zh"])
+	}
+	for _, key := range []string{"category_id", "attributes", "path"} {
+		if !reflect.DeepEqual(global[key], localized[key]) {
+			t.Fatalf("translation changed official %s", key)
+		}
+	}
+	if strings.Contains(fmt.Sprint(valid, global, localized), access) {
 		t.Fatal("platform token leaked to client")
 	}
 }

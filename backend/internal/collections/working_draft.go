@@ -139,7 +139,9 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 				&draft.Revision, &draft.UpdatedAt, &savedFields)
 	} else {
 		err = tx.QueryRow(ctx, `UPDATE app.collection_working_drafts d
-			SET title=$3,description=$4,notes=$5,listing_fields=COALESCE($7::jsonb,d.listing_fields),
+			SET title=$3,description=$4,notes=$5,listing_fields=COALESCE(
+				jsonb_strip_nulls(jsonb_build_object('category_attributes',d.listing_fields->'category_attributes')) || $7::jsonb,
+				d.listing_fields),
 				revision=d.revision+1,updated_at=now()
 			FROM app.source_products p
 			WHERE d.source_product_id=p.id AND p.id=$2::uuid AND p.owner_user_id=$1::uuid
