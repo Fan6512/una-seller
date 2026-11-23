@@ -76,6 +76,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	draftPath := "/api/v1/collections/" + source.ID + "/working-draft"
 	draftBody := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":0,
 "listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT123","category_path":"Beleza / Cuidados",
+"category_attributes":[{"category_id":"CBT123","id":"COLOR","value_id":"100","value":"Blue"},{"category_id":"CBT123","id":"CAPACITY","value":"1.5","unit_id":"l"}],
 "brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY",
 "weight_g":"850","length_cm":"20.5","width_cm":"15","height_cm":"5",
 "images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],
@@ -116,7 +117,10 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		response.Product.ListingFields.SellerSKU != "P-001" ||
 		response.Product.ListingFields.CategoryID != "CBT123" || response.Product.ListingFields.Titles.Spanish != "Título en español" ||
 		response.Product.ListingFields.Images == nil ||
-		len(*response.Product.ListingFields.Images) != 1 {
+		len(*response.Product.ListingFields.Images) != 1 ||
+		response.Product.ListingFields.CategoryAttributes == nil ||
+		(*response.Product.ListingFields.CategoryAttributes)[0].ValueID != "100" ||
+		(*response.Product.ListingFields.CategoryAttributes)[1].UnitID != "l" {
 		t.Fatalf("wrong snapshot or listing fields: %#v", response.Product)
 	}
 	again := call(owner, "POST", approvePath, `{"expected_revision":1}`)
@@ -215,6 +219,11 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		"images":[]}}`)
 	if emptyImageEdit.Code != 200 {
 		t.Fatalf("empty image override save %d %s", emptyImageEdit.Code, emptyImageEdit.Body.String())
+	}
+	readback := call(owner, "GET", "/api/v1/products/"+id, "")
+	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"value_id":"100"`) ||
+		!strings.Contains(readback.Body.String(), `"unit_id":"l"`) {
+		t.Fatalf("old editor or product readback lost official IDs: %d %s", readback.Code, readback.Body.String())
 	}
 	list = call(owner, "GET", "/api/v1/products", "")
 	if list.Code != 200 {

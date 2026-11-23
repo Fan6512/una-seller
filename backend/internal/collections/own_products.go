@@ -265,7 +265,9 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	var revision int64
 	err := s.DB.QueryRow(ctx, `UPDATE app.own_products
     SET title=$3,description=$4,notes=$5,
-      listing_fields=COALESCE($7::jsonb,listing_fields),
+      listing_fields=COALESCE(
+        jsonb_strip_nulls(jsonb_build_object('category_attributes',listing_fields->'category_attributes')) || $7::jsonb,
+        listing_fields),
       revision=revision+1,updated_at=now()
     WHERE id=$1::uuid AND owner_user_id=$2::uuid AND revision=$6 RETURNING revision`,
 		id, owner, in.Title, in.Description, in.Notes, in.ExpectedRevision, listingValue).Scan(&revision)

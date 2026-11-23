@@ -125,6 +125,29 @@ export async function getCollectionPage(q: string, offset: number, signal: Abort
   return { items: page.items.slice(0, PAGE_SIZE), hasMore: page.items.length > PAGE_SIZE };
 }
 
+export type CBTAttributeRule = {
+  id: string;
+  name: string;
+  value_type?: string;
+  value_max_length?: number;
+  tags?: Record<string, boolean>;
+  values?: { id?: string | number; name: string }[];
+  allowed_units?: { id: string; name: string }[];
+};
+export type CBTCategoryRules = {
+  category_id: string;
+  attributes: CBTAttributeRule[];
+  path?: { id: string; name: string }[];
+  translations_zh?: Record<string, string>;
+  technical_specs_verified?: boolean;
+  technical_requirements?: string[];
+  special_requirements?: boolean;
+};
+export function getCBTCategoryRules(category: string, signal: AbortSignal) {
+  return requestJSON<CBTCategoryRules>("/api/v1/stores/cbt-category-attributes?" +
+    new URLSearchParams({ category_id: category }), signal);
+}
+
 export type CBTCategorySuggestion = {
   category_id: string;
   category_name: string;

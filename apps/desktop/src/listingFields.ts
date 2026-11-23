@@ -9,6 +9,14 @@ export type ListingVariant = {
 };
 export type LocalizedTitles = { en: string; es: string; pt: string };
 export type TitleLanguage = keyof LocalizedTitles;
+export type CategoryAttributeValue = {
+  category_id: string;
+  id: string;
+  value: string;
+  value_id?: string;
+  unit_id?: string;
+};
+
 export type ListingFields = {
   titles: LocalizedTitles;
   category_id: string;
@@ -25,6 +33,7 @@ export type ListingFields = {
   height_cm: string;
   bullet_points: string[];
   attributes: {name:string;value:string}[];
+  category_attributes?: CategoryAttributeValue[];
   images?: CollectionImage[];
   variants?: ListingVariant[];
 };
@@ -58,6 +67,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   if(saved.purchase_price && !saved.purchase_currency) result.purchase_currency="";
   result.bullet_points=saved.bullet_points?.slice()??defaults.bullet_points;
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
+  if (saved.category_attributes) result.category_attributes = saved.category_attributes.map(field => ({ ...field }));
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
   if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,attributes:{...v.attributes},image_urls:v.image_urls.slice()}));
   return result;
@@ -113,5 +123,11 @@ export function validateListingFields(v:ListingFields):string {
   if(v.bullet_points.length>20||v.bullet_points.some(x=>Array.from(x).length>500))return "商品卖点最多 20 条，每条 500 字符";
   if(v.attributes.length>60||v.attributes.some(a=>Array.from(a.name).length>120||Array.from(a.value).length>500))
     return "附加属性最多 60 条，名称 120 字符、值 500 字符以内";
+  const categoryAttributes = v.category_attributes ?? [];
+  if (categoryAttributes.length > 180) return "官方属性超过 180 项，请移除不再使用的历史属性";
+  const invalid = categoryAttributes.find(field => !/^CBT[0-9]{1,15}$/.test(field.category_id) ||
+    !/^[A-Z][A-Z0-9_]{0,79}$/.test(field.id) || Array.from(field.value).length > 500 ||
+    (field.value_id?.length ?? 0) > 80 || (field.unit_id?.length ?? 0) > 80);
+  if (invalid) return invalid.id + " 官方属性格式错误";
   return "";
 }
