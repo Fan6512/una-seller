@@ -120,7 +120,7 @@ func TestFastAuthHS256PositiveCacheAndSensitiveBypass(t *testing.T) {
 	}
 
 	// Expired and forged tokens are never admitted from the positive cache.
-	expired := testClaims(srv.URL+"/auth/v1")
+	expired := testClaims(srv.URL + "/auth/v1")
 	expired["exp"] = time.Now().Add(-time.Minute).Unix()
 	old := testToken(t, jwt.SigningMethodHS256, "legacy", []byte("private-signing-secret"), expired)
 	if _, err := v.VerifyFast(context.Background(), old); !errors.Is(err, ErrInvalidSession) {
@@ -195,7 +195,7 @@ func TestFastAuthJWKSValidClaimsAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims := testClaims(srv.URL+"/auth/v1")
+	claims := testClaims(srv.URL + "/auth/v1")
 	token1 := testToken(t, jwt.SigningMethodES256, "key-1", key1, claims)
 	for i := 0; i < 3; i++ {
 		if id, err := v.VerifyFast(context.Background(), token1); err != nil || id != fastTestUser {
@@ -205,7 +205,7 @@ func TestFastAuthJWKSValidClaimsAndRotation(t *testing.T) {
 	if jwksHits.Load() != 1 || authHits.Load() != 0 {
 		t.Fatalf("unexpected requests jwks=%d auth=%d", jwksHits.Load(), authHits.Load())
 	}
-	bad := testClaims(srv.URL+"/auth/v1")
+	bad := testClaims(srv.URL + "/auth/v1")
 	bad["aud"] = "service_role"
 	if _, err := v.VerifyFast(context.Background(), testToken(t, jwt.SigningMethodES256, "key-1", key1, bad)); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("bad aud accepted: %v", err)
@@ -214,12 +214,12 @@ func TestFastAuthJWKSValidClaimsAndRotation(t *testing.T) {
 	if _, err := v.VerifyFast(context.Background(), testToken(t, jwt.SigningMethodES256, "key-1", key1, bad)); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("bad issuer accepted: %v", err)
 	}
-	bad = testClaims(srv.URL+"/auth/v1")
+	bad = testClaims(srv.URL + "/auth/v1")
 	bad["role"] = "service_role"
 	if _, err := v.VerifyFast(context.Background(), testToken(t, jwt.SigningMethodES256, "key-1", key1, bad)); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("service role accepted: %v", err)
 	}
-	bad = testClaims(srv.URL+"/auth/v1")
+	bad = testClaims(srv.URL + "/auth/v1")
 	bad["exp"] = time.Now().Add(-time.Minute).Unix()
 	if _, err := v.VerifyFast(context.Background(), testToken(t, jwt.SigningMethodES256, "key-1", key1, bad)); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("expired JWT accepted: %v", err)
