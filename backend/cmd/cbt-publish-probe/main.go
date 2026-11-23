@@ -22,6 +22,7 @@ const (
 var (
 	userIDFormat = regexp.MustCompile("^[1-9][0-9]{0,19}$")
 	siteIDFormat = regexp.MustCompile("^[A-Z]{3}$")
+	safeEnumFormat = regexp.MustCompile("^[a-z][a-z0-9_]{0,31}$")
 )
 
 type accountEvidence struct {
@@ -149,7 +150,15 @@ func knownValue(value string, known ...string) string {
 	if value == "" {
 		return unverified
 	}
-	// Unknown nonempty enum is distinct from a missing field. Never print arbitrary provider data.
+	// Preserve only short, enum-shaped configuration values. Never echo free-form data or secrets.
+	if safeEnumFormat.MatchString(value) {
+		for _, sensitive := range []string{"token", "secret", "email", "account", "seller", "user", "password", "apikey"} {
+			if strings.Contains(value, sensitive) {
+				return "unrecognized"
+			}
+		}
+		return "unrecognized:" + value
+	}
 	return "unrecognized"
 }
 

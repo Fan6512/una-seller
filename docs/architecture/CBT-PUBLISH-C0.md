@@ -35,7 +35,7 @@ try {
 }
 ```
 
-探针只对固定的官方 HTTPS 主机依次执行三次 GET。`GET /users/me` 核对 CBT 身份及全局销售状态。`GET /users/{merchant_id}` 读取 `user_product_seller`、`global_seller`、`warehouse_management` 标签。`GET /marketplace/users/{merchant_id}` 读取子卖家映射，输出按次运行匿名的 Seller ID、站点和已识别的配置值。`UNVERIFIED` 表示字段缺失或尚未核实，`unrecognized` 表示字段存在但探针尚不认识该枚举（为防止敏感值泄漏，不输出其原文），`absent` 表示已返回的标签数组不包含该标签。探针结果仅用于确认身份、标签和子卖家映射，刊登权限、图片能力、预检、创建字段和商品读回需另行核实。计价枚举值如 `listing_price`、`net_proceeds` 保持原义，刊登字段映射仍需核实。 [计价枚举]
+探针只对固定的官方 HTTPS 主机依次执行三次 GET。`GET /users/me` 核对 CBT 身份及全局销售状态。`GET /users/{merchant_id}` 读取 `user_product_seller`、`global_seller`、`warehouse_management` 标签。`GET /marketplace/users/{merchant_id}` 读取子卖家映射，输出按次运行匿名的 Seller ID、站点和已识别的配置值。`UNVERIFIED` 表示字段缺失或尚未核实，`unrecognized:<value>` 表示字段存在、未识别但符合安全枚举字符白名单（小写字母、数字、下划线，且长度受限）的配置值；无法安全显示时仅输出 `unrecognized`，`absent` 表示已返回的标签数组不包含该标签。探针结果仅用于确认身份、标签和子卖家映射，刊登权限、图片能力、预检、创建字段和商品读回需另行核实。计价枚举值如 `listing_price`、`net_proceeds` 保持原义，刊登字段映射仍需核实。 [计价枚举]
 
 负责人在获批的 CBT 测试账号下确认主账号身份、实际发布模型及各目标子卖家，复核脱敏后提交证据。可用已有测试商品对照表中回读、SKU 查询、金额及文案字段，记录测试日期、端点、HTTP 状态、站点匹配关系和脱敏字段形状。当前仓库 Fixture 均为合成，实际账号结论保持 `UNVERIFIED`。
 

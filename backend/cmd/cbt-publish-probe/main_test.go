@@ -128,6 +128,14 @@ func TestProbeEnumAndNumericIDs(t *testing.T) {
 	if got := knownValue("Bearer private-token", "remote"); got != "unrecognized" {
 		t.Fatalf("unsafe enum leaked: %q", got)
 	}
+	if got := knownValue("remote_v2", "remote"); got != "unrecognized:remote_v2" {
+		t.Fatalf("new public enum was lost: %q", got)
+	}
+	for _, unsafe := range []string{"private-token", "account_secret", "user_123", "TOKEN", "x@example.com", strings.Repeat("x", 40)} {
+		if got := knownValue(unsafe, "remote"); got != "unrecognized" {
+			t.Fatalf("unsafe enum echoed: %q", got)
+		}
+	}
 	for _, input := range []string{`{"id":123}`, `{"id":"123"}`} {
 		var item struct {
 			ID json.Number `json:"id"`
