@@ -7,6 +7,10 @@
 - [开发原则与技术地基（Foundation v2.1）](docs/architecture/FOUNDATION.md)：第一性原理、真实问题优先、简单可用、安全不过度。
 - [精简开发路线（Delivery v2.1）](docs/architecture/DELIVERY.md)：先基础 CI → M0 采集箱 → M1 草稿/AI/刊登 → M2 商品维护 → M3 按需运营；M4 商业化冻结。
 
+## 最新功能进度
+
+**[功能状态总台账：已完成 / 进行中 / 待完成 + 对应 PR](docs/product/FEATURE-STATUS.md)**。这是日常进度和新需求登记入口；以下早期进度文字仅保留历史上下文，不作为当前验收结论。
+
 ## 产品目标及开发路线
 
 **采集箱 → AI 整理 → 产品库 → Mercado Libre 多站点刊登 → 已发布产品列表 → 日常运营**。桌面端保持一个统一主题/主程序，内置业务插件按需开发，仍只用一个后端与数据库。
