@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -118,10 +117,12 @@ func pickDesktopRelease(releases []desktopRelease, acceptTests bool) (desktopRel
 	return best, bestName, found
 }
 
-// The releases listing is shared by both channels. A single mutex also merges
+// The releases listing is shared by both channels. A single gate also merges
 // simultaneous refreshes; this endpoint has low traffic and no extra worker.
 const desktopCacheTTL = 10 * time.Minute
 const desktopRetryDelay = time.Minute
+const desktopUpstreamTimeout = 8 * time.Second
+const desktopCheckTimeout = 17 * time.Second
 
 type desktopCachedManifest struct {
 	content []byte
@@ -129,7 +130,7 @@ type desktopCachedManifest struct {
 }
 
 type desktopManifestCache struct {
-	sync.Mutex
+	refresh       chan struct{}
 	releases      []desktopRelease
 	releasesUntil time.Time
 	entries       map[bool]desktopCachedManifest
@@ -137,8 +138,17 @@ type desktopManifestCache struct {
 }
 
 func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, releasesURL string, includeTests bool, ttl time.Duration) ([]byte, error) {
-	c.Lock()
-	defer c.Unlock()
+	fetchCtx, cancel := context.WithTimeout(ctx, desktopCheckTimeout)
+	defer cancel()
+	select {
+	case c.refresh <- struct{}{}:
+		defer func() { <-c.refresh }()
+	case <-fetchCtx.Done():
+		return nil, fetchCtx.Err()
+	}
+	if err := fetchCtx.Err(); err != nil {
+		return nil, err
+	}
 
 	now := time.Now()
 	last, found := c.entries[includeTests]
@@ -157,7 +167,7 @@ func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, 
 	}
 	if !now.Before(c.releasesUntil) {
 		var releases []desktopRelease
-		if err := readDesktopJSON(ctx, client, releasesURL, &releases); err != nil {
+		if err := readDesktopJSON(fetchCtx, client, releasesURL, &releases); err != nil {
 			// A canceled client request must not poison the shared retry window.
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -169,8 +179,6 @@ func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, 
 		c.releasesUntil = time.Now().Add(ttl)
 	}
 
-	fetchCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-	defer cancel()
 	data, err := desktopManifestForReleases(fetchCtx, client, c.releases, includeTests)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -190,9 +198,10 @@ func desktopUpdaterHandler(client *http.Client, releasesURL string) http.Handler
 
 func desktopUpdaterHandlerWithTTL(client *http.Client, releasesURL string, ttl time.Duration) http.HandlerFunc {
 	if client == nil {
-		client = &http.Client{Timeout: 3 * time.Second}
+		client = &http.Client{Timeout: desktopUpstreamTimeout}
 	}
 	cache := &desktopManifestCache{
+		refresh:    make(chan struct{}, 1),
 		entries:    make(map[bool]desktopCachedManifest),
 		retryAfter: make(map[bool]time.Time),
 	}
@@ -251,17 +260,15 @@ func readDesktopJSON(ctx context.Context, client *http.Client, uri string, out a
 
 func desktopManifestForReleases(ctx context.Context, client *http.Client, releases []desktopRelease, includeTests bool) ([]byte, error) {
 	candidates := slices.Clone(releases)
-	var lastInvalid error
 	for {
 		release, expectedVersion, found := pickDesktopRelease(candidates, includeTests)
 		if !found {
-			return nil, lastInvalid
+			return nil, nil
 		}
 		manifest, err := readDesktopManifest(ctx, client, release, expectedVersion)
 		if !errors.Is(err, errDesktopManifestInvalid) {
 			return manifest, err
 		}
-		lastInvalid = err
 		candidates = slices.DeleteFunc(candidates, func(candidate desktopRelease) bool {
 			return candidate.TagName == release.TagName
 		})

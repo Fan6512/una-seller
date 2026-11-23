@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,10 +110,10 @@ func TestDesktopManifestVerification(t *testing.T) {
 		wantStatus       int
 	}{
 		{name: "valid", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusOK},
-		{name: "untrusted_manifest_location", manifestURL: "https://evil.example/latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
-		{name: "wrong_manifest_version", manifestURL: prefix + "latest.json", version: "1.1.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
-		{name: "installer_missing_from_release", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", missingInstaller: true, wantStatus: http.StatusServiceUnavailable},
-		{name: "untrusted_installer_location", manifestURL: prefix + "latest.json", version: "1.0.0", installer: "https://evil.example/Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
+		{name: "untrusted_manifest_location", manifestURL: "https://evil.example/latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusNoContent},
+		{name: "wrong_manifest_version", manifestURL: prefix + "latest.json", version: "1.1.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusNoContent},
+		{name: "installer_missing_from_release", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", missingInstaller: true, wantStatus: http.StatusNoContent},
+		{name: "untrusted_installer_location", manifestURL: prefix + "latest.json", version: "1.0.0", installer: "https://evil.example/Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusNoContent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var manifestReads atomic.Int32
@@ -153,6 +155,58 @@ func TestDesktopManifestVerification(t *testing.T) {
 				t.Fatalf("valid signed manifest not returned: %q", res.Body.String())
 			}
 		})
+	}
+}
+
+func TestDesktopUpdatePrereleaseHeaderSelectsChannel(t *testing.T) {
+	const tag = "desktop-test-v0.3.0"
+	const prefix = desktopAssetPrefix + tag + "/"
+	const installer = "Una-Seller_0.3.0_x64-setup.exe"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"tag_name": tag, "prerelease": true,
+				"assets": []map[string]string{
+					{"name": "latest.json", "browser_download_url": prefix + "latest.json"},
+					{"name": installer, "browser_download_url": prefix + installer},
+				},
+			}})
+		case "/Fan6512/una-seller/releases/download/" + tag + "/latest.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version": "0.3.0",
+				"platforms": map[string]any{"windows-x86_64": map[string]string{
+					"url": prefix + installer, "signature": "manifest-fixture",
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	handler := desktopUpdaterHandler(desktopUpdaterMockClient(upstream), upstream.URL+"/releases")
+	for _, tc := range []struct {
+		header string
+		want   int
+	}{{"0", http.StatusNoContent}, {"1", http.StatusOK}, {"0", http.StatusNoContent}} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/updates", nil)
+		req.Header.Set("X-Una-Include-Prerelease", tc.header)
+		res := httptest.NewRecorder()
+		handler(res, req)
+		if res.Code != tc.want || (tc.want == http.StatusOK && !strings.Contains(res.Body.String(), `"version":"0.3.0"`)) ||
+			(tc.want == http.StatusNoContent && res.Body.Len() != 0) {
+			t.Fatalf("header %q: status=%d want=%d body=%q", tc.header, res.Code, tc.want, res.Body.String())
+		}
+	}
+}
+
+func TestDesktopUpdateWaitRespectsCancellation(t *testing.T) {
+	cache := &desktopManifestCache{refresh: make(chan struct{}, 1)}
+	cache.refresh <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := cache.lookup(ctx, nil, "", true, desktopCacheTTL); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("request ignored its deadline while waiting for another check: %v", err)
 	}
 }
 
