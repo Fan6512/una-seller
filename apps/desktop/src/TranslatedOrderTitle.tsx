@@ -44,7 +44,10 @@ export default function TranslatedOrderTitle({ title, translated, detail }: {
   translated?: string;
   detail?: boolean;
 }) {
-  const tooltip = translated && translated !== title ? translated + "\n" + title : title;
-  return detail ? <strong title={tooltip}>{title}</strong>
-    : <span className="orders-product-title" title={tooltip}>{title}</span>;
+  const translatedTitle = translated?.trim() || title;
+  if (detail) return <>
+    <strong title={title}>{translatedTitle}</strong>
+    {translatedTitle !== title && <small>原标题：{title}</small>}
+  </>;
+  return <span className="orders-product-title" title={title}>{translatedTitle}</span>;
 }
