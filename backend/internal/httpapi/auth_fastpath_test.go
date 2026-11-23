@@ -54,7 +54,7 @@ func TestAuthFastReadRouteAllowlist(t *testing.T) {
 	id := "6cbe41df-69cb-4594-9bad-a5473aa1a5fb"
 	cases := []struct {
 		method, path string
-		want bool
+		want         bool
 	}{
 		{"GET", "/api/v1/collections", true},
 		{"GET", "/api/v1/products", true},
