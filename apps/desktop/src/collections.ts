@@ -141,6 +141,7 @@ export type CBTCategoryRules = {
   translations_zh?: Record<string, string>;
   technical_specs_verified?: boolean;
   technical_requirements?: string[];
+  technical_requirement_names?: Record<string, string>;
   special_requirements?: boolean;
 };
 export function getCBTCategoryRules(category: string, signal: AbortSignal) {

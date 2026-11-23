@@ -23,12 +23,20 @@ const fields = [
   { id: "EMPTY_LIST", name: "Empty List", value_type: "list" },
 ];
 window.fetch = (path, options) => {
-  const id = new URL(path, location.href).searchParams.get("category_id");
+  const url = new URL(path, location.href);
+  if (url.pathname === "/api/v1/categories/predict") {
+    return Promise.resolve(Response.json({ items: [{ category_id: "CBT2", category_name: "Other", domain_name: "Mixed",
+      path: [{ id: "CBT1", name: "Home" }, { id: "CBT2", name: "Other" }] }],
+      translations_zh: { Home: "家居" } }));
+  }
+  const id = url.searchParams.get("category_id");
   if (id === "CBT4") return Promise.resolve(Response.json({ error: "upstream failed" }, { status: 502 }));
   if (!options.headers.Authorization) throw Error("missing bearer");
   return Promise.resolve(Response.json({
     category_id: id, technical_specs_verified: true,
-    translations_zh: id === "CBT2" ? { Home: "家居", Other: "其他", Brand: "品牌" } : undefined,
+    translations_zh: id === "CBT2" ? { Home: "家居", Brand: "品牌", Plastic: "塑料", Style: "款式" } : undefined,
+    technical_requirements: id === "CBT2" ? ["STYLE"] : undefined,
+    technical_requirement_names: id === "CBT2" ? { STYLE: "Style" } : undefined,
     path: [{ id: "CBT1", name: "Home" }, { id, name: id === "CBT1" ? "Jugs" : "Other" }],
     attributes: id === "CBT1" ? fields : id === "CBT2" ? [
       fields[0],
@@ -99,7 +107,10 @@ try {
   switchCategory("CBT2");
   await loaded("small", "历史参考（CBT1）：Sample Brand");
   const newBrand = (await loaded("label", "品牌 · Brand")).querySelector("input");
-  await loaded("p", "家居 / 其他");
+  await loaded("p", "家居 / Other");
+  await loaded("p", "Home / Other");
+  await loaded("p", "款式 · Style");
+  await loaded("option", "塑料 · Plastic");
   assert(newBrand.value === "" && working.length === 4 && working.every(field => field.category_id === "CBT1"),
     "changing category accepted or lost historical values");
   assert((await loaded("label", "Material")).querySelector("select").value === "", "historical enum was applied to the wrong category");
@@ -113,11 +124,20 @@ try {
     working.some(field => field.category_id === "CBT2" && field.id === "BRAND" && field.value === "Sample Brand") &&
     working.filter(field => field.category_id === "CBT1").length === 4,
     "deliberate confirmation did not save a separate current-category value");
+  const translatedOption = (await loaded("label", "Material")).querySelector("select");
+  input(translatedOption, "300");
+  assert(working.some(field => field.category_id === "CBT2" && field.id === "MATERIAL" &&
+    field.value_id === "300" && field.value === "Plastic"), "translated enum altered the official value");
   await loaded("summary", "当前未采用的已填属性");
   switchCategory("CBT3");
   await loaded("p", "官方未返回可用属性");
   switchCategory("CBT4");
   await loaded('[role="alert"]', "仍可保存工作稿");
+  flushSync(() => [...document.querySelectorAll("button")].find(node => node.textContent.includes("推荐 CBT 类目")).click());
+  const suggestion = await loaded(".category-suggestion-list button", "家居 / Other");
+  assert(suggestion.textContent.includes("Home / Other"), "suggestion lost its official path");
+  flushSync(() => suggestion.click());
+  assert(editor.category_id === "CBT2" && editor.category_path === "Home / Other", "translated prediction altered confirmed official data");
   document.body.dataset.result = "pass";
 } catch (error) { document.body.dataset.result = "fail"; document.body.append(error.message); }
 `;

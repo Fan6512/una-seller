@@ -82,7 +82,7 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 		case "/categories/CBT771/technical_specs/input":
 			body = `{"groups":[{"components":[{"component":"TEXT_INPUT","attributes":[
  {"id":"BRAND","tags":["required"]},{"id":"SIZE","tags":["conditional_required"]},
- {"id":"STYLE","tags":["required"]}]}]}]}`
+ {"id":"STYLE","name":"Style","tags":["required"]}]}]}]}`
 		case "/categories/CBT772/attributes":
 			body = `[]`
 		case "/categories/CBT772":
@@ -167,17 +167,21 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 	}
 
 	translator := NewAzureTranslationService("fixture-key", "")
-	translator.client.Transport = listingTestTransport(func(r *http.Request) (*http.Response, error) {
+	translator.provider.(*azureTranslationProvider).client.Transport = listingTestTransport(func(r *http.Request) (*http.Response, error) {
 		var texts []struct{ Text string }
 		if err := json.NewDecoder(r.Body).Decode(&texts); err != nil {
 			t.Fatal(err)
 		}
-		if r.URL.Query().Get("to") != "zh-Hans" || r.Header.Get("Authorization") != "" {
+		source := r.URL.Query().Get("from")
+		if r.URL.Query().Get("to") != "zh-Hans" || r.Header.Get("Authorization") != "" || source != "en" && source != "pt" {
 			t.Fatal("invalid translation request")
 		}
-		labels := map[string]string{"Brand": "品牌", "Glass": "玻璃"}
+		labels := map[string]string{"Brand": "品牌", "Glass": "玻璃", "Style": "风格", "Filtros": "过滤器"}
 		results := make([]map[string][]map[string]string, 0, len(texts))
 		for _, item := range texts {
+			if (item.Text == "Filtros" && source != "pt") || (item.Text == "Style" && source != "en") {
+				t.Fatal("category label reached the wrong language bucket")
+			}
 			label := labels[item.Text]
 			if label == "" {
 				label = item.Text
@@ -195,15 +199,28 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 	handler = HandlerWithServices(cs, stubVerifier{id: owner}, svc, translator)
 	localized := check("GET", cbt+"CBT771", "session", 200, "")
 	labels, ok := localized["translations_zh"].(map[string]any)
-	if !ok || labels["Brand"] != "品牌" || labels["Glass"] != "玻璃" {
+	if !ok || labels["Brand"] != "品牌" || labels["Glass"] != "玻璃" || labels["Style"] != "风格" {
 		t.Fatalf("missing CBT translations: %#v", localized["translations_zh"])
 	}
-	for _, key := range []string{"category_id", "attributes", "path"} {
+	published := check("GET", path+scope, "session", 200, "")
+	publishedLabels, ok := published["translations_zh"].(map[string]any)
+	if !ok || publishedLabels["Filtros"] != "过滤器" {
+		t.Fatalf("missing published category translation: %#v", published)
+	}
+	if names, ok := localized["technical_requirement_names"].(map[string]any); !ok || names["STYLE"] != "Style" {
+		t.Fatalf("missing official technical requirement name: %#v", localized)
+	}
+	for _, key := range []string{"category_id", "attributes", "path", "technical_requirements", "technical_requirement_names"} {
 		if !reflect.DeepEqual(global[key], localized[key]) {
 			t.Fatalf("translation changed official %s", key)
 		}
 	}
-	if strings.Contains(fmt.Sprint(valid, global, localized), access) {
+	for _, key := range []string{"category_id", "attributes", "path"} {
+		if !reflect.DeepEqual(valid[key], published[key]) {
+			t.Fatalf("translation changed published category %s", key)
+		}
+	}
+	if strings.Contains(fmt.Sprint(valid, global, localized, published), access) {
 		t.Fatal("platform token leaked to client")
 	}
 }

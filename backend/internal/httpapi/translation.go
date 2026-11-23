@@ -1,46 +1,75 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/Fan6512/una-seller/backend/internal/meli"
+	"golang.org/x/text/unicode/norm"
 )
 
-const azureTranslateURL = "https://api.cognitive.microsofttranslator.com/translate"
+const (
+	translationTarget     = "zh-Hans"
+	translationCacheLimit = 3000
+	translationCacheTTL   = 24 * time.Hour
+)
+
+type translationProvider interface {
+	// The result aligns with texts. Empty entries fall back to their original text.
+	translate(context.Context, string, []string) []string
+}
+
+type translationCacheKey struct {
+	provider, source, target, text string
+}
 
 type translationCacheEntry struct {
 	text    string
 	expires time.Time
 }
 
-// TranslationService only receives marketplace labels and persisted order product titles.
-type TranslationService struct {
-	key, region, endpoint string
-	client                *http.Client
-	gate                  chan struct{}
-	cache                 map[[2]string]translationCacheEntry
-	retryAfter            time.Time
+type translationFlight struct {
+	done chan struct{}
+	text string
 }
 
-func NewAzureTranslationService(key, region string) *TranslationService {
-	if strings.TrimSpace(key) == "" {
-		return nil
+// TranslationService only receives marketplace labels and persisted order product titles.
+type TranslationService struct {
+	providerName string
+	provider     translationProvider
+	providerGate chan struct{}
+
+	mu      sync.Mutex
+	cache   map[translationCacheKey]translationCacheEntry
+	pending map[translationCacheKey]*translationFlight
+}
+
+func NewTranslationService(provider, azureKey, azureRegion, baiduAppID, baiduSecret string) *TranslationService {
+	switch strings.TrimSpace(provider) {
+	case "", "azure":
+		return NewAzureTranslationService(azureKey, azureRegion)
+	case "baidu":
+		appID, secret := strings.TrimSpace(baiduAppID), strings.TrimSpace(baiduSecret)
+		if appID != "" && secret != "" {
+			return newTranslationService("baidu", &baiduTranslationProvider{
+				appID: appID, secret: secret, endpoint: baiduTranslateURL, client: newTranslationHTTPClient(),
+			})
+		}
 	}
+	return nil
+}
+
+func newTranslationService(name string, provider translationProvider) *TranslationService {
 	return &TranslationService{
-		key: strings.TrimSpace(key), region: strings.TrimSpace(region), endpoint: azureTranslateURL,
-		client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
-		gate: make(chan struct{}, 1), cache: make(map[[2]string]translationCacheEntry),
+		providerName: name, provider: provider, providerGate: make(chan struct{}, 1),
+		cache:   make(map[translationCacheKey]translationCacheEntry),
+		pending: make(map[translationCacheKey]*translationFlight),
 	}
 }
 
@@ -54,102 +83,79 @@ func (s *TranslationService) translate(ctx context.Context, source string, texts
 	default:
 		return out
 	}
+
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	select {
-	case s.gate <- struct{}{}:
-		defer func() { <-s.gate }()
-	case <-ctx.Done():
-		return out
+
+	waiting := make(map[string]*translationFlight)
+	var misses []translationCacheKey
+	var batch []string
+	s.mu.Lock()
+	now := time.Now()
+	for _, original := range texts {
+		if strings.TrimSpace(original) == "" || len(original) > 4000 || !utf8.ValidString(original) {
+			continue
+		}
+		key := translationCacheKey{s.providerName, source, translationTarget, norm.NFC.String(original)}
+		if cached, ok := s.cache[key]; ok && now.Before(cached.expires) {
+			out[original] = cached.text
+			continue
+		}
+		flight := s.pending[key]
+		if flight == nil {
+			flight = &translationFlight{done: make(chan struct{})}
+			s.pending[key] = flight
+			misses = append(misses, key)
+			batch = append(batch, key.text)
+		}
+		waiting[original] = flight
+	}
+	s.mu.Unlock()
+
+	if len(misses) > 0 {
+		var result []string
+		select {
+		case s.providerGate <- struct{}{}:
+			if ctx.Err() == nil {
+				result = s.provider.translate(ctx, source, batch)
+			}
+			<-s.providerGate
+		case <-ctx.Done():
+		}
+
+		s.mu.Lock()
+		expires := time.Now().Add(translationCacheTTL)
+		for i, key := range misses {
+			flight := s.pending[key]
+			if len(result) == len(misses) && result[i] != "" {
+				if _, exists := s.cache[key]; !exists && len(s.cache) >= translationCacheLimit {
+					for entry := range s.cache {
+						delete(s.cache, entry)
+						break
+					}
+				}
+				flight.text = result[i]
+				s.cache[key] = translationCacheEntry{text: flight.text, expires: expires}
+			}
+			delete(s.pending, key)
+			close(flight.done)
+		}
+		s.mu.Unlock()
 	}
 
-	type input struct {
-		Text string `json:"Text"`
-	}
-	var batch []input
-	seen := make(map[string]bool)
-	remaining := 20000
-	now := time.Now()
-	for _, text := range texts {
-		if strings.TrimSpace(text) == "" || seen[text] {
-			continue
-		}
-		seen[text] = true
-		if cached, ok := s.cache[[2]string{source, text}]; ok && now.Before(cached.expires) {
-			out[text] = cached.text
-			continue
-		}
-		count := utf8.RuneCountInString(text)
-		if count > 500 || count > remaining || len(batch) >= 120 {
-			continue
-		}
-		batch = append(batch, input{Text: text})
-		remaining -= count
-	}
-	if len(batch) == 0 || now.Before(s.retryAfter) {
-		return out
-	}
-	data, err := json.Marshal(batch)
-	if err != nil {
-		return out
-	}
-	query := url.Values{"api-version": {"3.0"}, "to": {"zh-Hans"}}
-	if source != "" {
-		query.Set("from", source)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint+"?"+query.Encode(), bytes.NewReader(data))
-	if err != nil {
-		return out
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Ocp-Apim-Subscription-Key", s.key)
-	if s.region != "" {
-		req.Header.Set("Ocp-Apim-Subscription-Region", s.region)
-	}
-	res, err := s.client.Do(req)
-	if err != nil {
-		return out
-	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusTooManyRequests {
-		wait := time.Minute
-		raw := res.Header.Get("Retry-After")
-		if seconds, err := strconv.ParseUint(raw, 10, 32); err == nil {
-			wait = time.Duration(seconds) * time.Second
-		} else if date, err := http.ParseTime(raw); err == nil {
-			wait = time.Until(date)
-		}
-		s.retryAfter = time.Now().Add(min(max(wait, time.Second), time.Hour))
-	}
-	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
-		s.retryAfter = time.Now().Add(time.Hour)
-	}
-	if res.StatusCode != http.StatusOK {
-		return out
-	}
-	var result []struct {
-		Translations []struct {
-			Text string `json:"text"`
-			To   string `json:"to"`
-		} `json:"translations"`
-	}
-	if json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&result) != nil || len(result) != len(batch) {
-		return out
-	}
-	for i, item := range result {
-		if len(item.Translations) != 1 || item.Translations[0].To != "zh-Hans" ||
-			strings.TrimSpace(item.Translations[0].Text) == "" || len(item.Translations[0].Text) > 4000 {
-			continue
-		}
-		text, translated := batch[i].Text, item.Translations[0].Text
-		if len(s.cache) >= 3000 {
-			for key := range s.cache {
-				delete(s.cache, key)
-				break
+	for original, flight := range waiting {
+		select {
+		case <-flight.done:
+		case <-ctx.Done():
+			select {
+			case <-flight.done:
+			default:
+				continue
 			}
 		}
-		s.cache[[2]string{source, text}] = translationCacheEntry{text: translated, expires: now.Add(24 * time.Hour)}
-		out[text] = translated
+		if flight.text != "" {
+			out[original] = flight.text
+		}
 	}
 	return out
 }
@@ -210,6 +216,20 @@ func (a storeAPI) orderTitleTranslations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, a.translator.translate(ctx, "", titles))
 }
 
+func categoryTranslationSource(categoryID string) string {
+	if len(categoryID) >= 3 {
+		switch categoryID[:3] {
+		case "CBT":
+			return "en"
+		case "MLB":
+			return "pt"
+		case "MLA", "MLC", "MCO", "MLM", "MPE", "MLU":
+			return "es"
+		}
+	}
+	return ""
+}
+
 func categoryTranslationTexts(result meli.CategoryRules) []string {
 	var fields []struct {
 		Name   string `json:"name"`
@@ -224,6 +244,9 @@ func categoryTranslationTexts(result meli.CategoryRules) []string {
 	}
 	for _, field := range fields {
 		texts = append(texts, field.Name)
+	}
+	for _, id := range result.TechnicalRequirements {
+		texts = append(texts, result.TechnicalRequirementNames[id])
 	}
 	for _, field := range fields {
 		for _, value := range field.Values {
