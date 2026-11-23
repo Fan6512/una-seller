@@ -42,24 +42,24 @@ type publicSigningKey struct {
 // fastAuth is process-local and bounded. No access token, signing secret or
 // user metadata is persisted, logged or exposed to the desktop.
 type fastAuth struct {
-	jwksURL string
-	issuer  string
-	client  *http.Client
-	mu      sync.Mutex
-	keys    map[string]publicSigningKey
-	keysUntil time.Time
+	jwksURL       string
+	issuer        string
+	client        *http.Client
+	mu            sync.Mutex
+	keys          map[string]publicSigningKey
+	keysUntil     time.Time
 	lastJWKSFetch time.Time
-	positive map[[32]byte]verifiedIdentity
-	tokenFlight singleflight.Group
-	jwksFlight singleflight.Group
+	positive      map[[32]byte]verifiedIdentity
+	tokenFlight   singleflight.Group
+	jwksFlight    singleflight.Group
 }
 
 func newFastAuth(base string, client *http.Client) *fastAuth {
 	return &fastAuth{
-		jwksURL: base + "/auth/v1/.well-known/jwks.json",
-		issuer:  base + "/auth/v1",
-		client:  client,
-		keys:    make(map[string]publicSigningKey),
+		jwksURL:  base + "/auth/v1/.well-known/jwks.json",
+		issuer:   base + "/auth/v1",
+		client:   client,
+		keys:     make(map[string]publicSigningKey),
 		positive: make(map[[32]byte]verifiedIdentity),
 	}
 }
@@ -271,15 +271,15 @@ func (f *fastAuth) lookupKey(ctx context.Context, kid, alg string) (any, error) 
 		}
 		var set struct {
 			Keys []struct {
-				KeyType string `json:"kty"`
+				KeyType   string `json:"kty"`
 				Algorithm string `json:"alg"`
-				KeyID string `json:"kid"`
-				Use string `json:"use"`
-				Curve string `json:"crv"`
-				X string `json:"x"`
-				Y string `json:"y"`
-				N string `json:"n"`
-				E string `json:"e"`
+				KeyID     string `json:"kid"`
+				Use       string `json:"use"`
+				Curve     string `json:"crv"`
+				X         string `json:"x"`
+				Y         string `json:"y"`
+				N         string `json:"n"`
+				E         string `json:"e"`
 			} `json:"keys"`
 		}
 		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&set) != nil {
