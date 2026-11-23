@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 )
 
 // Category rules are fetched from Mercado Libre for the specific authorized site.
@@ -15,16 +17,14 @@ var ErrCategoryInvalid = errors.New("category is invalid for the selected market
 
 var categoryIDPattern = regexp.MustCompile(`^[A-Z]{3}[0-9]{1,15}$`)
 
-type CategoryPathNode struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
+type CategoryPathNode = cbtcategory.PathNode
 
 type CategoryRules struct {
 	Translations              map[string]string  `json:"translations_zh,omitempty"`
 	CategoryID                string             `json:"category_id"`
 	Attributes                json.RawMessage    `json:"attributes"`
 	Path                      []CategoryPathNode `json:"path,omitempty"`
+	PathZH                    []string           `json:"path_zh,omitempty"`
 	TechnicalSpecsVerified    bool               `json:"technical_specs_verified,omitempty"`
 	TechnicalRequirements     []string           `json:"technical_requirements,omitempty"`
 	TechnicalRequirementNames map[string]string  `json:"technical_requirement_names,omitempty"`

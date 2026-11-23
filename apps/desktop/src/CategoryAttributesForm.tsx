@@ -89,8 +89,8 @@ export default function CategoryAttributesForm({ category, values, onChange, dis
     </>}
     {current && <>
       {categories.length > 0 && <>
-        {categories.some(name => Object.hasOwn(translations, name) && translations[name] !== name) &&
-          <p className="listing-fields-note">{categories.map(name => Object.hasOwn(translations, name) ? translations[name] : name).join(" / ")}</p>}
+        {current.path_zh?.length === categories.length &&
+          <p className="listing-fields-note">{current.path_zh.join(" / ")}</p>}
         <p className="listing-fields-note">{categories.join(" / ")}</p>
       </>}
       {special && <p className="listing-validation" role="status">该分类存在特殊官方要求，需要在刊登前进一步校验。

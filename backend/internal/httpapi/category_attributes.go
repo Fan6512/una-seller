@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,9 +10,35 @@ import (
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
+func (a storeAPI) attachPublishedCategoryBreadcrumbs(page *meli.ListingPage) {
+	if a.categoryDictionary == nil {
+		return
+	}
+	dictionary := a.categoryDictionary.Load()
+	for index, id := range page.CBTCategoryIDs {
+		breadcrumb := dictionary.PublishedBreadcrumb(id)
+		if breadcrumb == nil {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(page.Items[index], &fields) != nil || fields == nil {
+			continue
+		}
+		path, err := json.Marshal(breadcrumb)
+		if err != nil {
+			continue
+		}
+		fields["cbt_category_path"] = path
+		if item, err := json.Marshal(fields); err == nil {
+			page.Items[index] = item
+		}
+	}
+}
+
 func (a storeAPI) writeCategoryRules(w http.ResponseWriter, r *http.Request, rules meli.CategoryRules) {
-	if a.localizeCategory != nil {
-		rules.Translations = a.localizeCategory(r.Context(), rules)
+	rules.PathZH = a.categoryDictionary.Load().Localize(rules.Path)
+	if a.localizeCategoryAttributes != nil {
+		rules.Translations = a.localizeCategoryAttributes(r.Context(), rules)
 	}
 	writeJSON(w, http.StatusOK, rules)
 }
