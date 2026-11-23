@@ -22,7 +22,7 @@ const fields = [
   { id: "MATERIAL", name: "Material", value_type: "list", values: [{ id: 200, name: "Glass" }] },
   { id: "EMPTY_LIST", name: "Empty List", value_type: "list" },
 ];
-const master = "Glass body\n\nFor home use.";
+const master = "For home use.";
 const originalDigest = "a".repeat(64);
 const revisedDigest = "b".repeat(64);
 window.fetch = (path, options) => {
@@ -227,8 +227,11 @@ try {
     "English-only generation created regional copy or overwrote saved descriptions");
   const copied = [];
   Object.defineProperty(navigator, "clipboard", { value: { writeText: async text => copied.push(text) } });
+  await click("button", "单独采纳英文卖点");
+  assert(editor.bullet_points.length === 1 && editor.bullet_points[0] === "Glass body" &&
+    !editor.descriptions, "selling points were not adopted independently");
   await click("button", "复制候选英文详情");
-  assert(copied[0] === master && !editor.descriptions, "English copy omitted selling point or saved itself");
+  assert(copied[0] === master && !editor.descriptions, "English description candidate was combined with selling points or saved itself");
   await click("button", "采纳英文详情");
   assert(editor.descriptions.en === master && editor.descriptions.es === "" && editor.descriptions.pt === "",
     "English adoption changed regional descriptions");
