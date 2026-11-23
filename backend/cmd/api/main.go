@@ -81,7 +81,9 @@ func main() {
 		}
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
-	translator := httpapi.NewAzureTranslationService(os.Getenv("AZURE_TRANSLATOR_KEY"), os.Getenv("AZURE_TRANSLATOR_REGION"))
+	translator := httpapi.NewTranslationService(os.Getenv("TRANSLATION_PROVIDER"),
+		os.Getenv("AZURE_TRANSLATOR_KEY"), os.Getenv("AZURE_TRANSLATOR_REGION"),
+		os.Getenv("BAIDU_TRANSLATE_APP_ID"), os.Getenv("BAIDU_TRANSLATE_SECRET"))
 	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithServices(store, verifier, meliService, translator), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }
