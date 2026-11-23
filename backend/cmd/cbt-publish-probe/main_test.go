@@ -119,20 +119,34 @@ func TestProbeDoesNotTreatMissingTagsAsAbsent(t *testing.T) {
 }
 
 func TestProbeEnumAndNumericIDs(t *testing.T) {
-	if got := knownValue("", "remote"); got != unverified { t.Fatalf("missing enum = %q", got) }
-	if got := knownValue("self_service", "self_service"); got != "self_service" { t.Fatalf("valid enum = %q", got) }
-	if got := knownValue("Bearer private-token", "remote"); got != "unrecognized" { t.Fatalf("unsafe enum leaked: %q", got) }
+	if got := knownValue("", "remote"); got != unverified {
+		t.Fatalf("missing enum = %q", got)
+	}
+	if got := knownValue("self_service", "self_service"); got != "self_service" {
+		t.Fatalf("valid enum = %q", got)
+	}
+	if got := knownValue("Bearer private-token", "remote"); got != "unrecognized" {
+		t.Fatalf("unsafe enum leaked: %q", got)
+	}
 	for _, input := range []string{`{"id":123}`, `{"id":"123"}`} {
-		var item struct { ID json.Number `json:"id"` }
+		var item struct {
+			ID json.Number `json:"id"`
+		}
 		if err := json.Unmarshal([]byte(input), &item); err != nil || item.ID.String() != "123" {
 			t.Fatalf("numeric identifier: %s: %v", input, err)
 		}
 	}
 	for _, input := range []string{`{"id":"abc"}`, `{"id":"123456789012345678901234567890123456789"}`} {
-		var item struct { ID json.Number `json:"id"` }
+		var item struct {
+			ID json.Number `json:"id"`
+		}
 		err := json.Unmarshal([]byte(input), &item)
-		if strings.Contains(input, "abc") && err == nil { t.Fatal("nonnumeric ID accepted") }
-		if err == nil && userIDFormat.MatchString(item.ID.String()) { t.Fatal("oversized numeric ID accepted") }
+		if strings.Contains(input, "abc") && err == nil {
+			t.Fatal("nonnumeric ID accepted")
+		}
+		if err == nil && userIDFormat.MatchString(item.ID.String()) {
+			t.Fatal("oversized numeric ID accepted")
+		}
 	}
 }
 
