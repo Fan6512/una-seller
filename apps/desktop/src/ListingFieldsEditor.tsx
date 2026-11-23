@@ -28,9 +28,14 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     setPredicting(false);
     setSuggestions([]);
     const titles={...value.titles,[lang]:title};
-    set("titles",titles);
-    setPredictMessage(lang === "en" && title !== value.titles.en && value.category_id
-      ? "英文标题已修改。请核对已选类目，必要时重新推荐。" : "");
+    // Invalidate the category selected for the old English title, keeping its attribute history.
+    if(lang==="en" && title!==value.titles.en && value.category_id) {
+      onChange({...value,titles,category_id:"",category_path:""});
+      setPredictMessage("英文标题已修改，请重新选择或手动填写 CBT 类目。");
+    } else {
+      set("titles",titles);
+      setPredictMessage("");
+    }
   };
   const copyTitle=async(lang:"en"|"es"|"pt")=>{
     const title=value.titles[lang];

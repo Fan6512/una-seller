@@ -11,7 +11,7 @@ const fixture = String.raw`
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import CategoryAttributesForm from "/src/CategoryAttributesForm.tsx";
+import ListingFieldsEditor from "/src/ListingFieldsEditor.tsx";
 import { initialListingFields, validateListingFields } from "/src/listingFields.ts";
 
 const fields = [
@@ -37,13 +37,15 @@ window.fetch = (path, options) => {
     ] : [],
   }));
 };
-let switchCategory, working;
+let editor, working;
 function Fixture() {
-  const [category, setCategory] = useState("CBT1");
-  const [values, setValues] = useState([]);
-  switchCategory = id => flushSync(() => setCategory(id));
-  working = values;
-  return React.createElement(CategoryAttributesForm, { category, values, onChange: setValues, disabled: false });
+  const [value, setValue] = useState(() => initialListingFields({
+    category_id: "CBT1", category_path: "Home / Jugs",
+    titles: { en: "Sample Jug", es: "", pt: "" },
+  }));
+  editor = value;
+  working = value.category_attributes ?? [];
+  return React.createElement(ListingFieldsEditor, { value, onChange: setValue });
 }
 const assert = (condition, message) => { if (!condition) throw Error(message); };
 const loaded = async (selector, text) => {
@@ -55,11 +57,11 @@ const loaded = async (selector, text) => {
   throw Error("Timed out: " + text);
 };
 const input = (node, value) => flushSync(() => {
-  const setter = Object.getOwnPropertyDescriptor(node instanceof HTMLSelectElement
-    ? HTMLSelectElement.prototype : HTMLInputElement.prototype, "value").set;
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value").set;
   setter.call(node, value);
   node.dispatchEvent(new Event(node instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
 });
+const switchCategory = id => input(document.querySelector('input[placeholder="例如 CBT12345"]'), id);
 try {
   const root = createRoot(document.querySelector("main"));
   flushSync(() => root.render(React.createElement(Fixture)));
@@ -78,6 +80,22 @@ try {
   assert(draft.category_attributes.find(v => v.id === "CAPACITY").unit_id === "l", "unit ID missing");
   assert(validateListingFields(draft) === "", "valid work draft rejected");
   assert(validateListingFields(initialListingFields(null, undefined, "Old Draft")) === "", "legacy draft rejected");
+  for (const [language, key, title] of [["西语 MX", "es", "Jarra"], ["葡语 BR", "pt", "Jarro"]]) {
+    const tab = await loaded("button", language);
+    flushSync(() => tab.click());
+    input(document.querySelector(".listing-active-title textarea"), title);
+    assert(editor.titles[key] === title && editor.category_id === "CBT1" && editor.category_path === "Home / Jugs",
+      "non-English title edit cleared the confirmed category");
+  }
+  const englishTab = await loaded("button", "英语 EN");
+  flushSync(() => englishTab.click());
+  input(document.querySelector(".listing-active-title textarea"), "Sample Pitcher");
+  assert(editor.titles.en === "Sample Pitcher" && editor.category_id === "" && editor.category_path === "",
+    "English title edit kept the old category");
+  const reopened = initialListingFields(JSON.parse(JSON.stringify(editor)));
+  assert(reopened.category_id === "" && reopened.category_path === "" &&
+    JSON.stringify(reopened.category_attributes) === JSON.stringify(draft.category_attributes),
+    "draft round trip lost historical attributes or restored the category");
   switchCategory("CBT2");
   await loaded("small", "历史参考（CBT1）：Sample Brand");
   const newBrand = (await loaded("label", "品牌 · Brand")).querySelector("input");
@@ -104,7 +122,7 @@ try {
 } catch (error) { document.body.dataset.result = "fail"; document.body.append(error.message); }
 `;
 
-test("official CBT fields keep compatible history and allow draft saves without translation", { timeout: 45_000 }, async () => {
+test("listing editor clears CBT category on English title edits and preserves official attribute history", { timeout: 45_000 }, async () => {
   const profile = await mkdtemp(join(tmpdir(), "una-cbt-attrs-"));
   const server = await createServer({
     server: { port: 0 },
