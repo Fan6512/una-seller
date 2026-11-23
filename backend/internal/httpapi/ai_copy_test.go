@@ -111,6 +111,35 @@ func TestAICopyLocaleNumbers(t *testing.T) {
 	}
 }
 
+func TestAICopyQuantitiesKeepUnitsAndReviewGrouping(t *testing.T) {
+	if !sameAICopyQuantities("Capacity 5.5 cm.", "Capacidad 5,5 cm.") {
+		t.Fatal("decimal comma with a unit was rejected")
+	}
+	if !sameAICopyQuantities("Weight 1,000 g.", "Peso 1.000 g.") {
+		t.Fatal("ambiguous grouping with the same unit was rejected before review")
+	}
+	for _, pair := range [][2]string{
+		{"Weight 250 g.", "Peso 500 g."},
+		{"Weight 250 g.", "Peso 250 kg."},
+		{"Length 5.5 cm; Weight 10 g.", "Largo 10 cm; Peso 5,5 g."},
+	} {
+		if sameAICopyQuantities(pair[0], pair[1]) {
+			t.Fatalf("changed quantity/unit accepted: %q / %q", pair[0], pair[1])
+		}
+	}
+	source := "Weight 1,000 g.\n\nLength 5.5 cm."
+	body := `{"es":"Peso 1.000 g.\n\nLongitud 5,5 cm.","pt":"Peso 1.000 g.\n\nComprimento 5,5 cm.","review_terms":[]}`
+	candidate, ok := parseAICopyTranslation(body, source)
+	if !ok || len(candidate.ReviewTerms) == 0 ||
+		!strings.Contains(strings.Join(candidate.ReviewTerms, " "), "数字格式请人工核对") {
+		t.Fatalf("regional quantities should reach user review instead of HTTP 502: %+v, ok=%t", candidate, ok)
+	}
+	changed := strings.Replace(body, "1.000 g", "1.000 kg", 1)
+	if _, ok := parseAICopyTranslation(changed, source); ok {
+		t.Fatal("translation changed a quantity unit")
+	}
+}
+
 func TestAICopyProviderResponseBoundsAndRedirect(t *testing.T) {
 	var redirects atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

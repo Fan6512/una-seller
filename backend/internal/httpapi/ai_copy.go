@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -369,6 +370,36 @@ func compareAICopyNumbers(source, translated string) (bool, []string) {
 	return true, review
 }
 
+// Match the quantity with its unit, while comparing regional number separators
+// through the same ambiguity rules used for standalone numbers.
+func sameAICopyQuantities(source, translated string) bool {
+	collect := func(text string) map[string][]string {
+		units := make(map[string][]string)
+		for _, term := range aiCopyUnits.FindAllString(norm.NFKC.String(text), -1) {
+			compact := strings.ToLower(strings.Join(strings.Fields(term), ""))
+			number := aiCopyNumbers.FindString(compact)
+			unit := strings.TrimPrefix(compact, number)
+			units[unit] = append(units[unit], number)
+		}
+		return units
+	}
+	before, after := collect(source), collect(translated)
+	if len(before) != len(after) {
+		return false
+	}
+	for unit, numbers := range before {
+		candidates, ok := after[unit]
+		if !ok || len(numbers) != len(candidates) {
+			return false
+		}
+		matched, _ := compareAICopyNumbers(strings.Join(numbers, " "), strings.Join(candidates, " "))
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 func parseAICopyTranslation(content, source string) (aiCopyTranslation, bool) {
 	var result aiCopyTranslation
 	if !strictAICopyJSON(content, &result) || !validateAICopyList(result.ReviewTerms, 0, 20, 120) {
@@ -376,18 +407,25 @@ func parseAICopyTranslation(content, source string) (aiCopyTranslation, bool) {
 	}
 	result.Spanish, result.Portuguese = norm.NFC.String(result.Spanish), norm.NFC.String(result.Portuguese)
 	paragraphs := len(aiCopyParagraph.FindAllString(strings.TrimSpace(source), -1))
+	var numberReview []string
 	for _, text := range []string{result.Spanish, result.Portuguese} {
 		matched, notes := compareAICopyNumbers(source, text)
 		if !validAICopyText(text, 20000, true) || !matched ||
-			!sameAICopyTerms(source, text, aiCopyModels, false) || !sameAICopyTerms(source, text, aiCopyUnits, true) ||
+			!sameAICopyTerms(source, text, aiCopyModels, false) || !sameAICopyQuantities(source, text) ||
 			len(aiCopyParagraph.FindAllString(strings.TrimSpace(text), -1)) != paragraphs {
 			return result, false
 		}
-		result.ReviewTerms = append(result.ReviewTerms, notes...)
+		for _, note := range notes {
+			if !slices.Contains(numberReview, note) {
+				numberReview = append(numberReview, note)
+			}
+		}
 	}
-	if len(result.ReviewTerms) > 20 {
+	// Numeric ambiguity must not be silently dropped when the model returns 20 review terms.
+	if len(numberReview) > 20 {
 		return result, false
 	}
+	result.ReviewTerms = append(numberReview, result.ReviewTerms[:min(len(result.ReviewTerms), 20-len(numberReview))]...)
 	return result, true
 }
 

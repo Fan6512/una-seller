@@ -146,7 +146,12 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           onClick={()=>void copyListingText(value.descriptions?.[activeLanguage]??"","详情")}>复制详情</button>
       </div>
     </fieldset>
-    {aiProduct&&<AICopyPanel product={aiProduct} value={value} saved={aiSaved} disabled={disabled} onAdoptPoints={points=>set("bullet_points",points)} onAdopt={(field,lang,text,sourceDigest)=>{
+    {aiProduct&&<AICopyPanel product={aiProduct} value={value} saved={aiSaved} disabled={disabled} onAdoptPoints={points=>{
+      if(value.bullet_points.some(text=>text.trim()) &&
+        JSON.stringify(value.bullet_points)!==JSON.stringify(points) &&
+        !window.confirm("采纳 AI 卖点会替换当前全部商品卖点，是否继续？"))return;
+      set("bullet_points",points);
+    }} onAdopt={(field,lang,text,sourceDigest)=>{
       if(field==="descriptions"){
         setLocalizedDescription(lang,text,sourceDigest);
         return;
