@@ -140,9 +140,13 @@ test("optional localized descriptions round-trip independently as multiline plai
   const fields = initialListingFields({ ...legacy, descriptions: stored });
   assert.deepEqual(fields.descriptions, stored);
   assert.equal(validateListingFields(fields), "");
-  for (const invalid of ["<p>Hola</p>", "**Hola**", "# Hola", "- Hola", "[Hola](https://example.com)", "\x00"]) {
+  for (const invalid of ["<p>Hola</p>", "**Hola**", "# Hola", "[Hola](https://example.com)", "\x00"]) {
     fields.descriptions.es = invalid;
     assert.match(validateListingFields(fields), /纯文本/);
+  }
+  for (const normal of ["- Hola", "1. Package includes two pieces", "10 * 20 * 30 cm"]) {
+    fields.descriptions.es = normal;
+    assert.equal(validateListingFields(fields), "");
   }
   fields.descriptions.es = "Para guardar.";
   fields.descriptions.pt += "🧪";
