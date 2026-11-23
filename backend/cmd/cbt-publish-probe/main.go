@@ -20,9 +20,11 @@ const (
 )
 
 var (
-	userIDFormat   = regexp.MustCompile("^[1-9][0-9]{0,19}$")
-	siteIDFormat   = regexp.MustCompile("^[A-Z]{3}$")
-	safeEnumFormat = regexp.MustCompile("^[a-z][a-z0-9_]{0,31}$")
+	userIDFormat        = regexp.MustCompile("^[1-9][0-9]{0,19}$")
+	siteIDFormat        = regexp.MustCompile("^[A-Z]{3}$")
+	safeEnumFormat      = regexp.MustCompile("^[a-z][a-z0-9_]{0,31}$")
+	businessModelFormat = regexp.MustCompile("^[A-Za-z][A-Za-z0-9 _-]{0,47}$")
+	identityEnumFormat  = regexp.MustCompile("^(user|seller|account)[_-]?[0-9]+$")
 )
 
 type accountEvidence struct {
@@ -114,7 +116,7 @@ func probe(client *http.Client, base, token string) (accountEvidence, error) {
 			SellerAlias:   alias,
 			SiteID:        entry.SiteID,
 			LogisticType:  knownValue(entry.LogisticType, "remote", "fulfillment", "cross_docking", "self_service"),
-			BusinessModel: knownValue(entry.BusinessModel, "CBT CN Fulfillment Managed"),
+			BusinessModel: knownBusinessModel(entry.BusinessModel),
 			PricingModel:  knownValue(entry.PricingModel, "net_proceeds", "listing_price", "price"),
 			UserProduct:   capabilityStatus(entry.UserProduct),
 		})
@@ -144,22 +146,34 @@ func tagStatus(tags []string, tag string) string {
 }
 
 func knownValue(value string, known ...string) string {
+	return knownEnum(value, safeEnumFormat, known...)
+}
+
+func knownBusinessModel(value string) string {
+	return knownEnum(value, businessModelFormat, "CBT CN Fulfillment Managed")
+}
+
+func knownEnum(value string, shape *regexp.Regexp, known ...string) string {
 	if slices.Contains(known, value) {
 		return value
 	}
 	if value == "" {
 		return unverified
 	}
-	// Preserve only short, enum-shaped configuration values. Never echo free-form data or secrets.
-	if safeEnumFormat.MatchString(value) {
-		for _, sensitive := range []string{"token", "secret", "email", "account", "seller", "user", "password", "apikey"} {
-			if strings.Contains(value, sensitive) {
-				return "unrecognized"
-			}
-		}
-		return "unrecognized:" + value
+	if !shape.MatchString(value) || identityEnumFormat.MatchString(strings.ToLower(value)) {
+		return "unrecognized"
 	}
-	return "unrecognized"
+	// Only emit small, structured enum values. Redact possible secrets and identity keys.
+	compact := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(value))
+	for _, sensitive := range []string{
+		"token", "secret", "password", "apikey", "accesskey", "email", "credential",
+		"private", "bearer", "authorization", "sellerid", "userid", "accountid",
+	} {
+		if strings.Contains(compact, sensitive) {
+			return "unrecognized"
+		}
+	}
+	return "unrecognized:" + value
 }
 
 func readJSON(client *http.Client, base, path, label, token string, out any) error {

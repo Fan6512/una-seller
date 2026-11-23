@@ -158,6 +158,29 @@ func TestProbeEnumAndNumericIDs(t *testing.T) {
 	}
 }
 
+func TestProbeBusinessModelValuesAndSensitiveEnumRedaction(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  string
+	}{
+		{"", unverified},
+		{"CBT CN Fulfillment Managed", "CBT CN Fulfillment Managed"},
+		{"CBT CN Fulfillment Non-Managed", "unrecognized:CBT CN Fulfillment Non-Managed"},
+		{"seller_managed", "unrecognized:seller_managed"},
+		{"user_defined_price", "unrecognized:user_defined_price"},
+		{"CBT CN API Key", "unrecognized"},
+		{"user_id_12345", "unrecognized"},
+		{"CBT CN private-token", "unrecognized"},
+		{"CBT CN Fulfillment\nNon-Managed", "unrecognized"},
+		{"https://example.com", "unrecognized"},
+		{strings.Repeat("X", 49), "unrecognized"},
+	} {
+		if got := knownBusinessModel(tc.value); got != tc.want {
+			t.Errorf("business_model %q: got %q, want %q", tc.value, got, tc.want)
+		}
+	}
+}
+
 func TestProbeStopsOnInvalidAccountEvidence(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
