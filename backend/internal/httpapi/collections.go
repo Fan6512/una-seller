@@ -21,6 +21,8 @@ type collectionAPI struct {
 func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier, stores ...*meli.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
+	// Public, read-only signed updater manifest. No account or store tokens involved.
+	mux.HandleFunc("/api/v1/desktop/updates", desktopUpdaterHandler(nil, desktopReleasesURL))
 	api := collectionAPI{store: store, verifier: verifier}
 	mux.HandleFunc("/api/v1/collections", api.collections)
 	mux.HandleFunc("/api/v1/collections/", api.detail)
