@@ -77,7 +77,7 @@ go run ./cmd/api cbt-categories update -max-batches 50
 
 - 命令优先检查官方时间和 MD5。相同版本已完成时跳过翻译。新版本继续使用 ID、名称及完整路径都匹配的译文。运行中断后执行相同命令，从已保存的批次续跑。
 - Provider 已配置且更新暂停时，API 继续读取有效词典。关闭 Provider 时，验证通过的新官方版本可原子发布，未译名称显示原文。停用和已移除类目供历史阅读，已知不可上市的类目从新预测候选排除。
-- 命令输出 JSON。 `official` 是当前 Dump 的类目数，`disabled` 和 `removed` 分别是停用与已移除数量，`translated` 是已有译名数量，`unchanged` 是确认沿用原名数量，`failed` 与 `unprocessed` 分别是失败待重试、尚未处理数量。查看 `published` 和 `state` 判断本次执行是否发布，或是否仅保存了进度。
+- 命令输出 JSON。 `official` 是当前 Dump 的类目数，`disabled` 和 `removed` 分别是停用与已移除数量，`translated` 是已有译名数量，`unchanged` 是确认沿用原名数量，`failed` 与 `unprocessed` 分别是失败待重试、尚未处理数量；`skipped` 是确定无法构造安全翻译输入而暂时保留官方英文的数量，`skip_samples` 最多提供 20 条类目 ID 与原因。`skipped` 不阻止其他已翻译类目发布，后续同版本更新仍可尝试补译，失败的外部翻译请求不会记作 `skipped`。查看 `published` 和 `state` 判断本次执行是否发布，或是否仅保存了进度。
 - 需要人工调整时，在该目录写入 UTF-8 的 `overrides.json`，按下例保留官方 ID 与完整路径。新版本改名或移动时旧人工译名留在文件中，只有路径仍匹配时才生效。
 
 ```json

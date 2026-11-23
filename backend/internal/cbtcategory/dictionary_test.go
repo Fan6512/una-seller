@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const version1 = "2026-10-14T21:12:35.000Z"
@@ -314,7 +315,7 @@ func TestSkippedCategoryDoesNotBlockAndCanBeRetried(t *testing.T) {
 		t.Fatalf("skipped leaf must not stop publication: %+v %v", result, err)
 	}
 	result, err = update(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all", translate, 0)
-	if err != nil || result.Published || result.Skipped != 1 || result.State == "unchanged_with_all_translated" {
+	if err != nil || result.Published || result.Skipped != 1 || result.Failed != 0 || result.Unprocessed != 0 {
 		t.Fatalf("skipped must remain visible and retryable: %+v %v", result, err)
 	}
 }
@@ -340,5 +341,85 @@ func TestSpecialSeparatorFallsBackToLeaf(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing same-name leaf")
+	}
+}
+
+func TestDictionaryFallbackForFullWidthAndLongAncestors(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		path []PathNode
+		want string
+		segments int
+	}{
+		{
+			name: "full width separator",
+			path: []PathNode{{ID: "CBT700", Name: "Home｜House"}, {ID: "CBT701", Name: "Other"}},
+			want: "Other", segments: 1,
+		},
+		{
+			name: "long ancestor",
+			path: []PathNode{{ID: "CBT700", Name: strings.Repeat("A", 501)}, {ID: "CBT701", Name: "Kitchen"}, {ID: "CBT702", Name: "Other"}},
+			want: "Kitchen | Other", segments: 2,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			leaf := tt.path[len(tt.path)-1]
+			categories := map[string]category{
+				leaf.ID: {ID: leaf.ID, Name: leaf.Name, Path: tt.path, Status: "enabled"},
+				"CBT999": {ID: "CBT999", Name: "Other", Path: []PathNode{{ID: "CBT999", Name: "Other"}}, Status: "enabled"},
+			}
+			found := false
+			for _, batch := range makeBatches(snapshot{Categories: categories}, nil, nil) {
+				for _, item := range batch {
+					if slices.Contains(item.ids, leaf.ID) {
+						found = true
+						if item.text != tt.want || item.segments != tt.segments ||
+							strings.Count(item.text, " | ")+1 != item.segments {
+							t.Fatalf("unexpected fallback: %+v", item)
+						}
+					}
+				}
+			}
+			if !found {
+				t.Fatal("category was omitted")
+			}
+		})
+	}
+}
+
+func TestReaderBackoffAndChangedFileRecovery(t *testing.T) {
+	server, _ := fixtureServer(t)
+	dir := t.TempDir()
+	_, err := update(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, activeFile)
+	valid, err := loadSnapshot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := NewReader(dir)
+	if reader.Status().State != "loaded_untranslated" {
+		t.Fatalf("unexpected initial state: %+v", reader.Status())
+	}
+	if err = saveJSON(dir, activeFile, map[string]any{"bad": true}); err != nil {
+		t.Fatal(err)
+	}
+	if reader.Load().PublishedBreadcrumb("CBT101") == nil || reader.activeError != "invalid_file" ||
+		reader.activeBackoff != 5*time.Second {
+		t.Fatal("corrupted file discarded last valid snapshot or missed initial backoff")
+	}
+	retryAt := reader.activeRetryAt
+	reader.Load()
+	if !reader.activeRetryAt.Equal(retryAt) {
+		t.Fatal("unchanged corrupt file retried before backoff")
+	}
+	if err = saveJSON(dir, activeFile, valid); err != nil {
+		t.Fatal(err)
+	}
+	if reader.Load().PublishedBreadcrumb("CBT101") == nil || reader.activeError != "" ||
+		!reader.activeRetryAt.IsZero() || reader.activeBackoff != 0 {
+		t.Fatal("repaired file was not immediately reloaded")
 	}
 }

@@ -122,11 +122,14 @@ func (r *Reader) Status() ReaderStatus {
 		}
 		label := view.overrides[pathKey(item.Path)]
 		if label == "" {
-			label = view.snapshot.Categories[id].Zh
+			label = item.Zh
 		}
 		if label != "" && label != item.Name {
 			status.Translated++
 		}
+	}
+	if status.Translated == 0 {
+		status.State = "loaded_untranslated"
 	}
 	if r.activeError != "" {
 		status.State = "stale_" + r.activeError
