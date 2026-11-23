@@ -90,6 +90,9 @@ func main() {
 		}
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, cbtcategory.NewReader(dictionaryDir)), ReadHeaderTimeout: 5 * time.Second}
+	dictionary := cbtcategory.NewReader(dictionaryDir)
+	status := dictionary.Status()
+	log.Printf("CBT category dictionary: state=%s translated=%d version=%s (paths use official English if untranslated)", status.State, status.Translated, status.Version)
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, dictionary), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }

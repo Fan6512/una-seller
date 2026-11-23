@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -29,6 +30,9 @@ type Reader struct {
 	mu                       sync.Mutex
 	activeInfo, overrideInfo os.FileInfo
 	view                     View
+	activeError string
+	activeRetryAt time.Time
+	activeBackoff time.Duration
 }
 
 func NewReader(dir string) *Reader {
@@ -56,10 +60,25 @@ func (r *Reader) Load() View {
 	defer r.mu.Unlock()
 
 	path := filepath.Join(r.dir, activeFile)
-	if info, err := os.Stat(path); err == nil && fileChanged(r.activeInfo, info) {
-		if value, err := loadSnapshot(path); err == nil {
-			r.view.snapshot, r.activeInfo = value, info
+	if info, err := os.Stat(path); err == nil {
+		changed := fileChanged(r.activeInfo, info)
+		if changed || (!r.activeRetryAt.IsZero() && !time.Now().Before(r.activeRetryAt)) {
+			if value, loadErr := loadSnapshot(path); loadErr == nil {
+				r.view.snapshot, r.activeInfo = value, info
+				r.activeError, r.activeRetryAt, r.activeBackoff = "", time.Time{}, 0
+			} else {
+				r.activeInfo, r.activeError = info, "invalid_file"
+				if changed { r.activeBackoff = 0 }
+				if r.activeBackoff == 0 { r.activeBackoff = 5 * time.Second } else {
+				r.activeBackoff = min(2*r.activeBackoff, 60*time.Second)
+				}
+				r.activeRetryAt = time.Now().Add(r.activeBackoff)
+			}
 		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		r.activeError = "missing_file"
+	} else {
+		r.activeError = "stat_failed"
 	}
 	path = filepath.Join(r.dir, overrideFile)
 	if info, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
@@ -70,6 +89,34 @@ func (r *Reader) Load() View {
 		}
 	}
 	return r.view
+}
+
+
+type ReaderStatus struct {
+	State string
+	Version string
+	Translated int
+}
+
+// Status reports the currently loaded dictionary without exposing its private location.
+func (r *Reader) Status() ReaderStatus {
+	if r == nil { return ReaderStatus{State: "not_configured"} }
+	view := r.Load()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !view.snapshot.Version.valid() {
+		if r.activeError != "" { return ReaderStatus{State: r.activeError} }
+		return ReaderStatus{State: "not_initialized"}
+	}
+	status := ReaderStatus{State: "loaded", Version: view.snapshot.Version.Created}
+	for id, item := range view.snapshot.Categories {
+		if item.Status != "enabled" { continue }
+		label := view.overrides[pathKey(item.Path)]
+		if label == "" { label = view.snapshot.Categories[id].Zh }
+		if label != "" && label != item.Name { status.Translated++ }
+	}
+	if r.activeError != "" { status.State = "stale_"+r.activeError }
+	return status
 }
 
 func fileChanged(old, current os.FileInfo) bool {

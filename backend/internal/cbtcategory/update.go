@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -30,6 +31,8 @@ type Summary struct {
 	Unchanged   int     `json:"unchanged"`
 	Failed      int     `json:"failed"`
 	Unprocessed int     `json:"unprocessed"`
+	Skipped     int     `json:"skipped"`
+	SkipSamples []string `json:"skip_samples,omitempty"`
 	Batches     int     `json:"batches"`
 	Published   bool    `json:"published"`
 	State       string  `json:"state"`
@@ -39,6 +42,7 @@ type progressRecord struct {
 	Version    version           `json:"version"`
 	Translated map[string]string `json:"translated,omitempty"`
 	Failed     []string          `json:"failed,omitempty"`
+	Skipped    map[string]string `json:"skipped,omitempty"`
 }
 
 func Update(ctx context.Context, dir string, translate TranslateBatch, maxBatches int) (Summary, error) {
@@ -79,7 +83,7 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 		return Summary{}, errors.New("official CBT dump version is older than the active dictionary")
 	}
 	activeSummary := summarize(active, overrides, nil)
-	if active.Version == latest && activeSummary.Unprocessed == 0 {
+	if active.Version == latest && activeSummary.Unprocessed == 0 && activeSummary.Skipped == 0 {
 		activeSummary.State = "unchanged"
 		return activeSummary, nil
 	}
@@ -149,13 +153,16 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 			summary.Batches++
 			labels = translate(ctx, texts)
 		}
-		record := progressRecord{Version: latest, Translated: make(map[string]string)}
+		record := progressRecord{Version: latest, Translated: make(map[string]string), Skipped: make(map[string]string)}
 		for _, input := range batch {
 			label := translatedLabel(labels[input.text], input.segments)
 			for _, id := range input.ids {
-				if label == "" {
+				switch {
+				case input.text == "":
+					record.Skipped[id] = "category name exceeds safe translation input"
+				case label == "":
 					record.Failed = append(record.Failed, id)
-				} else {
+				default:
 					record.Translated[id] = label
 				}
 			}
@@ -176,6 +183,10 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 	final.Batches = summary.Batches
 	if final.Failed+final.Unprocessed > 0 {
 		final.State = "paused"
+		return final, nil
+	}
+	if reflect.DeepEqual(active, staged) {
+		final.Published, final.State = false, "unchanged"
 		return final, nil
 	}
 	if err = saveJSON(dir, activeFile, staged); err != nil {
@@ -224,10 +235,16 @@ func summarize(current snapshot, overrides map[string]string, failed map[string]
 			out.Translated++
 		case failed[id]:
 			out.Failed++
+		case current.Skipped[id] != "":
+			out.Skipped++
+			if len(out.SkipSamples) < 20 {
+				out.SkipSamples = append(out.SkipSamples, id+": "+current.Skipped[id])
+			}
 		default:
 			out.Unprocessed++
 		}
 	}
+	slices.Sort(out.SkipSamples)
 	for id := range current.Retired {
 		if _, found := current.Categories[id]; !found {
 			out.Removed++
@@ -277,17 +294,28 @@ func applyProgress(staged snapshot, failed map[string]bool, record progressRecor
 	if staged.Version != record.Version {
 		return
 	}
+	if staged.Skipped == nil {
+		staged.Skipped = make(map[string]string)
+	}
 	for id, label := range record.Translated {
 		item, found := staged.Categories[id]
 		if found && validName(label) {
 			item.Zh = label
 			staged.Categories[id] = item
 			delete(failed, id)
+			delete(staged.Skipped, id)
+		}
+	}
+	for id, reason := range record.Skipped {
+		if item, found := staged.Categories[id]; found && item.Zh == "" {
+			staged.Skipped[id] = reason
+			delete(failed, id)
 		}
 	}
 	for _, id := range record.Failed {
 		if item, found := staged.Categories[id]; found && item.Zh == "" {
 			failed[id] = true
+			delete(staged.Skipped, id)
 		}
 	}
 }
@@ -327,13 +355,19 @@ func makeBatches(current snapshot, overrides map[string]string, failed map[strin
 			for i, node := range item.Path {
 				parts[i] = node.Name
 			}
-			text, segments = strings.Join(parts, " | "), len(parts)
-			if strings.Count(text, "|") != segments-1 || strings.ContainsRune(text, '｜') {
-				text = ""
+			// Try the complete path, then progressively remove oldest ancestors.
+			// Fall back to the leaf without reusing a different path's context.
+			for start := 0; start < len(parts)-1; start++ {
+				candidate := strings.Join(parts[start:], " | ")
+				if strings.Count(candidate, "|") == len(parts)-start-1 &&
+					!strings.ContainsRune(candidate, '｜') && utf8.RuneCountInString(candidate) <= 500 {
+					text, segments = candidate, len(parts)-start
+					break
+				}
 			}
 		}
 		if utf8.RuneCountInString(text) > 500 {
-			text = ""
+			text, segments = "", 1
 		}
 		if index, found := inputIndex[text]; found {
 			inputs[index].ids = append(inputs[index].ids, id)

@@ -53,6 +53,7 @@ type snapshot struct {
 	Version    version               `json:"version"`
 	Categories map[string]category   `json:"categories"`
 	Retired    map[string][]category `json:"retired,omitempty"`
+	Skipped    map[string]string     `json:"skipped,omitempty"`
 }
 
 type dumpNode struct {

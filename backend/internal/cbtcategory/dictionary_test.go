@@ -288,3 +288,41 @@ func TestDictionarySingleWriterLockAndReaderKeepsLastValidSnapshot(t *testing.T)
 		t.Fatal("writer accepted corrupt active dictionary as an empty one")
 	}
 }
+
+
+func TestSkippedCategoryDoesNotBlockAndCanBeRetried(t *testing.T) {
+	server, latest := fixtureServer(t)
+	dir := t.TempDir()
+	tree := fixtureTree()
+	long := strings.Repeat("L", 501)
+	path := []PathNode{{ID: "CBT300", Name: long}}
+	tree["CBT300"] = fixtureNode(path, nil, "enabled")
+	latest.Store(generatedVersion(t, version1, tree))
+	translate := func(_ context.Context, texts []string) map[string]string {
+		out := make(map[string]string)
+		for _, text := range texts { out[text] = "中文" }
+		return out
+	}
+	result, err := update(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all", translate, 0)
+	if err != nil || result.State != "published" || !result.Published || result.Skipped != 1 || result.Failed != 0 || result.Unprocessed != 0 {
+		t.Fatalf("skipped leaf must not stop publication: %+v %v", result, err)
+	}
+	result, err = update(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all", translate, 0)
+	if err != nil || result.Published || result.Skipped != 1 || result.State == "unchanged_with_all_translated" {
+		t.Fatalf("skipped must remain visible and retryable: %+v %v", result, err)
+	}
+}
+
+func TestSpecialSeparatorFallsBackToLeaf(t *testing.T) {
+	tree := fixtureTree()
+	path := []PathNode{{ID:"CBT900",Name:"Out | doors"}, {ID:"CBT901",Name:"Other"}}
+	tree["CBT900"] = category{ID:"CBT900", Name:"Out | doors", Path:path[:1], Status:"enabled"}
+	tree["CBT901"] = category{ID:"CBT901", Name:"Other", Path:path, Status:"enabled"}
+	inputs := makeBatches(snapshot{Categories:tree}, nil, nil)
+	found := false
+	for _, batch := range inputs { for _, item := range batch { if slices.Contains(item.ids, "CBT901") {
+		found = true
+		if item.text != "Other" || item.segments != 1 {t.Fatalf("bad fallback: %+v", item)}
+	}}}
+	if !found { t.Fatal("missing same-name leaf") }
+}
