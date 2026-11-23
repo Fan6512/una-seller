@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
@@ -24,10 +25,14 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 	if len(stores) != 0 {
 		service = stores[0]
 	}
-	return HandlerWithServices(store, verifier, service, nil)
+	return HandlerWithServices(store, verifier, service, nil, nil)
 }
 
-func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, aiCopy ...*AICopyService) http.Handler {
+func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, aiCopy *AICopyService) http.Handler {
+	return HandlerWithCategoryDictionary(store, verifier, storeService, translator, nil, aiCopy)
+}
+
+func HandlerWithCategoryDictionary(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, dictionary *cbtcategory.Reader, aiCopy *AICopyService) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
 	// Public, read-only signed updater manifest. No account or store tokens involved.
@@ -37,15 +42,11 @@ func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, st
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	mux.HandleFunc("/api/v1/products", api.ownProducts)
 	mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
-	var copyService *AICopyService
-	if len(aiCopy) > 0 {
-		copyService = aiCopy[0]
-	}
-	mux.HandleFunc("/api/v1/products/ai-copy", api.aiCopyHandler(copyService))
-	s := storeAPI{auth: api, service: storeService, translator: translator}
+	mux.HandleFunc("/api/v1/products/ai-copy", api.aiCopyHandler(aiCopy))
+	s := storeAPI{auth: api, service: storeService, translator: translator, categoryDictionary: dictionary}
 	if translator != nil {
-		s.localizeCategory = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
-			return translator.translate(ctx, categoryTranslationSource(rules.CategoryID), categoryTranslationTexts(rules))
+		s.localizeCategoryAttributes = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
+			return translator.translate(ctx, categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules))
 		}
 	}
 	mux.HandleFunc("/api/v1/stores/order-title-translations", s.orderTitleTranslations)

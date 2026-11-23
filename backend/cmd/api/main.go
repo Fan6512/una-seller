@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/httpapi"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
@@ -15,6 +16,14 @@ import (
 )
 
 func main() {
+	translator := configuredTranslator()
+	dictionaryDir := os.Getenv("CBT_CATEGORY_DICTIONARY_DIR")
+	if len(os.Args) > 1 && os.Args[1] == "cbt-categories" {
+		if err := updateCBTCategories(os.Args[2:], dictionaryDir, translator); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	// Bind to loopback in both local and cloud mode; public HTTPS is served by Nginx.
 	const addr = "127.0.0.1:8787"
 	local, err := loadLocalAPIConfig()
@@ -42,7 +51,7 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 {
-		log.Fatal("usage: api [migrate]")
+		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N]]")
 	}
 	if os.Getenv("UNA_SELLER_CLOUD") == "1" && (dsn == "" || supabaseURL == "" || publishableKey == "") {
 		log.Fatal("cloud API requires DATABASE_URL, SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY")
@@ -81,13 +90,13 @@ func main() {
 		}
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
-	translator := httpapi.NewTranslationService(os.Getenv("TRANSLATION_PROVIDER"),
-		os.Getenv("AZURE_TRANSLATOR_KEY"), os.Getenv("AZURE_TRANSLATOR_REGION"),
-		os.Getenv("BAIDU_TRANSLATE_APP_ID"), os.Getenv("BAIDU_TRANSLATE_SECRET"))
+	dictionary := cbtcategory.NewReader(dictionaryDir)
+	status := dictionary.Status()
+	log.Printf("CBT category dictionary: state=%s translated=%d version=%s (paths use official English if untranslated)", status.State, status.Translated, status.Version)
 	aiCopy, err := httpapi.NewAICopyService(os.Getenv("AI_BASE_URL"), os.Getenv("AI_API_KEY"), os.Getenv("AI_MODEL"))
 	if err != nil {
-		log.Print(err)
+		log.Printf("AI listing copy disabled: %v", err)
 	}
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithServices(store, verifier, meliService, translator, aiCopy), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, dictionary, aiCopy), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }
