@@ -40,9 +40,9 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   };
   const setLocalizedDescription=(lang:"en"|"es"|"pt", text:string, sourceDigest?:string)=>{
     const descriptions={en:"",es:"",pt:"",...value.descriptions,[lang]:text};
-    if(lang!=="en" && sourceDigest) {
+    if(lang!=="en") {
       onChange({...value,descriptions,description_translation:{
-        ...value.description_translation,[`${lang}_source_digest`]:sourceDigest,
+        ...value.description_translation,[`${lang}_source_digest`]:sourceDigest??"",
       }});
     } else {
       set("descriptions",descriptions);

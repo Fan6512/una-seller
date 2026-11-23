@@ -225,7 +225,7 @@ func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, e
 			*locale.manual = false
 			continue
 		}
-		if locale.proposal != "" && locale.proposal != *locale.source {
+		if locale.proposal != "" {
 			if locale.proposal != savedDigest || locale.proposal != current.EnglishDigest {
 				return nil, ErrInvalidTranslationSource
 			}
