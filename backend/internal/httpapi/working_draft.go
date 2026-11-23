@@ -67,7 +67,7 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 			})
 		} else if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, http.StatusConflict, "working draft updated; reload before saving")
-		} else if errors.Is(err, collections.ErrLocalizedTitleTooLong) {
+		} else if errors.Is(err, collections.ErrLocalizedTitleTooLong) || errors.Is(err, collections.ErrInvalidTranslationSource) {
 			writeError(w, http.StatusBadRequest, err.Error())
 		} else if err != nil {
 			writeError(w, http.StatusInternalServerError, "working draft not saved")

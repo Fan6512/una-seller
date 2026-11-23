@@ -129,7 +129,8 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       <span>{loadState === "loading" ? "读取中…" : loadState === "error" ? "状态未知 · 保存禁用"
         : saved ? (dirty ? "有未保存修改" : "已保存") : "尚未保存"}</span>
     </div>
-    <ListingFieldsEditor value={fields.listing_fields} disabled={!editable} aiProduct={{source_product_id:collectionId}}
+    <ListingFieldsEditor value={fields.listing_fields} disabled={!editable}
+      aiProduct={{source_product_id:collectionId,expected_revision:revision}} aiSaved={saved?.listing_fields}
       onChange={listing_fields=>{
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
         setTouched(true);setNotice("");

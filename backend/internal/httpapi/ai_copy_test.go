@@ -18,7 +18,10 @@ import (
 	"github.com/Fan6512/una-seller/backend/migrations"
 )
 
-const aiCopyFixture = `{"titles":{"en":"Glass cup","es":"Taza de vidrio","pt":"Copo de vidro"},"descriptions":{"en":"A glass cup.\n\nFor use at home.","es":"Una taza de vidrio.","pt":"Um copo de vidro."},"selling_points":{"en":["Made of glass"],"es":["De vidrio"],"pt":["De vidro"]},"missing_facts":["Capacity", "Dimensions"]}`
+const aiTitleFixture = `{"titles":{"en":"Glass cup","es":"Taza de vidrio","pt":"Copo de vidro"}}`
+const aiEnglishFixture = `{"description":"A glass cup.\n\nFor use at home.","selling_points":["Made of glass"],"missing_facts":["Capacity", "Dimensions"]}`
+const aiSavedEnglish = "Glass cup, model A12.\n\nCapacity 250 mL."
+const aiTranslateFixture = `{"es":"Taza de vidrio, modelo A12.\n\nCapacidad de 250 mL.","pt":"Copo de vidro, modelo A12.\n\nCapacidade de 250 mL.","review_terms":["A12"]}`
 
 func mockAICompletion(w http.ResponseWriter, content string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{
@@ -28,43 +31,65 @@ func mockAICompletion(w http.ResponseWriter, content string) {
 
 func TestAICopyValidatesStructuredOutput(t *testing.T) {
 	nfc := strings.Repeat("e\u0301", 59) + "!"
-	content := strings.Replace(aiCopyFixture, "Taza de vidrio", nfc, 1)
-	candidate, err := parseAICopy(content)
-	if err != nil || utf8.RuneCountInString(candidate.Titles.Spanish) != 60 ||
-		candidate.Titles.Spanish != strings.Repeat("é", 59)+"!" ||
-		candidate.Descriptions.English != "A glass cup.\n\nFor use at home." ||
-		len(candidate.SellingPoints.Portuguese) != 1 || len(candidate.MissingFacts) != 2 {
-		t.Fatalf("unexpected candidate: %+v, %v", candidate, err)
+	content := strings.Replace(aiTitleFixture, "Taza de vidrio", nfc, 1)
+	candidate, ok := parseAICopyTitles(content)
+	if !ok || utf8.RuneCountInString(candidate.Titles.Spanish) != 60 ||
+		candidate.Titles.Spanish != strings.Repeat("é", 59)+"!" {
+		t.Fatalf("unexpected title candidate: %+v", candidate)
 	}
 	for name, input := range map[string]string{
-		"trailing JSON":     aiCopyFixture + "{}",
-		"missing facts":     strings.Replace(aiCopyFixture, `,"missing_facts":["Capacity", "Dimensions"]`, "", 1),
-		"null facts":        strings.Replace(aiCopyFixture, `["Capacity", "Dimensions"]`, "null", 1),
-		"blank fact":        strings.Replace(aiCopyFixture, "Capacity", "  ", 1),
-		"repeated fact":     strings.Replace(aiCopyFixture, "Dimensions", "capacity", 1),
-		"nonstring fact":    strings.Replace(aiCopyFixture, `"Capacity"`, `{"name":"capacity"}`, 1),
-		"invalid surrogate": strings.Replace(aiCopyFixture, "Capacity", `\uD800`, 1),
-		"HTML":              strings.Replace(aiCopyFixture, "Una taza de vidrio.", "<b>Una taza</b>", 1),
-		"Markdown":          strings.Replace(aiCopyFixture, "Una taza de vidrio.", "**Una taza**", 1),
-		"external link":     strings.Replace(aiCopyFixture, "A glass cup.", "Buy at store.example.com", 1),
-		"email address":     strings.Replace(aiCopyFixture, "A glass cup.", "seller@example.com", 1),
-		"phone number":      strings.Replace(aiCopyFixture, "A glass cup.", "Call +1 (555) 555-0100", 1),
-		"promotion":         strings.Replace(aiCopyFixture, "A glass cup.", "Free shipping", 1),
-		"duplicate key":     strings.Replace(aiCopyFixture, `"es":"Taza`, `"es":"Uno","es":"Taza`, 1),
-		"wrong casing":      strings.Replace(aiCopyFixture, `"titles"`, `"Titles"`, 1),
-		"unexpected field":  strings.Replace(aiCopyFixture, `"titles":`, `"additional":true,"titles":`, 1),
-		"missing locale":    strings.Replace(aiCopyFixture, `,"pt":"Copo de vidro"`, "", 1),
-		"no selling points": strings.Replace(aiCopyFixture, `["Made of glass"]`, "[]", 1),
+		"trailing JSON":    aiTitleFixture + "{}",
+		"duplicate key":    strings.Replace(aiTitleFixture, `"es":"Taza`, `"es":"Uno","es":"Taza`, 1),
+		"wrong casing":     strings.Replace(aiTitleFixture, `"titles"`, `"Titles"`, 1),
+		"unexpected field": strings.Replace(aiTitleFixture, `"titles":`, `"additional":true,"titles":`, 1),
+		"missing locale":   strings.Replace(aiTitleFixture, `,"pt":"Copo de vidro"`, "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := parseAICopy(input); !errors.Is(err, errAICopyResponse) {
-				t.Fatalf("invalid output accepted: %v", err)
+			if _, ok := parseAICopyTitles(input); ok {
+				t.Fatal("invalid title accepted")
 			}
 		})
 	}
-	emptyFacts := strings.Replace(aiCopyFixture, `["Capacity", "Dimensions"]`, "[]", 1)
-	if result, err := parseAICopy(emptyFacts); err != nil || result.MissingFacts == nil {
-		t.Fatalf("explicit empty missing facts rejected: %v", err)
+	for name, input := range map[string]string{
+		"missing facts":     strings.Replace(aiEnglishFixture, `,"missing_facts":["Capacity", "Dimensions"]`, "", 1),
+		"null facts":        strings.Replace(aiEnglishFixture, `["Capacity", "Dimensions"]`, "null", 1),
+		"blank fact":        strings.Replace(aiEnglishFixture, "Capacity", "  ", 1),
+		"repeated fact":     strings.Replace(aiEnglishFixture, "Dimensions", "capacity", 1),
+		"nonstring fact":    strings.Replace(aiEnglishFixture, `"Capacity"`, `{"name":"capacity"}`, 1),
+		"invalid surrogate": strings.Replace(aiEnglishFixture, "Capacity", `\uD800`, 1),
+		"HTML":              strings.Replace(aiEnglishFixture, "A glass cup.", "<b>A cup</b>", 1),
+		"Markdown":          strings.Replace(aiEnglishFixture, "A glass cup.", "**A cup**", 1),
+		"external link":     strings.Replace(aiEnglishFixture, "A glass cup.", "Buy at store.example.com", 1),
+		"email address":     strings.Replace(aiEnglishFixture, "A glass cup.", "seller@example.com", 1),
+		"phone number":      strings.Replace(aiEnglishFixture, "A glass cup.", "Call +1 (555) 555-0100", 1),
+		"promotion":         strings.Replace(aiEnglishFixture, "A glass cup.", "Free shipping", 1),
+		"no selling points": strings.Replace(aiEnglishFixture, `["Made of glass"]`, "[]", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := parseAICopyEnglish(input); ok {
+				t.Fatal("invalid English candidate accepted")
+			}
+		})
+	}
+	emptyFacts := strings.Replace(aiEnglishFixture, `["Capacity", "Dimensions"]`, "[]", 1)
+	if result, ok := parseAICopyEnglish(emptyFacts); !ok || result.MissingFacts == nil ||
+		result.Description != "A glass cup.\n\nFor use at home." || len(result.SellingPoints) != 1 {
+		t.Fatal("valid English-only candidate rejected")
+	}
+	if result, ok := parseAICopyTranslation(aiTranslateFixture, aiSavedEnglish); !ok || len(result.ReviewTerms) != 1 {
+		t.Fatal("faithful translation with an uncertain model term rejected")
+	}
+	for _, input := range []string{
+		strings.Replace(aiTranslateFixture, "250 mL", "500 mL", 1),
+		strings.Replace(aiTranslateFixture, "A12", "A10", 1),
+		strings.Replace(aiTranslateFixture, "A12", "B12", 1),
+		strings.Replace(aiTranslateFixture, "250 mL", "250 cm", 1),
+		strings.Replace(aiTranslateFixture, `\n\n`, " ", 1),
+		strings.Replace(aiTranslateFixture, `,"review_terms":["A12"]`, "", 1),
+	} {
+		if _, ok := parseAICopyTranslation(input, aiSavedEnglish); ok {
+			t.Fatal("translation with changed numbers, paragraphs or missing fields accepted")
+		}
 	}
 }
 
@@ -90,7 +115,7 @@ func TestAICopyProviderResponseBoundsAndRedirect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := service.generate(t.Context(), aiCopyFacts{}); !errors.Is(err, errAICopyResponse) {
+		if _, err := service.complete(t.Context(), aiCopyTitlesPrompt, aiCopyFacts{}); !errors.Is(err, errAICopyResponse) {
 			t.Fatalf("%s response accepted: %v", scenario, err)
 		}
 	}
@@ -101,6 +126,40 @@ func TestAICopyProviderResponseBoundsAndRedirect(t *testing.T) {
 		if service, err := NewAICopyService(base, "synthetic", "mock"); service != nil || err == nil {
 			t.Fatal("invalid provider configuration accepted")
 		}
+	}
+}
+
+func TestAICopyConcurrencyAndCooldown(t *testing.T) {
+	service, err := NewAICopyService("https://provider.example/v1", "test-key", "mock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	first, ok := service.acquire("owner-1", now)
+	if !ok {
+		t.Fatal("first request rejected")
+	}
+	if _, ok := service.acquire("owner-1", now.Add(2*aiCopyInterval)); ok {
+		t.Fatal("same owner entered while a request was still active")
+	}
+	for _, owner := range []string{"owner-2", "owner-3"} {
+		release, ok := service.acquire(owner, now)
+		if !ok {
+			t.Fatal("global cap rejected an available slot")
+		}
+		defer release()
+	}
+	if _, ok := service.acquire("owner-4", now); ok {
+		t.Fatal("global cap was exceeded")
+	}
+	first()
+	if _, ok := service.acquire("owner-1", now.Add(aiCopyInterval-time.Millisecond)); ok {
+		t.Fatal("same owner bypassed the minimum request interval")
+	}
+	if next, ok := service.acquire("owner-1", now.Add(aiCopyInterval)); !ok {
+		t.Fatal("release or cooldown did not allow retry")
+	} else {
+		next()
 	}
 }
 
@@ -137,7 +196,28 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fields := collections.ListingFields{
+		Titles: collections.LocalizedTitles{English: "Saved glass cup"},
+		Brand:  "Original Brand", Model: "A12", SellerSKU: "CUP-A12", CategoryID: "CBT1",
+		WeightG: "120", LengthCM: "5.5", BulletPoints: []string{"Glass body", "note@example.com"},
+		Attributes: []collections.ListingAttribute{{Name: "Material", Value: "glass"}},
+		CategoryAttributes: &[]collections.ListingCategoryAttribute{
+			{CategoryID: "CBT1", ID: "CAPACITY", Value: "250", UnitID: "mL"},
+			{CategoryID: "CBT2", ID: "HISTORIC", Value: "HISTORICAL_DATA"},
+		},
+		Variants: &[]collections.ListingVariant{{
+			SellerSKU: "CUP-A12-B", Attributes: map[string]string{"Color": "Blue"},
+			Price: "19.99", Currency: "CNY", ImageURLs: []string{"https://example.com/private-image"},
+		}},
+	}
+	createdDraft, err := store.SaveWorkingDraft(ctx, owner, source.ID, collections.WorkingDraftInput{
+		Title: "Saved glass cup", Notes: "PRIVATE notes", ListingFields: &fields,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var calls atomic.Int32
+	var providerMode atomic.Int32
 	started, cancelled := make(chan struct{}), make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -157,28 +237,63 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 			w.WriteHeader(400)
 			return
 		}
-		facts := request.Messages[1].Content
-		if strings.Contains(facts, source.ID) || strings.Contains(facts, "PRIVATE") || strings.Contains(facts, owner) ||
-			!strings.Contains(facts, "glass") || !strings.Contains(request.Messages[0].Content, "Do not invent") {
-			t.Error("AI received non-allowlisted data or omitted factual inputs")
-		}
-		switch {
-		case strings.Contains(facts, "Cancel"):
+		switch providerMode.Load() {
+		case 1:
 			close(started)
 			<-r.Context().Done()
 			close(cancelled)
-		case strings.Contains(facts, "Timeout"):
+			return
+		case 2:
 			<-r.Context().Done()
-		case strings.Contains(facts, "Unavailable"):
+			return
+		case 3:
 			http.Error(w, "synthetic-provider-key PRIVATE error", http.StatusTooManyRequests)
+			return
+		}
+		facts := request.Messages[1].Content
+		prompt := request.Messages[0].Content
+		if prompt == aiCopyTranslationPrompt {
+			var exact map[string]string
+			if json.Unmarshal([]byte(facts), &exact) != nil || len(exact) != 1 || exact["english_description"] != aiSavedEnglish {
+				t.Error("translation did not use the exact saved English text as its only input")
+			}
+			mockAICompletion(w, aiTranslateFixture)
+			return
+		}
+		for _, banned := range []string{source.ID, owner, "PRIVATE", "HISTORICAL_DATA", "note@", "https://", "19.99", "CNY", "CBT2"} {
+			if strings.Contains(facts, banned) {
+				t.Error("AI received non-allowlisted data")
+			}
+		}
+		for _, required := range []string{"Original cup", "Saved glass cup", "Original Brand", "A12", "CBT1", "CAPACITY", "250", "mL", "120", "5.5", "Glass body", "Material", "glass", "CUP-A12-B", "Blue"} {
+			if !strings.Contains(facts, required) {
+				t.Errorf("AI omitted saved fact %q", required)
+			}
+		}
+		switch prompt {
+		case aiCopyTitlesPrompt:
+			mockAICompletion(w, strings.Replace(aiTitleFixture, "Taza de vidrio", strings.Repeat("é", 61), 1))
+		case aiCopyEnglishPrompt:
+			mockAICompletion(w, aiEnglishFixture)
 		default:
-			mockAICompletion(w, strings.Replace(aiCopyFixture, "Taza de vidrio", strings.Repeat("é", 61), 1))
+			t.Error("unknown AI prompt")
 		}
 	}))
 	defer upstream.Close()
 	service, err := NewAICopyService(upstream.URL+"/v1", "synthetic-provider-key", "mock")
 	if err != nil {
 		t.Fatal(err)
+	}
+	allowNext := func() {
+		t.Helper()
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		if service.active != 0 || service.owners[owner].active {
+			t.Fatal("completed AI request retained an active slot")
+		}
+		state := service.owners[owner]
+		state.next = time.Now().Add(-aiCopyInterval)
+		service.owners[owner] = state
 	}
 	handler := HandlerWithServices(store, stubVerifier{id: owner}, nil, nil, service)
 	otherHandler := HandlerWithServices(store, stubVerifier{id: other}, nil, nil, service)
@@ -195,8 +310,7 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 	const access = "Bearer synthetic-session"
 	const genPath = "/api/v1/products/ai-copy"
 	draftPath := "/api/v1/collections/" + source.ID + "/working-draft"
-	facts := `"facts":{"titles":{"en":"Glass cup","es":"","pt":""},"attributes":[{"name":"Material","value":"glass"}]}`
-	input := `{"source_product_id":"` + source.ID + `",` + facts + `}`
+	input := `{"source_product_id":"` + source.ID + `","operation":"titles","expected_revision":1}`
 	for _, test := range []struct {
 		handler                      http.Handler
 		method, origin, access, body string
@@ -207,9 +321,10 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 		{handler, "POST", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", access, input, 403},
 		{handler, "OPTIONS", origin, "", "", 204},
 		{handler, "GET", origin, access, "", 405},
-		{handler, "POST", origin, access, strings.Replace(input, `"facts":`, `"notes":"PRIVATE", "facts":`, 1), 400},
-		{handler, "POST", origin, access, strings.Replace(input, "Glass cup", "Glass cup shop@example.com", 1), 400},
-		{handler, "POST", origin, access, strings.Replace(input, "Glass cup", "Glass cup Bearer synthetic-access-token", 1), 400},
+		{handler, "POST", origin, access, strings.Replace(input, `"operation":`, `"facts":{"title":"forged"}, "operation":`, 1), 400},
+		{handler, "POST", origin, access, strings.Replace(input, `"operation":`, `"english_description":"forged", "operation":`, 1), 400},
+		{handler, "POST", origin, access, strings.Replace(input, `"expected_revision":1`, `"expected_revision":0`, 1), 409},
+		{handler, "POST", origin, access, strings.Replace(input, "titles", "translate", 1), 422},
 	} {
 		if w := call(ctx, test.handler, test.method, genPath, test.body, test.origin, test.access); w.Code != test.want {
 			t.Fatalf("%s status=%d expected=%d", test.method, w.Code, test.want)
@@ -223,18 +338,30 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 		t.Fatalf("unconfigured generation status=%d", w.Code)
 	}
 	generation := call(ctx, handler, "POST", genPath, input, origin, access)
-	var candidate aiCopyCandidate
+	var candidate aiCopyTitles
 	if generation.Code != 200 || json.Unmarshal(generation.Body.Bytes(), &candidate) != nil ||
 		utf8.RuneCountInString(candidate.Titles.Spanish) != 61 {
 		t.Fatal("valid mock response or over-limit candidate missing")
 	}
-	if draft, err := store.GetWorkingDraft(ctx, owner, source.ID); err != nil || draft != nil {
-		t.Fatalf("generate created draft fields: %v", err)
+	if w := call(ctx, handler, "POST", genPath, strings.Replace(input, "titles", "english", 1), origin, access); w.Code != 429 {
+		t.Fatalf("owner cooldown status=%d", w.Code)
+	}
+	allowNext()
+	english := call(ctx, handler, "POST", genPath, strings.Replace(input, "titles", "english", 1), origin, access)
+	var masterCandidate aiCopyEnglish
+	if english.Code != 200 || json.Unmarshal(english.Body.Bytes(), &masterCandidate) != nil ||
+		len(masterCandidate.MissingFacts) != 2 || strings.Contains(english.Body.String(), `"descriptions"`) {
+		t.Fatal("English-only mock response missing")
+	}
+	if draft, err := store.GetWorkingDraft(ctx, owner, source.ID); err != nil || draft == nil ||
+		draft.Revision != createdDraft.Revision || draft.ListingFields.Descriptions != nil {
+		t.Fatalf("generate created or replaced official draft fields: %v", err)
 	}
 
 	legacy := strings.Repeat("🌿", 20000)
 	draftInput := collections.WorkingDraftInput{Title: "Glass cup", Description: legacy, Notes: "PRIVATE",
-		ListingFields: &collections.ListingFields{Titles: candidate.Titles}}
+		ListingFields: &fields, ExpectedRevision: createdDraft.Revision}
+	draftInput.ListingFields.Titles.Spanish = candidate.Titles.Spanish
 	saveDraft := func(want int) {
 		t.Helper()
 		body, _ := json.Marshal(draftInput)
@@ -262,10 +389,11 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 	if err != nil || own.ListingFields.Descriptions == nil || *own.ListingFields.Descriptions != large || own.Description != legacy {
 		t.Fatalf("promotion dropped adopted or legacy description: %v", err)
 	}
-	ownInput := `{"own_product_id":"` + own.ID + `",` + facts + `}`
+	ownInput := `{"own_product_id":"` + own.ID + `","operation":"titles","expected_revision":1}`
 	if w := call(ctx, otherHandler, "POST", genPath, ownInput, origin, access); w.Code != 404 {
 		t.Fatalf("foreign own product generation status=%d", w.Code)
 	}
+	allowNext()
 	if w := call(ctx, handler, "POST", genPath, ownInput, origin, access); w.Code != 200 {
 		t.Fatalf("own product generation status=%d", w.Code)
 	}
@@ -287,16 +415,44 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 	edit.ListingFields.Titles.Portuguese = strings.Repeat("🫗", 61)
 	saveOwn(400)
 	edit.ListingFields.Titles.Portuguese = "Copo de vidro"
-	large.Spanish = "Una taza de vidrio.\n\nPara uso en casa."
+	large.English = aiSavedEnglish
 	edit.ListingFields.Descriptions = &large
+	saveOwn(200)
+	edit.ExpectedRevision++
+	translationInput := strings.Replace(strings.Replace(ownInput, "titles", "translate", 1), `"expected_revision":1`, `"expected_revision":2`, 1)
+	allowNext()
+	translation := call(ctx, handler, "POST", genPath, translationInput, origin, access)
+	var translated struct {
+		aiCopyTranslation
+		SourceDigest string `json:"source_digest"`
+	}
+	if translation.Code != 200 || json.Unmarshal(translation.Body.Bytes(), &translated) != nil ||
+		translated.SourceDigest == "" || translated.SourceDigest != collections.EnglishDescriptionDigest(aiSavedEnglish) {
+		t.Fatal("confirmed English translation missing a correct source digest")
+	}
+	large.Spanish = translated.Spanish
+	edit.ListingFields.DescriptionTranslation = &collections.DescriptionTranslation{SpanishSourceDigest: strings.Repeat("a", 64)}
+	saveOwn(400)
+	edit.ListingFields.DescriptionTranslation.SpanishSourceDigest = translated.SourceDigest
+	saveOwn(200)
+	edit.ExpectedRevision++
+	large.English = "Revised English master."
+	edit.ListingFields.DescriptionTranslation = nil
 	saveOwn(200)
 	edit.ExpectedRevision++
 	edit.ListingFields.Descriptions = nil
 	saveOwn(200)
 	saved, err := store.GetOwnProduct(ctx, owner, own.ID)
 	if err != nil || saved.ListingFields.Descriptions == nil ||
-		*saved.ListingFields.Descriptions != large || saved.Description != legacy {
-		t.Fatalf("own product descriptions did not round-trip: %v", err)
+		*saved.ListingFields.Descriptions != large || saved.Description != legacy ||
+		saved.ListingFields.DescriptionTranslation == nil ||
+		saved.ListingFields.DescriptionTranslation.SpanishSourceDigest != translated.SourceDigest ||
+		saved.ListingFields.DescriptionTranslation.EnglishDigest == translated.SourceDigest ||
+		saved.ListingFields.DescriptionTranslation.PortugueseSourceDigest != "" {
+		t.Fatalf("own product descriptions, stale source or legacy data did not round-trip: %v", err)
+	}
+	if w := call(ctx, handler, "POST", genPath, translationInput, origin, access); w.Code != 409 {
+		t.Fatalf("stale translation request status=%d", w.Code)
 	}
 	// Simulate a saved title from a version that allowed regional titles up to 500 characters.
 	legacyTitle := strings.Repeat("X", 61)
@@ -310,19 +466,30 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 	edit.ExpectedRevision++
 	edit.ListingFields.Titles.Spanish = legacyTitle + "!"
 	saveOwn(400)
-	if w := call(ctx, handler, "POST", genPath, strings.Replace(input, "Glass cup", "Unavailable glass cup", 1), origin, access); w.Code != 502 || strings.Contains(w.Body.String(), "synthetic-provider-key") || strings.Contains(w.Body.String(), "PRIVATE") {
+	allowNext()
+	providerMode.Store(3)
+	if w := call(ctx, handler, "POST", genPath, input, origin, access); w.Code != 409 {
+		t.Fatalf("stale draft generation status=%d", w.Code)
+	}
+	input = strings.Replace(input, `"expected_revision":1`, `"expected_revision":3`, 1)
+	if w := call(ctx, handler, "POST", genPath, input, origin, access); w.Code != 502 || strings.Contains(w.Body.String(), "synthetic-provider-key") || strings.Contains(w.Body.String(), "PRIVATE") {
 		t.Fatalf("upstream error response not safely mapped: %d", w.Code)
 	}
 
 	reqCtx, abort := context.WithCancel(ctx)
 	defer abort()
 	done := make(chan struct{})
+	allowNext()
+	providerMode.Store(1)
 	go func() {
 		defer close(done)
-		call(reqCtx, handler, "POST", genPath, strings.Replace(input, "Glass cup", "Cancel glass cup", 1), origin, access)
+		call(reqCtx, handler, "POST", genPath, input, origin, access)
 	}()
 	select {
 	case <-started:
+		if w := call(ctx, handler, "POST", genPath, input, origin, access); w.Code != 429 {
+			t.Errorf("active owner duplicate status=%d", w.Code)
+		}
 		abort()
 	case <-time.After(2 * time.Second):
 		t.Fatal("AI cancel fixture never started")
@@ -333,8 +500,10 @@ func TestAICopyOwnedProductGenerationAndSaveReadback(t *testing.T) {
 		t.Fatal("request cancellation did not reach provider")
 	}
 	<-done
+	allowNext()
+	providerMode.Store(2)
 	service.client.Timeout = 80 * time.Millisecond
-	if w := call(ctx, handler, "POST", genPath, strings.Replace(input, "Glass cup", "Timeout glass cup", 1), origin, access); w.Code != 504 {
+	if w := call(ctx, handler, "POST", genPath, input, origin, access); w.Code != 504 {
 		t.Fatalf("upstream timeout status=%d", w.Code)
 	}
 }

@@ -1,6 +1,6 @@
 import { getAccessToken, rejectSession } from "./auth";
 import { readAPIError } from "./apiErrors";
-import type { ListingFields, LocalizedDescriptions, LocalizedTitles, TitleLanguage } from "./listingFields";
+import type { ListingFields, LocalizedTitles } from "./listingFields";
 
 export type CaptureStatus = "complete" | "partial";
 export const PAGE_SIZE = 24;
@@ -166,20 +166,20 @@ export function getCollection(id: string, signal: AbortSignal) {
   return requestJSON<CollectionDetail>("/api/v1/collections/" + encodeURIComponent(id), signal);
 }
 
-export type AICopyProduct = { source_product_id: string; own_product_id?: never } |
-  { own_product_id: string; source_product_id?: never };
+export type AICopyProduct = ({ source_product_id: string; own_product_id?: never } |
+  { own_product_id: string; source_product_id?: never }) & { expected_revision: number };
 
-export type AICopyCandidate = {
-  titles: LocalizedTitles;
-  descriptions: LocalizedDescriptions;
-  selling_points: Record<TitleLanguage, string[]>;
-  missing_facts: string[];
+export type AICopyResults = {
+  titles: { titles: LocalizedTitles };
+  english: { description: string; selling_points: string[]; missing_facts: string[] };
+  translate: { es: string; pt: string; review_terms: string[]; source_digest: string };
 };
 
-export function generateAICopy(product: AICopyProduct, fields: ListingFields, signal: AbortSignal) {
-  const { titles, brand, model, weight_g, length_cm, width_cm, height_cm, bullet_points, attributes } = fields;
-  const facts = { titles, brand, model, weight_g, length_cm, width_cm, height_cm, bullet_points, attributes };
-  return requestJSON<AICopyCandidate>("/api/v1/products/ai-copy", signal, true, "POST", JSON.stringify({ ...product, facts }));
+export function generateAICopy<Operation extends keyof AICopyResults>(
+  product: AICopyProduct, operation: Operation, signal: AbortSignal,
+) {
+  return requestJSON<AICopyResults[Operation]>("/api/v1/products/ai-copy", signal, true, "POST",
+    JSON.stringify({ ...product, operation }));
 }
 
 export type CollectionWorkingDraft = {

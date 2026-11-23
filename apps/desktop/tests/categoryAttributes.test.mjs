@@ -22,6 +22,9 @@ const fields = [
   { id: "MATERIAL", name: "Material", value_type: "list", values: [{ id: 200, name: "Glass" }] },
   { id: "EMPTY_LIST", name: "Empty List", value_type: "list" },
 ];
+const master = "Glass body\n\nFor home use.";
+const originalDigest = "a".repeat(64);
+const revisedDigest = "b".repeat(64);
 window.fetch = (path, options) => {
   const url = new URL(path, location.href);
   if (url.pathname === "/api/v1/products/ai-copy") {
@@ -32,12 +35,17 @@ window.fetch = (path, options) => {
       reject(options.signal.reason);
     }, { once: true }));
     if (aiMode === "error") return Promise.resolve(Response.json({ error: "AI fixture unavailable" }, { status: 502 }));
-    return Promise.resolve(Response.json({
-      titles: { en: "Refined Glass Pitcher", es: "é".repeat(61), pt: "Jarra de vidro" },
-      descriptions: { en: "For home use.", es: "Para el hogar.", pt: "Para uso doméstico." },
-      selling_points: { en: ["Glass body"], es: ["Cuerpo de vidrio"], pt: ["Corpo de vidro"] },
-      missing_facts: ["Capacity"],
+    if (aiRequest.operation === "titles") return Promise.resolve(Response.json({
+      titles: { en: "Refined Glass Pitcher " + "X".repeat(45), es: "é".repeat(61), pt: "Jarra de vidro" },
     }));
+    if (aiRequest.operation === "english") return Promise.resolve(Response.json({
+      description: "For home use.", selling_points: ["Glass body"], missing_facts: ["Capacity"],
+    }));
+    if (aiRequest.operation === "translate") return Promise.resolve(Response.json({
+      es: "Cuerpo de vidrio\n\nPara el hogar.", pt: "Corpo de vidro\n\nPara uso doméstico.",
+      source_digest: originalDigest, review_terms: ["Glass body"],
+    }));
+    throw Error("unexpected AI operation");
   }
   const id = url.searchParams.get("category_id");
   if (id === "CBT4") return Promise.resolve(Response.json({ error: "upstream failed" }, { status: 502 }));
@@ -53,15 +61,33 @@ window.fetch = (path, options) => {
     ] : [],
   }));
 };
-let editor, working, aiRequest, aiCancelled, aiMode;
+let editor, working, aiRequest, aiCancelled, aiMode, saveAccepted, reloadSaved;
 function Fixture() {
   const [value, setValue] = useState(() => initialListingFields({
     category_id: "CBT1", category_path: "Home / Jugs",
     titles: { en: "Sample Jug", es: "", pt: "" },
   }));
+  const [saved, setSaved] = useState(undefined);
+  const [revision, setRevision] = useState(1);
+  const [editorKey, setEditorKey] = useState(1);
   editor = value;
   working = value.category_attributes ?? [];
-  return React.createElement(ListingFieldsEditor, { value, onChange: setValue, aiProduct: { source_product_id: "fixture-product" } });
+  saveAccepted = () => {
+    const next = JSON.parse(JSON.stringify(editor));
+    if (next.descriptions) next.description_translation = { ...next.description_translation,
+      en_digest: next.descriptions.en === master ? originalDigest : revisedDigest };
+    setSaved(next);
+    setValue(next);
+    setRevision(n => n + 1);
+  };
+  reloadSaved = () => {
+    setValue(initialListingFields(JSON.parse(JSON.stringify(saved))));
+    setEditorKey(n => n + 1);
+  };
+  return React.createElement(ListingFieldsEditor, {
+    key: editorKey, value, onChange: setValue, aiSaved: saved,
+    aiProduct: { source_product_id: "fixture-product", expected_revision: revision },
+  });
 }
 const assert = (condition, message) => { if (!condition) throw Error(message); };
 const loaded = async (selector, text) => {
@@ -140,12 +166,11 @@ try {
     const button = await loaded(selector, text);
     flushSync(() => button.click());
   };
-  await click("button", "生成 AI 文案");
-  await loaded("li", "Capacity");
+  await click("button", "AI 优化标题");
+  await loaded("small", "已超过 60 字符");
   assert(JSON.stringify(editor) === beforeAI, "generation applied unapproved content");
-  assert(aiRequest.source_product_id === "fixture-product" && aiRequest.facts.titles.en === "Sample Pitcher" &&
-    !Object.hasOwn(aiRequest.facts, "category_path") && !Object.hasOwn(aiRequest.facts, "descriptions") &&
-    !Object.hasOwn(aiRequest.facts, "notes"), "request included unrelated metadata or omitted current title");
+  assert(aiRequest.source_product_id === "fixture-product" && aiRequest.operation === "titles" &&
+    aiRequest.expected_revision === 1 && Object.keys(aiRequest).length === 3, "title request sent unsaved metadata");
   const candidateTab = '[aria-label="候选文案语言"] button';
   await click(candidateTab, "西语 MX");
   const adoptTitle = await loaded("button", "采纳标题");
@@ -157,16 +182,9 @@ try {
   flushSync(() => adoptTitle.click());
   assert(editor.titles.es === "é".repeat(59) + "!" && editor.category_id === "CBT4" &&
     editor.category_path === "Confirmed / Pitchers", "Spanish adoption modified the category or persisted decomposed text");
-  const copied = [];
-  Object.defineProperty(navigator, "clipboard", { value: { writeText: async text => copied.push(text) } });
-  await click("button", "复制候选描述");
-  assert(copied[0] === "Cuerpo de vidrio\n\nPara el hogar." && editor.descriptions === undefined,
-    "description copy persisted content or omitted the selling point");
-  await click("button", "采纳描述");
-  const captured = JSON.parse(JSON.stringify(editor));
-  assert(captured.descriptions.es === copied[0] && captured.descriptions.en === "" && captured.descriptions.pt === "",
-    "description adoption affected other locales");
   await click(candidateTab, "英语 EN");
+  assert(!adoptTitle.disabled, "English title longer than 60 should only warn");
+  input((await loaded("label", "候选标题")).querySelector("textarea"), "Refined Glass Pitcher");
   const history = JSON.stringify(editor.category_attributes);
   let confirmed = false, dialogCount = 0;
   window.confirm = message => {
@@ -182,13 +200,55 @@ try {
   assert(editor.titles.en === "Refined Glass Pitcher" && editor.category_id === "" && editor.category_path === "" &&
     JSON.stringify(editor.category_attributes) === history && dialogCount === 2,
     "confirmed English candidate lost history or failed to clear category");
+
+  assert((await loaded("button", "翻译详情至 MX/BR")).disabled, "translation enabled before saving an English master");
+  await click("button", "AI 生成英文详情");
+  await loaded("li", "Capacity");
+  assert(aiRequest.operation === "english" && !editor.descriptions &&
+    ![...document.querySelectorAll("label")].some(node => node.textContent.includes("候选西语详情")),
+    "English-only generation created regional copy or overwrote saved descriptions");
+  const copied = [];
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: async text => copied.push(text) } });
+  await click("button", "复制候选英文详情");
+  assert(copied[0] === master && !editor.descriptions, "English copy omitted selling point or saved itself");
+  await click("button", "采纳英文详情");
+  assert(editor.descriptions.en === master && editor.descriptions.es === "" && editor.descriptions.pt === "",
+    "English adoption changed regional descriptions");
+  assert((await loaded("button", "翻译详情至 MX/BR")).disabled, "unsaved English could be translated");
+  flushSync(() => saveAccepted());
+  await click("button", "翻译详情至 MX/BR");
+  await loaded("li", "Glass body");
+  assert(aiRequest.operation === "translate" && aiRequest.expected_revision === 2 &&
+    Object.keys(aiRequest).length === 3 && editor.descriptions.es === "",
+    "translation sent client text, used an older revision or automatically adopted");
+  await click("button", "复制候选西语详情");
+  assert(copied[1] === "Cuerpo de vidrio\n\nPara el hogar." && editor.descriptions.es === "",
+    "regional copy changed product fields");
+  await click("button", "采纳西语详情");
+  assert(editor.descriptions.es === copied[1] && editor.descriptions.pt === "" &&
+    editor.description_translation.es_source_digest === originalDigest &&
+    !editor.description_translation.pt_source_digest, "Spanish adoption affected Portuguese or lost source");
+  await click(candidateTab, "葡语 BR");
+  await click("button", "采纳葡语详情");
+  assert(editor.descriptions.pt === "Corpo de vidro\n\nPara uso doméstico." &&
+    editor.description_translation.pt_source_digest === originalDigest, "Portuguese adoption lost its source");
+  flushSync(() => saveAccepted());
+  input(document.querySelector('textarea[placeholder="填写纯文本商品描述"]'), "Revised English master.");
+  await loaded("p", "西语详情可能已过期");
+  assert((await loaded("button", "重新翻译详情至 MX/BR")).disabled, "unsaved English revision can be translated");
+  flushSync(() => saveAccepted());
+  flushSync(() => reloadSaved());
+  await loaded("p", "西语详情可能已过期");
+  await loaded("p", "葡语详情可能已过期");
+  assert(editor.descriptions.es === copied[1] && editor.descriptions.pt === "Corpo de vidro\n\nPara uso doméstico." &&
+    editor.description_translation.en_digest === revisedDigest, "editing and reloading English lost region copy");
   aiMode = "wait";
-  await click("button", "重新生成");
+  await click("button", "AI 优化标题");
   await click("button", "取消生成");
   await loaded('[role="status"]', "已取消生成");
   assert(aiCancelled, "desktop cancelled without aborting AI fetch");
   aiMode = "error";
-  await click("button", "重新生成");
+  await click("button", "AI 优化标题");
   await loaded('[role="alert"]', "AI fixture unavailable");
   assert(editor.titles.en === "Refined Glass Pitcher", "error changed adopted title");
   document.body.dataset.result = "pass";

@@ -1,6 +1,8 @@
 package collections
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"math"
 	"regexp"
@@ -21,6 +23,22 @@ type LocalizedTitles struct {
 }
 
 type LocalizedDescriptions = LocalizedTitles
+
+type DescriptionTranslation struct {
+	EnglishDigest          string `json:"en_digest,omitempty"`
+	SpanishSourceDigest    string `json:"es_source_digest,omitempty"`
+	PortugueseSourceDigest string `json:"pt_source_digest,omitempty"`
+}
+
+func EnglishDescriptionDigest(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(norm.NFC.String(text)))
+	return hex.EncodeToString(digest[:])
+}
+
+var ErrInvalidTranslationSource = errors.New("description translation source does not match the saved English description")
 
 const LocalizedTitleLimit = 60
 
@@ -53,25 +71,26 @@ func (titles LocalizedTitles) Preferred() string {
 }
 
 type ListingFields struct {
-	Titles             LocalizedTitles             `json:"titles"`
-	Descriptions       *LocalizedDescriptions      `json:"descriptions,omitempty"`
-	CategoryID         string                      `json:"category_id"`
-	CategoryPath       string                      `json:"category_path"`
-	Brand              string                      `json:"brand"`
-	Model              string                      `json:"model"`
-	SellerSKU          string                      `json:"seller_sku"`
-	GTIN               string                      `json:"gtin"`
-	PurchasePrice      string                      `json:"purchase_price"`
-	PurchaseCurrency   string                      `json:"purchase_currency"`
-	WeightG            string                      `json:"weight_g"`
-	LengthCM           string                      `json:"length_cm"`
-	WidthCM            string                      `json:"width_cm"`
-	HeightCM           string                      `json:"height_cm"`
-	BulletPoints       []string                    `json:"bullet_points"`
-	Attributes         []ListingAttribute          `json:"attributes"`
-	CategoryAttributes *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
-	Images             *[]Image                    `json:"images,omitempty"`
-	Variants           *[]ListingVariant           `json:"variants,omitempty"`
+	Titles                 LocalizedTitles             `json:"titles"`
+	Descriptions           *LocalizedDescriptions      `json:"descriptions,omitempty"`
+	DescriptionTranslation *DescriptionTranslation     `json:"description_translation,omitempty"`
+	CategoryID             string                      `json:"category_id"`
+	CategoryPath           string                      `json:"category_path"`
+	Brand                  string                      `json:"brand"`
+	Model                  string                      `json:"model"`
+	SellerSKU              string                      `json:"seller_sku"`
+	GTIN                   string                      `json:"gtin"`
+	PurchasePrice          string                      `json:"purchase_price"`
+	PurchaseCurrency       string                      `json:"purchase_currency"`
+	WeightG                string                      `json:"weight_g"`
+	LengthCM               string                      `json:"length_cm"`
+	WidthCM                string                      `json:"width_cm"`
+	HeightCM               string                      `json:"height_cm"`
+	BulletPoints           []string                    `json:"bullet_points"`
+	Attributes             []ListingAttribute          `json:"attributes"`
+	CategoryAttributes     *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
+	Images                 *[]Image                    `json:"images,omitempty"`
+	Variants               *[]ListingVariant           `json:"variants,omitempty"`
 }
 
 type ListingAttribute struct {
@@ -155,6 +174,57 @@ func (f ListingFields) normalizedCopy() *ListingFields {
 		f.Descriptions = &descriptions
 	}
 	return &f
+}
+
+func (f ListingFields) needsPrevious() bool {
+	return f.Descriptions != nil || f.Titles.NFC().exceedsRegionalLimits()
+}
+
+func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, error) {
+	next := f.normalizedCopy()
+	if err := next.Titles.validateRegionalLimits(previous.Titles.NFC()); err != nil {
+		return nil, err
+	}
+	if next.Descriptions == nil {
+		if next.DescriptionTranslation != nil {
+			return nil, ErrInvalidTranslationSource
+		}
+		return next, nil
+	}
+
+	var current, proposed DescriptionTranslation
+	if previous.DescriptionTranslation != nil {
+		current = *previous.DescriptionTranslation
+	}
+	if next.DescriptionTranslation != nil {
+		proposed = *next.DescriptionTranslation
+	}
+	var savedEnglish string
+	if previous.Descriptions != nil {
+		savedEnglish = previous.Descriptions.English
+	}
+	savedDigest := EnglishDescriptionDigest(savedEnglish)
+	current.EnglishDigest = EnglishDescriptionDigest(next.Descriptions.English)
+	for _, locale := range []struct {
+		text, proposal string
+		source         *string
+	}{
+		{next.Descriptions.Spanish, proposed.SpanishSourceDigest, &current.SpanishSourceDigest},
+		{next.Descriptions.Portuguese, proposed.PortugueseSourceDigest, &current.PortugueseSourceDigest},
+	} {
+		if strings.TrimSpace(locale.text) == "" {
+			*locale.source = ""
+			continue
+		}
+		if locale.proposal != "" && locale.proposal != *locale.source {
+			if locale.proposal != savedDigest || locale.proposal != current.EnglishDigest {
+				return nil, ErrInvalidTranslationSource
+			}
+			*locale.source = locale.proposal
+		}
+	}
+	next.DescriptionTranslation = &current
+	return next, nil
 }
 
 func (f ListingFields) Validate() error {

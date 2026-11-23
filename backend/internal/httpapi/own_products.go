@@ -104,7 +104,7 @@ func (a collectionAPI) ownProductDetail(w http.ResponseWriter, r *http.Request) 
 			writeError(w, 409, "product changed; reload before saving")
 			return
 		}
-		if errors.Is(err, collections.ErrLocalizedTitleTooLong) {
+		if errors.Is(err, collections.ErrLocalizedTitleTooLong) || errors.Is(err, collections.ErrInvalidTranslationSource) {
 			writeError(w, 400, err.Error())
 			return
 		}

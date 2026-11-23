@@ -149,7 +149,7 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
           </div>
           <div className="working-draft">
             <ListingFieldsEditor key={product.id} value={fields.listing_fields} disabled={saving||unknown}
-              aiProduct={{own_product_id:product.id}}
+              aiProduct={{own_product_id:product.id,expected_revision:product.revision}} aiSaved={product.listing_fields}
               onChange={listing_fields=>setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}))}/>
             <label>商品描述<textarea rows={8} value={fields.description} onChange={e=>setFields(v=>({...v,description:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.description)} / 20000</small></label>
             <label>内部整理备注<textarea rows={4} value={fields.notes} onChange={e=>setFields(v=>({...v,notes:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.notes)} / 5000</small></label>

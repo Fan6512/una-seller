@@ -90,25 +90,23 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 		return WorkingDraft{}, err
 	}
 	if in.ListingFields != nil {
-		in.ListingFields = in.ListingFields.normalizedCopy()
-		titles := in.ListingFields.Titles
-		if titles.exceedsRegionalLimits() {
-			var previous LocalizedTitles
-			if in.ExpectedRevision > 0 {
-				draft, err := s.GetWorkingDraft(ctx, owner, id)
-				if err != nil {
-					return WorkingDraft{}, err
-				}
-				if draft == nil || draft.Revision != in.ExpectedRevision {
-					return WorkingDraft{}, ErrDraftConflict
-				}
-				previous = draft.ListingFields.Titles.NFC()
-			}
-			if err := titles.validateRegionalLimits(previous); err != nil {
+		var previous ListingFields
+		if in.ExpectedRevision > 0 && in.ListingFields.needsPrevious() {
+			draft, err := s.GetWorkingDraft(ctx, owner, id)
+			if err != nil {
 				return WorkingDraft{}, err
 			}
+			if draft == nil || draft.Revision != in.ExpectedRevision {
+				return WorkingDraft{}, ErrDraftConflict
+			}
+			previous = draft.ListingFields
 		}
-		if title := titles.Preferred(); title != "" {
+		next, err := in.ListingFields.prepareForSave(previous)
+		if err != nil {
+			return WorkingDraft{}, err
+		}
+		in.ListingFields = next
+		if title := next.Titles.Preferred(); title != "" {
 			in.Title = title
 		}
 	}
@@ -162,7 +160,8 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 			SET title=$3,description=$4,notes=$5,listing_fields=COALESCE(
 				jsonb_strip_nulls(jsonb_build_object(
 					'category_attributes',d.listing_fields->'category_attributes',
-					'descriptions',d.listing_fields->'descriptions')) || $7::jsonb,
+					'descriptions',d.listing_fields->'descriptions',
+					'description_translation',d.listing_fields->'description_translation')) || $7::jsonb,
 				d.listing_fields),
 				revision=d.revision+1,updated_at=now()
 			FROM app.source_products p

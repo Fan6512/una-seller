@@ -27,6 +27,11 @@ export type CategoryAttributeValue = {
 export type ListingFields = {
   titles: LocalizedTitles;
   descriptions?: LocalizedDescriptions;
+  description_translation?: {
+    en_digest?: string;
+    es_source_digest?: string;
+    pt_source_digest?: string;
+  };
   category_id: string;
   category_path: string;
   brand: string;
@@ -72,6 +77,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   const result:ListingFields={...defaults,...saved,
     titles:saved.titles ? {...defaults.titles,...saved.titles} : defaults.titles};
   if (saved.descriptions) result.descriptions = { ...saved.descriptions };
+  if (saved.description_translation) result.description_translation = { ...saved.description_translation };
   // Do not silently reinterpret a legacy, unlabelled purchase amount as CNY.
   if(saved.purchase_price && !saved.purchase_currency) result.purchase_currency="";
   result.bullet_points=saved.bullet_points?.slice()??defaults.bullet_points;
