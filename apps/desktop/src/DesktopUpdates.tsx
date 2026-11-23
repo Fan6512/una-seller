@@ -40,7 +40,7 @@ export function useDesktopUpdates(activity: Activity) {
       setVersion(installed);
       if (!installed) return;
       const next = await check({
-        timeout: 20_000,
+        timeout: 30_000,
         headers: { "X-Una-Include-Prerelease": testUpdates ? "1" : "0" },
       });
       setUpdate(next);

@@ -91,13 +91,13 @@
 
 此段是操作清单，不代表生产已部署或 Windows 真机已验收。正式签名发布与 PR 内的**未签名 QA 安装包**严格区分。
 
-1. **合并前**：Go 更新路由的选择器、签名 manifest 校验、缓存回退、并发和 UI/字段定点测试通过；Desktop 类型检查和相关 CI 通过。使用临时签名 key 的 `signed_smoke` 只能证明隔离测试链路，不能作为正式签名 OTA 证明。
+1. **合并前**：Go 更新路由的选择器、manifest 结构与资产检查、缓存回退、并发和 UI/字段定点测试通过；Desktop 类型检查和相关 CI 通过。使用临时签名 key 的 `signed_smoke` 只能证明隔离测试链路，不能作为正式签名 OTA 证明。
 2. **合并**：负责人批准后才将 PR #65 合并 `main`；不提前打正式发布 Tag。发布工作流校验 Tag 所指提交必须在 `main` 历史内。
-3. **服务端**：经独立授权备份与部署 Go API/Nginx `/api/v1/desktop/updates`；核对公开 GET 对无合格 Release 返回 204（无正文），对有合格发布版本返回校验后的 200；确认其他路由没有回归。不得把代码合并视为已部署。
+3. **服务端**：V0.3 客户端的唯一更新入口是 `https://mkd.186512.xyz/api/v1/desktop/updates`，Go API 在上游查询 GitHub Releases。Go 检查 manifest 结构、资产 URL 及签名字段是否存在。Tauri 下载时执行密码学签名验证。经独立授权部署 Go API/Nginx 后，确认更新路由及原业务路由可用。
 4. **正式签名测试版**：核对 `desktop-production` 环境的审批和既有可信 Tauri 公私钥一致；在 `main` 中版本文件全部对应 `0.3.0` 后，由负责人创建 `desktop-test-v0.3.0`，通过受保护 workflow 生成签名安装器、`.sig`、`latest.json`；人工确认并发布为 **Pre-release**，不得发布 Draft 或用未签名 PR QA 包冒充更新包。
 5. **首次手动安装**：下载与验收目标版本对应的 Windows x64 安装器，校验制品后手动安装。未签名 QA 包只用于功能验收。经批准的正式签名 V0.3 测试包建立后续 OTA 基线。历史客户端继续使用原有 GitHub `latest` 机制，首次升级按手动安装验收。
-6. **后续真实 OTA**：从已手动安装且使用同一可信密钥签名的 V0.3 测试版出发，分别关闭和开启“接收测试版更新”。核对 `X-Una-Include-Prerelease: 0/1` 经 Tauri → Nginx → Go 传递。OFF 只检查正式 Release，ON 同时检查合格的 Pre-release。用更高版本验证下载、签名校验、安装和重启，同时核对同版本及更低版本不会触发升级。实机完成前记录 `MANUAL_PENDING(SIGNING, GUI)`。
-7. **故障处理**：GitHub 单次请求上限 8 秒，Go 总检查时限 17 秒，包含等待并发请求、查询 Releases 和读取 manifest。Nginx 读取时限 20 秒。上游暂时失败时，返回同一通道上一次校验通过的 manifest 并退避。单一更新来源沿用当前 GitHub Releases 路由。
+6. **端到端探测与后续真实 OTA**：先对唯一入口发起公开 GET 探测。正式通道发送 `X-Una-Include-Prerelease: 0`，测试通道发送 `X-Una-Include-Prerelease: 1`。有已批准的目标 Release 时，对应通道必须返回 200，且 JSON 的 `version` 与预期版本一致。仅在该通道无候选时接受 204。候选全无有效 manifest 且没有可用的同通道历史缓存时返回 503。探测通过后，从已手动安装且使用同一可信密钥签名的 V0.3 测试版出发，分别关闭和开启“接收测试版更新”。核对 `X-Una-Include-Prerelease: 0/1` 经 Tauri → Nginx → Go 传递。OFF 只检查正式 Release，ON 同时检查合格的 Pre-release。用更高版本验证下载、签名校验、安装和重启，同时核对同版本及更低版本不会触发升级。实机完成前记录 `MANUAL_PENDING(SIGNING, GUI)`。
+7. **故障处理**：GitHub 单次请求上限 8 秒，Go 总检查时限 17 秒，包含等待并发请求、查询 Releases 和读取 manifest。Nginx 读取时限 20 秒，客户端检查更新时限 30 秒。上游失败或候选 manifest 全部无效时，返回同一通道上一次通过结构与资产检查的 manifest 并退避。
 8. **后续 Beta 边界**：服务端已能识别 `desktop-test-v1.1.0-beta.N`，但 `windows-desktop.yml` 的 Tag 校验及生成 manifest 的版本比较**尚不支持**带 `-beta.N` 的 Tag；V1.0 以后要实际发布 Beta 时另改 workflow 和测试。本轮不提前开放。
 
 | 发布门禁 | 当前状态 | 通过条件 |

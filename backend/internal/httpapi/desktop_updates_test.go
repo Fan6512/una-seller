@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,10 +112,10 @@ func TestDesktopManifestVerification(t *testing.T) {
 		wantStatus       int
 	}{
 		{name: "valid", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusOK},
-		{name: "untrusted_manifest_location", manifestURL: "https://evil.example/latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusNoContent},
-		{name: "wrong_manifest_version", manifestURL: prefix + "latest.json", version: "1.1.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusNoContent},
-		{name: "installer_missing_from_release", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", missingInstaller: true, wantStatus: http.StatusNoContent},
-		{name: "untrusted_installer_location", manifestURL: prefix + "latest.json", version: "1.0.0", installer: "https://evil.example/Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusNoContent},
+		{name: "untrusted_manifest_location", manifestURL: "https://evil.example/latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
+		{name: "wrong_manifest_version", manifestURL: prefix + "latest.json", version: "1.1.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
+		{name: "installer_missing_from_release", manifestURL: prefix + "latest.json", version: "1.0.0", installer: prefix + "Una-Seller_1.0.0_x64-setup.exe", missingInstaller: true, wantStatus: http.StatusServiceUnavailable},
+		{name: "untrusted_installer_location", manifestURL: prefix + "latest.json", version: "1.0.0", installer: "https://evil.example/Una-Seller_1.0.0_x64-setup.exe", wantStatus: http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var manifestReads atomic.Int32
@@ -207,6 +209,41 @@ func TestDesktopUpdateWaitRespectsCancellation(t *testing.T) {
 	defer cancel()
 	if _, err := cache.lookup(ctx, nil, "", true, desktopCacheTTL); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("request ignored its deadline while waiting for another check: %v", err)
+	}
+}
+
+func TestDesktopUpdateInvalidCandidatesUseOnlySameChannelHistoryAndWarnOnce(t *testing.T) {
+	var warnings bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&warnings)
+	t.Cleanup(func() { log.SetOutput(previousOutput) })
+
+	const tag = "desktop-v1.0.0"
+	cache := &desktopManifestCache{
+		refresh:       make(chan struct{}, 1),
+		releases:      []desktopRelease{{TagName: tag}},
+		releasesUntil: time.Now().Add(time.Minute),
+		entries: map[bool]desktopCachedManifest{
+			true: {content: []byte("previously checked prerelease manifest")},
+		},
+		retryAfter:    make(map[bool]time.Time),
+		warnedInvalid: make(map[string]bool),
+	}
+
+	for range 2 {
+		data, err := cache.lookup(context.Background(), nil, "", false, desktopCacheTTL)
+		if err == nil || data != nil {
+			t.Fatalf("invalid stable candidate must not use another channel's cache: %q, %v", data, err)
+		}
+		data, err = cache.lookup(context.Background(), nil, "", true, desktopCacheTTL)
+		if err != nil || string(data) != "previously checked prerelease manifest" {
+			t.Fatalf("invalid candidate must fall back to the same channel's cache: %q, %v", data, err)
+		}
+	}
+
+	message := warnings.String()
+	if strings.Count(message, `tag="desktop-v1.0.0" category=manifest_asset_missing_or_mismatched`) != 1 {
+		t.Fatalf("expected one warning with the safe tag and category, got %q", message)
 	}
 }
 

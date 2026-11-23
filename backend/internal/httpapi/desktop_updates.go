@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"slices"
@@ -135,6 +136,7 @@ type desktopManifestCache struct {
 	releasesUntil time.Time
 	entries       map[bool]desktopCachedManifest
 	retryAfter    map[bool]time.Time
+	warnedInvalid map[string]bool
 }
 
 func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, releasesURL string, includeTests bool, ttl time.Duration) ([]byte, error) {
@@ -155,7 +157,7 @@ func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, 
 	if found && now.Before(last.until) {
 		return last.content, nil
 	}
-	// Only a previously validated signed release manifest is safe to serve stale.
+	// Serve only a previously checked manifest from the same channel. Tauri verifies its signature.
 	staleOrError := func(err error) ([]byte, error) {
 		if found && len(last.content) > 0 {
 			return last.content, nil
@@ -175,11 +177,17 @@ func (c *desktopManifestCache) lookup(ctx context.Context, client *http.Client, 
 			c.retryAfter[includeTests] = time.Now().Add(desktopRetryDelay)
 			return staleOrError(err)
 		}
+		// Keep one warning per tag while it remains in the Releases listing.
+		for tag := range c.warnedInvalid {
+			if !slices.ContainsFunc(releases, func(release desktopRelease) bool { return release.TagName == tag }) {
+				delete(c.warnedInvalid, tag)
+			}
+		}
 		c.releases = releases
 		c.releasesUntil = time.Now().Add(ttl)
 	}
 
-	data, err := desktopManifestForReleases(fetchCtx, client, c.releases, includeTests)
+	data, err := desktopManifestForReleases(fetchCtx, client, c.releases, includeTests, c.warnedInvalid)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -201,9 +209,10 @@ func desktopUpdaterHandlerWithTTL(client *http.Client, releasesURL string, ttl t
 		client = &http.Client{Timeout: desktopUpstreamTimeout}
 	}
 	cache := &desktopManifestCache{
-		refresh:    make(chan struct{}, 1),
-		entries:    make(map[bool]desktopCachedManifest),
-		retryAfter: make(map[bool]time.Time),
+		refresh:       make(chan struct{}, 1),
+		entries:       make(map[bool]desktopCachedManifest),
+		retryAfter:    make(map[bool]time.Time),
+		warnedInvalid: make(map[string]bool),
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -258,16 +267,23 @@ func readDesktopJSON(ctx context.Context, client *http.Client, uri string, out a
 	return nil
 }
 
-func desktopManifestForReleases(ctx context.Context, client *http.Client, releases []desktopRelease, includeTests bool) ([]byte, error) {
+func desktopManifestForReleases(ctx context.Context, client *http.Client, releases []desktopRelease, includeTests bool, warnedInvalid map[string]bool) ([]byte, error) {
 	candidates := slices.Clone(releases)
+	var lastInvalid error
 	for {
 		release, expectedVersion, found := pickDesktopRelease(candidates, includeTests)
 		if !found {
-			return nil, nil
+			return nil, lastInvalid
 		}
 		manifest, err := readDesktopManifest(ctx, client, release, expectedVersion)
-		if !errors.Is(err, errDesktopManifestInvalid) {
+		var invalid desktopManifestInvalid
+		if !errors.As(err, &invalid) {
 			return manifest, err
+		}
+		lastInvalid = invalid
+		if !warnedInvalid[release.TagName] {
+			log.Printf("warning: invalid desktop update manifest tag=%q category=%s", release.TagName, invalid)
+			warnedInvalid[release.TagName] = true
 		}
 		candidates = slices.DeleteFunc(candidates, func(candidate desktopRelease) bool {
 			return candidate.TagName == release.TagName
@@ -275,7 +291,9 @@ func desktopManifestForReleases(ctx context.Context, client *http.Client, releas
 	}
 }
 
-var errDesktopManifestInvalid = errors.New("release does not have a valid signed installer manifest")
+type desktopManifestInvalid string
+
+func (reason desktopManifestInvalid) Error() string { return string(reason) }
 
 func readDesktopManifest(ctx context.Context, client *http.Client, release desktopRelease, expectedVersion string) ([]byte, error) {
 	prefix := desktopAssetPrefix + release.TagName + "/"
@@ -287,26 +305,33 @@ func readDesktopManifest(ctx context.Context, client *http.Client, release deskt
 		}
 	}
 	if manifestURL == "" {
-		return nil, errDesktopManifestInvalid
+		return nil, desktopManifestInvalid("manifest_asset_missing_or_mismatched")
 	}
 	var manifest desktopManifest
 	if err := readDesktopJSON(ctx, client, manifestURL, &manifest); err != nil {
 		var sourceStatus desktopSourceStatus
 		var syntax *json.SyntaxError
 		var badType *json.UnmarshalTypeError
-		if (errors.As(err, &sourceStatus) && (sourceStatus == http.StatusNotFound || sourceStatus == http.StatusGone)) ||
-			errors.As(err, &syntax) || errors.As(err, &badType) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, errDesktopManifestInvalid
+		if errors.As(err, &sourceStatus) && (sourceStatus == http.StatusNotFound || sourceStatus == http.StatusGone) {
+			return nil, desktopManifestInvalid("manifest_unavailable")
+		}
+		if errors.As(err, &syntax) || errors.As(err, &badType) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, desktopManifestInvalid("manifest_json_invalid")
 		}
 		return nil, err
 	}
 	windows, ok := manifest.Platforms["windows-x86_64"]
-	if !ok || manifest.Version != expectedVersion || strings.TrimSpace(windows.Signature) == "" ||
-		!slices.ContainsFunc(release.Assets, func(asset desktopReleaseAsset) bool {
-			return strings.HasSuffix(asset.Name, "_x64-setup.exe") && windows.URL == prefix+asset.Name &&
-				asset.BrowserDownloadURL == windows.URL
-		}) {
-		return nil, errDesktopManifestInvalid
+	if manifest.Version != expectedVersion {
+		return nil, desktopManifestInvalid("version_mismatch")
+	}
+	if !ok || strings.TrimSpace(windows.Signature) == "" {
+		return nil, desktopManifestInvalid("platform_or_signature_missing")
+	}
+	if !slices.ContainsFunc(release.Assets, func(asset desktopReleaseAsset) bool {
+		return strings.HasSuffix(asset.Name, "_x64-setup.exe") && windows.URL == prefix+asset.Name &&
+			asset.BrowserDownloadURL == windows.URL
+	}) {
+		return nil, desktopManifestInvalid("installer_asset_mismatch")
 	}
 	return json.Marshal(manifest)
 }
