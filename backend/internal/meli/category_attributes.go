@@ -21,13 +21,14 @@ type CategoryPathNode struct {
 }
 
 type CategoryRules struct {
-	Translations           map[string]string  `json:"translations_zh,omitempty"`
-	CategoryID             string             `json:"category_id"`
-	Attributes             json.RawMessage    `json:"attributes"`
-	Path                   []CategoryPathNode `json:"path,omitempty"`
-	TechnicalSpecsVerified bool               `json:"technical_specs_verified,omitempty"`
-	TechnicalRequirements  []string           `json:"technical_requirements,omitempty"`
-	SpecialRequirements    bool               `json:"special_requirements,omitempty"`
+	Translations              map[string]string  `json:"translations_zh,omitempty"`
+	CategoryID                string             `json:"category_id"`
+	Attributes                json.RawMessage    `json:"attributes"`
+	Path                      []CategoryPathNode `json:"path,omitempty"`
+	TechnicalSpecsVerified    bool               `json:"technical_specs_verified,omitempty"`
+	TechnicalRequirements     []string           `json:"technical_requirements,omitempty"`
+	TechnicalRequirementNames map[string]string  `json:"technical_requirement_names,omitempty"`
+	SpecialRequirements       bool               `json:"special_requirements,omitempty"`
 }
 
 func validateCategoryForSite(category, site string) bool {
@@ -112,6 +113,7 @@ func (s *Service) GetCBTCategoryRules(ctx context.Context, owner, category strin
 				Type       string `json:"component"`
 				Attributes []struct {
 					ID   string   `json:"id"`
+					Name string   `json:"name"`
 					Tags []string `json:"tags"`
 				} `json:"attributes"`
 			} `json:"components"`
@@ -134,6 +136,12 @@ func (s *Service) GetCBTCategoryRules(ctx context.Context, owner, category strin
 					case "required":
 						if field.ID != "" && !seen[field.ID] {
 							result.TechnicalRequirements = append(result.TechnicalRequirements, field.ID)
+							if field.Name != "" {
+								if result.TechnicalRequirementNames == nil {
+									result.TechnicalRequirementNames = make(map[string]string)
+								}
+								result.TechnicalRequirementNames[field.ID] = field.Name
+							}
 							seen[field.ID] = true
 						}
 					case "conditional_required", "variation_attribute", "allow_variations", "size_grid_required":

@@ -54,5 +54,5 @@ func (a storeAPI) predictCBTCategory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "source": "mercado_libre_cbt", "confirmed": false,
-		"translations_zh": a.translator.translate(r.Context(), "", texts)})
+		"translations_zh": a.translator.translate(r.Context(), "en", texts)})
 }

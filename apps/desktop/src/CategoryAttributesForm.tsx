@@ -40,7 +40,7 @@ export default function CategoryAttributesForm({ category, values, onChange, dis
     setRequestError("");
     if (!validCategory) return;
     const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(13_000)]);
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
     const timer = window.setTimeout(() => {
       void getCBTCategoryRules(category, signal).then(data => {
         if (!controller.signal.aborted) {
@@ -89,13 +89,16 @@ export default function CategoryAttributesForm({ category, values, onChange, dis
     </>}
     {current && <>
       {categories.length > 0 && <>
-        {categories.every(name => Object.hasOwn(translations, name)) &&
-          <p className="listing-fields-note">{categories.map(name => translations[name]).join(" / ")}</p>}
+        {categories.some(name => Object.hasOwn(translations, name) && translations[name] !== name) &&
+          <p className="listing-fields-note">{categories.map(name => Object.hasOwn(translations, name) ? translations[name] : name).join(" / ")}</p>}
         <p className="listing-fields-note">{categories.join(" / ")}</p>
       </>}
       {special && <p className="listing-validation" role="status">该分类存在特殊官方要求，需要在刊登前进一步校验。
         {!current.technical_specs_verified && " 补充技术规范尚未核实。"}</p>}
-      {ranking.length > 0 && <p className="listing-fields-note">搜索排序建议补充：{ranking.join("、")}</p>}
+      {ranking.length > 0 && <p className="listing-fields-note">搜索排序建议补充：{ranking.map(id => {
+        const names = current.technical_requirement_names;
+        return names && Object.hasOwn(names, id) ? display(names[id]) : id;
+      }).join("、")}</p>}
       {rules.length === 0 && <p className="listing-fields-note">官方未返回可用属性。仍需在刊登前校验。</p>}
       {editable.length > 0 && <div className="listing-field-grid">
         {editable.map(rule => {

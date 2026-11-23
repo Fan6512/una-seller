@@ -168,8 +168,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
         {suggestions.map(item => {
           const names = item.path?.length ? item.path.map(node => node.name) : [item.category_name];
           const official = names.join(" / ");
-          const translated = names.every(name => Object.hasOwn(categoryTranslations, name))
-            ? names.map(name => categoryTranslations[name]).join(" / ") : "";
+          const translated = names.map(name => Object.hasOwn(categoryTranslations, name) ? categoryTranslations[name] : name).join(" / ");
           return <button key={item.category_id} type="button" disabled={disabled}
             onClick={() => {
               onChange({...value, category_id: item.category_id,
@@ -178,14 +177,14 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
               setSuggestions([]);
               setPredictMessage("");
             }}>
-            {translated ? <><strong>{translated}</strong><span>{official}</span></> : <strong>{official}</strong>}
+            <strong>{translated}</strong>{translated !== official && <span>{official}</span>}
             <small>{item.category_id} · {item.domain_name}</small>
           </button>;
         })}
       </div>}
-      {chosenPath.join(" / ") === value.category_path && chosenPath.length > 0 &&
-        chosenPath.every(name => Object.hasOwn(categoryTranslations, name)) &&
-        <p className="listing-fields-note">{chosenPath.map(name => categoryTranslations[name]).join(" / ")}</p>}
+      {chosenPath.join(" / ") === value.category_path &&
+        chosenPath.some(name => Object.hasOwn(categoryTranslations, name) && categoryTranslations[name] !== name) &&
+        <p className="listing-fields-note">{chosenPath.map(name => Object.hasOwn(categoryTranslations, name) ? categoryTranslations[name] : name).join(" / ")}</p>}
       <div className="listing-field-grid">
         {field("CBT 分类名称 / 路径（可手动修改）","category_path","整理完标题后再填写或选择官方推荐",400)}
         <label className="listing-field">CBT 通用分类 ID
