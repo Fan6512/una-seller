@@ -54,7 +54,7 @@ func TestDescriptionTranslationManualEditAndReadoption(t *testing.T) {
 	english := "Glass cup for home use."
 	digest := EnglishDescriptionDigest(english)
 	initial := ListingFields{
-		Descriptions: &LocalizedDescriptions{English: english, Spanish: "Taza de vidrio"},
+		Descriptions:           &LocalizedDescriptions{English: english, Spanish: "Taza de vidrio"},
 		DescriptionTranslation: &DescriptionTranslation{EnglishDigest: digest, SpanishSourceDigest: digest},
 	}
 	manual := initial
