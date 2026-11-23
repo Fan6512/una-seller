@@ -24,6 +24,7 @@ var (
 	siteIDFormat        = regexp.MustCompile("^[A-Z]{3}$")
 	safeEnumFormat      = regexp.MustCompile("^[a-z][a-z0-9_]{0,31}$")
 	businessModelFormat = regexp.MustCompile("^[A-Za-z][A-Za-z0-9 _-]{0,47}$")
+	identityEnumFormat  = regexp.MustCompile("^(user|seller|account)[_-]?[0-9]+$")
 )
 
 type accountEvidence struct {
@@ -159,7 +160,7 @@ func knownEnum(value string, shape *regexp.Regexp, known ...string) string {
 	if value == "" {
 		return unverified
 	}
-	if !shape.MatchString(value) {
+	if !shape.MatchString(value) || identityEnumFormat.MatchString(strings.ToLower(value)) {
 		return "unrecognized"
 	}
 	// Only emit small, structured enum values. Redact possible secrets and identity keys.
