@@ -55,7 +55,7 @@ type OwnProductEdit struct {
 }
 
 func (in OwnProductEdit) Validate() error {
-	if strings.TrimSpace(in.Title) == "" || utf8.RuneCountInString(in.Title) > 500 ||
+	if strings.TrimSpace(in.Title) == "" || !validListingTitle(in.Title) ||
 		utf8.RuneCountInString(in.Description) > 20000 || utf8.RuneCountInString(in.Notes) > 5000 ||
 		in.ExpectedRevision < 1 {
 		return errors.New("invalid product fields")
@@ -253,6 +253,19 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	}
 	var listingValue any
 	if in.ListingFields != nil {
+		in.ListingFields = in.ListingFields.normalizedCopy()
+		if titles := in.ListingFields.Titles; titles.exceedsRegionalLimits() {
+			current, err := s.GetOwnProduct(ctx, owner, id)
+			if err != nil {
+				return OwnProduct{}, err
+			}
+			if current.Revision != in.ExpectedRevision {
+				return OwnProduct{}, ErrDraftConflict
+			}
+			if err := titles.validateRegionalLimits(current.ListingFields.Titles.NFC()); err != nil {
+				return OwnProduct{}, err
+			}
+		}
 		if text := in.ListingFields.Titles.Preferred(); text != "" {
 			in.Title = text
 		}
@@ -266,7 +279,9 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	err := s.DB.QueryRow(ctx, `UPDATE app.own_products
     SET title=$3,description=$4,notes=$5,
       listing_fields=COALESCE(
-        jsonb_strip_nulls(jsonb_build_object('category_attributes',listing_fields->'category_attributes')) || $7::jsonb,
+        jsonb_strip_nulls(jsonb_build_object(
+          'category_attributes',listing_fields->'category_attributes',
+          'descriptions',listing_fields->'descriptions')) || $7::jsonb,
         listing_fields),
       revision=revision+1,updated_at=now()
     WHERE id=$1::uuid AND owner_user_id=$2::uuid AND revision=$6 RETURNING revision`,

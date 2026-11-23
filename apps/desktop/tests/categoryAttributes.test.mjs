@@ -23,7 +23,23 @@ const fields = [
   { id: "EMPTY_LIST", name: "Empty List", value_type: "list" },
 ];
 window.fetch = (path, options) => {
-  const id = new URL(path, location.href).searchParams.get("category_id");
+  const url = new URL(path, location.href);
+  if (url.pathname === "/api/v1/products/ai-copy") {
+    aiRequest = JSON.parse(options.body);
+    if (options.method !== "POST" || !options.headers.Authorization) throw Error("missing AI method/auth");
+    if (aiMode === "wait") return new Promise((_, reject) => options.signal.addEventListener("abort", () => {
+      aiCancelled = true;
+      reject(options.signal.reason);
+    }, { once: true }));
+    if (aiMode === "error") return Promise.resolve(Response.json({ error: "AI fixture unavailable" }, { status: 502 }));
+    return Promise.resolve(Response.json({
+      titles: { en: "Refined Glass Pitcher", es: "é".repeat(61), pt: "Jarra de vidro" },
+      descriptions: { en: "For home use.", es: "Para el hogar.", pt: "Para uso doméstico." },
+      selling_points: { en: ["Glass body"], es: ["Cuerpo de vidrio"], pt: ["Corpo de vidro"] },
+      missing_facts: ["Capacity"],
+    }));
+  }
+  const id = url.searchParams.get("category_id");
   if (id === "CBT4") return Promise.resolve(Response.json({ error: "upstream failed" }, { status: 502 }));
   if (!options.headers.Authorization) throw Error("missing bearer");
   return Promise.resolve(Response.json({
@@ -37,7 +53,7 @@ window.fetch = (path, options) => {
     ] : [],
   }));
 };
-let editor, working;
+let editor, working, aiRequest, aiCancelled, aiMode;
 function Fixture() {
   const [value, setValue] = useState(() => initialListingFields({
     category_id: "CBT1", category_path: "Home / Jugs",
@@ -45,7 +61,7 @@ function Fixture() {
   }));
   editor = value;
   working = value.category_attributes ?? [];
-  return React.createElement(ListingFieldsEditor, { value, onChange: setValue });
+  return React.createElement(ListingFieldsEditor, { value, onChange: setValue, aiProduct: { source_product_id: "fixture-product" } });
 }
 const assert = (condition, message) => { if (!condition) throw Error(message); };
 const loaded = async (selector, text) => {
@@ -118,11 +134,68 @@ try {
   await loaded("p", "官方未返回可用属性");
   switchCategory("CBT4");
   await loaded('[role="alert"]', "仍可保存工作稿");
+  input(document.querySelector('input[placeholder="整理完标题后再填写或选择官方推荐"]'), "Confirmed / Pitchers");
+  const beforeAI = JSON.stringify(editor);
+  const click = async (selector, text) => {
+    const button = await loaded(selector, text);
+    flushSync(() => button.click());
+  };
+  await click("button", "生成 AI 文案");
+  await loaded("li", "Capacity");
+  assert(JSON.stringify(editor) === beforeAI, "generation applied unapproved content");
+  assert(aiRequest.source_product_id === "fixture-product" && aiRequest.facts.titles.en === "Sample Pitcher" &&
+    !Object.hasOwn(aiRequest.facts, "category_path") && !Object.hasOwn(aiRequest.facts, "descriptions") &&
+    !Object.hasOwn(aiRequest.facts, "notes"), "request included unrelated metadata or omitted current title");
+  const candidateTab = '[aria-label="候选文案语言"] button';
+  await click(candidateTab, "西语 MX");
+  const adoptTitle = await loaded("button", "采纳标题");
+  assert(adoptTitle.disabled, "61-char Spanish candidate eligible for adoption");
+  const editableTitle = (await loaded("label", "候选标题")).querySelector("textarea");
+  input(editableTitle, "e\u0301".repeat(59) + "!");
+  await loaded("small", "60 / 60 字符");
+  assert(!adoptTitle.disabled, "60-char NFC Spanish title unavailable");
+  flushSync(() => adoptTitle.click());
+  assert(editor.titles.es === "é".repeat(59) + "!" && editor.category_id === "CBT4" &&
+    editor.category_path === "Confirmed / Pitchers", "Spanish adoption modified the category or persisted decomposed text");
+  const copied = [];
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: async text => copied.push(text) } });
+  await click("button", "复制候选描述");
+  assert(copied[0] === "Cuerpo de vidrio\n\nPara el hogar." && editor.descriptions === undefined,
+    "description copy persisted content or omitted the selling point");
+  await click("button", "采纳描述");
+  const captured = JSON.parse(JSON.stringify(editor));
+  assert(captured.descriptions.es === copied[0] && captured.descriptions.en === "" && captured.descriptions.pt === "",
+    "description adoption affected other locales");
+  await click(candidateTab, "英语 EN");
+  const history = JSON.stringify(editor.category_attributes);
+  let confirmed = false, dialogCount = 0;
+  window.confirm = message => {
+    dialogCount++;
+    assert(message === "采纳新的英文标题会清空当前 CBT 类目及路径，但已填写属性会保留为历史参考。", "wrong confirmation message");
+    return confirmed;
+  };
+  await click("button", "采纳标题");
+  assert(editor.titles.en === "Sample Pitcher" && editor.category_id === "CBT4" && dialogCount === 1,
+    "cancelled English candidate applied");
+  confirmed = true;
+  await click("button", "采纳标题");
+  assert(editor.titles.en === "Refined Glass Pitcher" && editor.category_id === "" && editor.category_path === "" &&
+    JSON.stringify(editor.category_attributes) === history && dialogCount === 2,
+    "confirmed English candidate lost history or failed to clear category");
+  aiMode = "wait";
+  await click("button", "重新生成");
+  await click("button", "取消生成");
+  await loaded('[role="status"]', "已取消生成");
+  assert(aiCancelled, "desktop cancelled without aborting AI fetch");
+  aiMode = "error";
+  await click("button", "重新生成");
+  await loaded('[role="alert"]', "AI fixture unavailable");
+  assert(editor.titles.en === "Refined Glass Pitcher", "error changed adopted title");
   document.body.dataset.result = "pass";
 } catch (error) { document.body.dataset.result = "fail"; document.body.append(error.message); }
 `;
 
-test("listing editor clears CBT category on English title edits and preserves official attribute history", { timeout: 45_000 }, async () => {
+test("listing editor preserves CBT attribute history and adopts AI copy only on user action", { timeout: 45_000 }, async () => {
   const profile = await mkdtemp(join(tmpdir(), "una-cbt-attrs-"));
   const server = await createServer({
     server: { port: 0 },

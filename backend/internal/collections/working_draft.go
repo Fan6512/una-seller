@@ -34,7 +34,7 @@ type WorkingDraft struct {
 }
 
 func (in WorkingDraftInput) Validate() error {
-	if strings.TrimSpace(in.Title) == "" || utf8.RuneCountInString(in.Title) > 500 ||
+	if strings.TrimSpace(in.Title) == "" || !validListingTitle(in.Title) ||
 		utf8.RuneCountInString(in.Description) > 20000 || utf8.RuneCountInString(in.Notes) > 5000 ||
 		in.ExpectedRevision < 0 {
 		return errors.New("invalid working draft fields")
@@ -89,8 +89,28 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 	if err := in.Validate(); err != nil {
 		return WorkingDraft{}, err
 	}
-	if in.ListingFields != nil && in.ListingFields.Titles.Preferred() != "" {
-		in.Title = in.ListingFields.Titles.Preferred()
+	if in.ListingFields != nil {
+		in.ListingFields = in.ListingFields.normalizedCopy()
+		titles := in.ListingFields.Titles
+		if titles.exceedsRegionalLimits() {
+			var previous LocalizedTitles
+			if in.ExpectedRevision > 0 {
+				draft, err := s.GetWorkingDraft(ctx, owner, id)
+				if err != nil {
+					return WorkingDraft{}, err
+				}
+				if draft == nil || draft.Revision != in.ExpectedRevision {
+					return WorkingDraft{}, ErrDraftConflict
+				}
+				previous = draft.ListingFields.Titles.NFC()
+			}
+			if err := titles.validateRegionalLimits(previous); err != nil {
+				return WorkingDraft{}, err
+			}
+		}
+		if title := titles.Preferred(); title != "" {
+			in.Title = title
+		}
 	}
 	// Lock the owned source row first, matching Promote's lock order.
 	// Conversion and draft writes can therefore never commit out of order.
@@ -140,7 +160,9 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 	} else {
 		err = tx.QueryRow(ctx, `UPDATE app.collection_working_drafts d
 			SET title=$3,description=$4,notes=$5,listing_fields=COALESCE(
-				jsonb_strip_nulls(jsonb_build_object('category_attributes',d.listing_fields->'category_attributes')) || $7::jsonb,
+				jsonb_strip_nulls(jsonb_build_object(
+					'category_attributes',d.listing_fields->'category_attributes',
+					'descriptions',d.listing_fields->'descriptions')) || $7::jsonb,
 				d.listing_fields),
 				revision=d.revision+1,updated_at=now()
 			FROM app.source_products p

@@ -6,7 +6,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // ListingFields are editable preparation data, not official platform attributes.
@@ -15,6 +18,29 @@ type LocalizedTitles struct {
 	English    string `json:"en"`
 	Spanish    string `json:"es"`
 	Portuguese string `json:"pt"`
+}
+
+type LocalizedDescriptions = LocalizedTitles
+
+const LocalizedTitleLimit = 60
+
+var ErrLocalizedTitleTooLong = errors.New("MX Spanish and BR Portuguese titles must be at most 60 characters")
+
+func (titles LocalizedTitles) NFC() LocalizedTitles {
+	return LocalizedTitles{norm.NFC.String(titles.English), norm.NFC.String(titles.Spanish), norm.NFC.String(titles.Portuguese)}
+}
+
+func (titles LocalizedTitles) exceedsRegionalLimits() bool {
+	return utf8.RuneCountInString(titles.Spanish) > LocalizedTitleLimit ||
+		utf8.RuneCountInString(titles.Portuguese) > LocalizedTitleLimit
+}
+
+func (titles LocalizedTitles) validateRegionalLimits(previous LocalizedTitles) error {
+	if (utf8.RuneCountInString(titles.Spanish) > LocalizedTitleLimit && titles.Spanish != previous.Spanish) ||
+		(utf8.RuneCountInString(titles.Portuguese) > LocalizedTitleLimit && titles.Portuguese != previous.Portuguese) {
+		return ErrLocalizedTitleTooLong
+	}
+	return nil
 }
 
 func (titles LocalizedTitles) Preferred() string {
@@ -28,6 +54,7 @@ func (titles LocalizedTitles) Preferred() string {
 
 type ListingFields struct {
 	Titles             LocalizedTitles             `json:"titles"`
+	Descriptions       *LocalizedDescriptions      `json:"descriptions,omitempty"`
 	CategoryID         string                      `json:"category_id"`
 	CategoryPath       string                      `json:"category_path"`
 	Brand              string                      `json:"brand"`
@@ -107,9 +134,32 @@ func validListingText(text string, max int) bool {
 	return utf8.RuneCountInString(text) <= max
 }
 
+func validListingTitle(title string) bool {
+	return validListingText(norm.NFC.String(title), 500)
+}
+
+var listingMarkup = regexp.MustCompile("(?m)<(?:/?[A-Za-z][A-Za-z0-9:-]*(?:[ \\t\\r\\n][^<>]*)?[ \\t\\r\\n]*/?>|[!?][^<>]*>)|" +
+	"^[ \\t]{0,3}(?:#{1,6}(?:[ \\t]|$)|>|[-+*][ \\t]+|[0-9]{1,9}[.)][ \\t]+|~{3,}|(?:[=*_~-][ \\t]*){3,}$|\\[[^\\]\\n]+\\]:)|" +
+	"`|\\[[^\\]\\n]+\\][ \\t]*(?:\\(|\\[)|(?:\\*\\*|__|~~)[^\\n]+(?:\\*\\*|__|~~)|\\*[^*\\n]+\\*|(?:^|[ \\t(])_[^_\\n]+_(?:[ \\t).,!?]|$)")
+
+func IsPlainListingText(text string) bool {
+	return utf8.ValidString(text) && !listingMarkup.MatchString(text) && strings.IndexFunc(text, func(r rune) bool {
+		return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t'
+	}) < 0
+}
+
+func (f ListingFields) normalizedCopy() *ListingFields {
+	f.Titles = f.Titles.NFC()
+	if f.Descriptions != nil {
+		descriptions := f.Descriptions.NFC()
+		f.Descriptions = &descriptions
+	}
+	return &f
+}
+
 func (f ListingFields) Validate() error {
-	if !validListingText(f.Titles.English, 500) || !validListingText(f.Titles.Spanish, 500) ||
-		!validListingText(f.Titles.Portuguese, 500) ||
+	if !validListingTitle(f.Titles.English) || !validListingTitle(f.Titles.Spanish) ||
+		!validListingTitle(f.Titles.Portuguese) ||
 		!validListingText(f.CategoryID, 60) ||
 		!validListingText(f.CategoryPath, 400) || !validListingText(f.Brand, 120) ||
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
@@ -120,6 +170,14 @@ func (f ListingFields) Validate() error {
 		!listingDecimal(f.WidthCM, 10000, false) ||
 		!listingDecimal(f.HeightCM, 10000, false) {
 		return errors.New("invalid listing preparation fields")
+	}
+	if f.Descriptions != nil {
+		descriptions := f.Descriptions.NFC()
+		for _, text := range []string{descriptions.English, descriptions.Spanish, descriptions.Portuguese} {
+			if !validListingText(text, 20000) || !IsPlainListingText(text) {
+				return errors.New("localized descriptions must be plain text of at most 20000 characters each")
+			}
+		}
 	}
 	if f.PurchaseCurrency != "" && !currencyPattern.MatchString(f.PurchaseCurrency) {
 		return errors.New("purchase_currency must contain 3 uppercase letters, e.g. CNY or USD")

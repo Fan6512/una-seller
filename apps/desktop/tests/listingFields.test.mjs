@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {detectTitleLanguage,initialListingFields,preferredTitle,validateListingFields} from "../src/listingFields.ts";
+import {detectTitleLanguage,initialListingFields,listingTextCount,preferredTitle,validateListingFields} from "../src/listingFields.ts";
 
 test("inbox fields begin with captured images and variants, without assigning a fake purchase cost",()=>{
   const source={
@@ -116,4 +116,36 @@ test("purchase drafts default to CNY without relabeling historical non-CNY costs
   const missingCurrency=initialListingFields({purchase_price:"12.00",purchase_currency:""},undefined,"Example product title");
   assert.equal(missingCurrency.purchase_currency,"");
   assert.equal(missingCurrency.purchase_price,"12.00");
+});
+
+test("regional titles count NFC Unicode characters and preserve unchanged saved titles", () => {
+  const fields = initialListingFields(null, undefined, "Glass jar");
+  fields.titles.es = "e\u0301".repeat(59) + "!";
+  fields.titles.pt = "🫗".repeat(59) + " ";
+  assert.equal(listingTextCount(fields.titles.es), 60);
+  assert.equal(listingTextCount(fields.titles.pt), 60);
+  assert.equal(validateListingFields(fields), "");
+  fields.titles.pt += ".";
+  const previous = { ...fields.titles };
+  assert.match(validateListingFields(fields), /60/);
+  assert.equal(validateListingFields(fields, previous), "");
+  fields.titles.pt = fields.titles.pt.replace(".", ",");
+  assert.match(validateListingFields(fields, previous), /60/);
+});
+
+test("optional localized descriptions round-trip independently as multiline plain text", () => {
+  const legacy = initialListingFields(null, undefined, "Glass jar");
+  assert.equal(Object.hasOwn(legacy, "descriptions"), false);
+  const stored = { en: "A glass jar.\n\nFor indoor use.", es: "Para guardar.", pt: "🧪".repeat(20000) };
+  const fields = initialListingFields({ ...legacy, descriptions: stored });
+  assert.deepEqual(fields.descriptions, stored);
+  assert.equal(validateListingFields(fields), "");
+  for (const invalid of ["<p>Hola</p>", "**Hola**", "# Hola", "- Hola", "[Hola](https://example.com)", "\x00"]) {
+    fields.descriptions.es = invalid;
+    assert.match(validateListingFields(fields), /纯文本/);
+  }
+  fields.descriptions.es = "Para guardar.";
+  fields.descriptions.pt += "🧪";
+  assert.match(validateListingFields(fields), /20000/);
+  assert.equal(stored.pt.length, 40000);
 });

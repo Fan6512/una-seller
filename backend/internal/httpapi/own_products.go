@@ -79,7 +79,7 @@ func (a collectionAPI) ownProductDetail(w http.ResponseWriter, r *http.Request) 
 			writeError(w, 415, "expected application/json")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		var input collections.OwnProductEdit
@@ -102,6 +102,10 @@ func (a collectionAPI) ownProductDetail(w http.ResponseWriter, r *http.Request) 
 		}
 		if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, 409, "product changed; reload before saving")
+			return
+		}
+		if errors.Is(err, collections.ErrLocalizedTitleTooLong) {
+			writeError(w, 400, err.Error())
 			return
 		}
 		if errors.Is(err, collections.ErrReadback) {
