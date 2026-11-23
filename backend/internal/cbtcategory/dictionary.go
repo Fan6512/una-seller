@@ -30,9 +30,9 @@ type Reader struct {
 	mu                       sync.Mutex
 	activeInfo, overrideInfo os.FileInfo
 	view                     View
-	activeError string
-	activeRetryAt time.Time
-	activeBackoff time.Duration
+	activeError              string
+	activeRetryAt            time.Time
+	activeBackoff            time.Duration
 }
 
 func NewReader(dir string) *Reader {
@@ -68,9 +68,13 @@ func (r *Reader) Load() View {
 				r.activeError, r.activeRetryAt, r.activeBackoff = "", time.Time{}, 0
 			} else {
 				r.activeInfo, r.activeError = info, "invalid_file"
-				if changed { r.activeBackoff = 0 }
-				if r.activeBackoff == 0 { r.activeBackoff = 5 * time.Second } else {
-				r.activeBackoff = min(2*r.activeBackoff, 60*time.Second)
+				if changed {
+					r.activeBackoff = 0
+				}
+				if r.activeBackoff == 0 {
+					r.activeBackoff = 5 * time.Second
+				} else {
+					r.activeBackoff = min(2*r.activeBackoff, 60*time.Second)
 				}
 				r.activeRetryAt = time.Now().Add(r.activeBackoff)
 			}
@@ -91,31 +95,42 @@ func (r *Reader) Load() View {
 	return r.view
 }
 
-
 type ReaderStatus struct {
-	State string
-	Version string
+	State      string
+	Version    string
 	Translated int
 }
 
 // Status reports the currently loaded dictionary without exposing its private location.
 func (r *Reader) Status() ReaderStatus {
-	if r == nil { return ReaderStatus{State: "not_configured"} }
+	if r == nil {
+		return ReaderStatus{State: "not_configured"}
+	}
 	view := r.Load()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !view.snapshot.Version.valid() {
-		if r.activeError != "" { return ReaderStatus{State: r.activeError} }
+		if r.activeError != "" {
+			return ReaderStatus{State: r.activeError}
+		}
 		return ReaderStatus{State: "not_initialized"}
 	}
 	status := ReaderStatus{State: "loaded", Version: view.snapshot.Version.Created}
 	for id, item := range view.snapshot.Categories {
-		if item.Status != "enabled" { continue }
+		if item.Status != "enabled" {
+			continue
+		}
 		label := view.overrides[pathKey(item.Path)]
-		if label == "" { label = view.snapshot.Categories[id].Zh }
-		if label != "" && label != item.Name { status.Translated++ }
+		if label == "" {
+			label = view.snapshot.Categories[id].Zh
+		}
+		if label != "" && label != item.Name {
+			status.Translated++
+		}
 	}
-	if r.activeError != "" { status.State = "stale_"+r.activeError }
+	if r.activeError != "" {
+		status.State = "stale_" + r.activeError
+	}
 	return status
 }
 

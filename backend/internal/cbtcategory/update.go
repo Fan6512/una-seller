@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,19 +23,19 @@ const progressFile = "progress.jsonl"
 type TranslateBatch func(context.Context, []string) map[string]string
 
 type Summary struct {
-	Version     version `json:"version"`
-	Official    int     `json:"official"`
-	Disabled    int     `json:"disabled"`
-	Removed     int     `json:"removed"`
-	Translated  int     `json:"translated"`
-	Unchanged   int     `json:"unchanged"`
-	Failed      int     `json:"failed"`
-	Unprocessed int     `json:"unprocessed"`
-	Skipped     int     `json:"skipped"`
+	Version     version  `json:"version"`
+	Official    int      `json:"official"`
+	Disabled    int      `json:"disabled"`
+	Removed     int      `json:"removed"`
+	Translated  int      `json:"translated"`
+	Unchanged   int      `json:"unchanged"`
+	Failed      int      `json:"failed"`
+	Unprocessed int      `json:"unprocessed"`
+	Skipped     int      `json:"skipped"`
 	SkipSamples []string `json:"skip_samples,omitempty"`
-	Batches     int     `json:"batches"`
-	Published   bool    `json:"published"`
-	State       string  `json:"state"`
+	Batches     int      `json:"batches"`
+	Published   bool     `json:"published"`
+	State       string   `json:"state"`
 }
 
 type progressRecord struct {
@@ -173,7 +173,7 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 		if err = journal.Sync(); err != nil {
 			return summarize(staged, overrides, failed), err
 		}
-		applyProgress(staged, failed, record)
+		applyProgress(&staged, failed, record)
 		if len(texts) > 0 && len(labels) == 0 {
 			// A provider-wide failure may be a quota or cooldown. Keep completed batches.
 			break
@@ -275,7 +275,7 @@ func openProgress(path string, staged *snapshot) (*os.File, map[string]bool, err
 			file.Close()
 			return nil, nil, errors.New("invalid CBT dictionary progress record")
 		}
-		applyProgress(*staged, failed, record)
+		applyProgress(staged, failed, record)
 	}
 	if end != len(data) {
 		if err = file.Truncate(int64(end)); err != nil {
@@ -290,7 +290,7 @@ func openProgress(path string, staged *snapshot) (*os.File, map[string]bool, err
 	return file, failed, nil
 }
 
-func applyProgress(staged snapshot, failed map[string]bool, record progressRecord) {
+func applyProgress(staged *snapshot, failed map[string]bool, record progressRecord) {
 	if staged.Version != record.Version {
 		return
 	}
