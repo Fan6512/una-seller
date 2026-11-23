@@ -11,14 +11,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
 type storeAPI struct {
-	localizeCategory func(context.Context, meli.CategoryRules) map[string]string
-	auth             collectionAPI
-	service          *meli.Service
-	translator       *TranslationService
+	localizeCategoryAttributes func(context.Context, meli.CategoryRules) map[string]string
+	categoryDictionary         *cbtcategory.Reader
+	auth                       collectionAPI
+	service                    *meli.Service
+	translator                 *TranslationService
 }
 
 func (a storeAPI) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -275,6 +277,7 @@ func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owne
 		var page meli.ListingPage
 		page, err = a.service.ListPublished(r.Context(), owner, store, scope, offset)
 		if err == nil {
+			a.attachPublishedCategoryBreadcrumbs(&page)
 			setStoreReadTiming(w, authStart, readStart)
 			writeJSON(w, http.StatusOK, page)
 			return

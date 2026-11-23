@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
@@ -28,6 +29,10 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 }
 
 func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService) http.Handler {
+	return HandlerWithCategoryDictionary(store, verifier, storeService, translator, nil)
+}
+
+func HandlerWithCategoryDictionary(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, dictionary *cbtcategory.Reader) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
 	// Public, read-only signed updater manifest. No account or store tokens involved.
@@ -37,10 +42,10 @@ func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, st
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	mux.HandleFunc("/api/v1/products", api.ownProducts)
 	mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
-	s := storeAPI{auth: api, service: storeService, translator: translator}
+	s := storeAPI{auth: api, service: storeService, translator: translator, categoryDictionary: dictionary}
 	if translator != nil {
-		s.localizeCategory = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
-			return translator.translate(ctx, categoryTranslationSource(rules.CategoryID), categoryTranslationTexts(rules))
+		s.localizeCategoryAttributes = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
+			return translator.translate(ctx, categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules))
 		}
 	}
 	mux.HandleFunc("/api/v1/stores/order-title-translations", s.orderTitleTranslations)

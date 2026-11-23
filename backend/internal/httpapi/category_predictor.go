@@ -46,13 +46,13 @@ func (a storeAPI) predictCBTCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	var texts []string
+	dictionary := a.categoryDictionary.Load()
+	available := items[:0]
 	for _, item := range items {
-		texts = append(texts, item.CategoryName)
-		for _, node := range item.Path {
-			texts = append(texts, node.Name)
+		if !dictionary.UnavailableForNewListing(item.CategoryID) {
+			item.PathZH = dictionary.Localize(item.Path)
+			available = append(available, item)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "source": "mercado_libre_cbt", "confirmed": false,
-		"translations_zh": a.translator.translate(r.Context(), "en", texts)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": available, "source": "mercado_libre_cbt", "confirmed": false})
 }

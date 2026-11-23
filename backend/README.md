@@ -60,3 +60,36 @@ GitHub Actions provisions disposable PostgreSQL 17 for synthetic integration tes
 - **Token 自动续签与统一门禁已写入 Go**：`RequireStoreConnection` / `RequireSiteConnection` 只在服务端供后续订单和刊登复用；进程内 singleflight + PostgreSQL 短事务行锁/刷新租约，**不在数据库事务里等待外部 HTTP**。平台返回 `invalid_grant` 标记 `reauth_required`；无法确定续签是否成功标记 `refresh_unknown`，拒绝盲目重试旧 Refresh Token。
 - 当前仅实现连接状态/站点映射和服务端门禁组件，**不等于真实 Orders/刊登 API 已经接入**。手动强制续签仅用于服务端受控测试，不向普通桌面 UI 暴露不受限的强制轮换按钮。
 - Windows 真实 OAuth 操作、DevCenter 权限、线上 Callback、第二卖家店铺以及 macOS 运行尚未验收；请如实记 NOT_RUN/UNVERIFIED。
+
+
+## CBT 分类中文词典
+
+在 API 与执行更新命令的服务账号环境中设置同一个绝对目录 `CBT_CATEGORY_DICTIONARY_DIR`。首次载入只需要目录写权限和访问[官方 CBT Dump](https://global-selling.mercadolibre.com/devsite/category-dump-global-selling)的网络连接。
+
+```sh
+cd backend
+export CBT_CATEGORY_DICTIONARY_DIR=/absolute/private/una-seller/cbt-category
+TRANSLATION_PROVIDER=disabled go run ./cmd/api cbt-categories update
+go run ./cmd/api cbt-categories update -max-batches 50
+```
+
+第一条更新读取、校验并发布官方分类数据，供缺少翻译配置时显示原文。第二条沿用配置的 Azure 或百度 Provider，最多处理 50 个批次。省略 `-max-batches` 时持续处理，直到完成或 Provider 暂停。部署后可用 `una-seller-api cbt-categories update` 作为 cron 入口，由同一服务账号运行。同一目录仅允许一个更新进程。锁随文件句柄关闭释放，退出后目录中可保留空的 `update.lock`。
+
+- 命令优先检查官方时间和 MD5。相同版本已完成时跳过翻译。新版本继续使用 ID、名称及完整路径都匹配的译文。运行中断后执行相同命令，从已保存的批次续跑。
+- Provider 已配置且更新暂停时，API 继续读取有效词典。关闭 Provider 时，验证通过的新官方版本可原子发布，未译名称显示原文。停用和已移除类目供历史阅读，已知不可上市的类目从新预测候选排除。
+- 命令输出 JSON。 `official` 是当前 Dump 的类目数，`disabled` 和 `removed` 分别是停用与已移除数量，`translated` 是已有译名数量，`unchanged` 是确认沿用原名数量，`failed` 与 `unprocessed` 分别是失败待重试、尚未处理数量。查看 `published` 和 `state` 判断本次执行是否发布，或是否仅保存了进度。
+- 需要人工调整时，在该目录写入 UTF-8 的 `overrides.json`，按下例保留官方 ID 与完整路径。新版本改名或移动时旧人工译名留在文件中，只有路径仍匹配时才生效。
+
+```json
+[
+  {
+    "path": [
+      { "id": "CBT100", "name": "Home" },
+      { "id": "CBT101", "name": "Other" }
+    ],
+    "zh": "其他家居用品"
+  }
+]
+```
+
+分类预测与编辑器读取服务端词典。已刊登站点商品只有在本地已同步并验证 CBT 父商品归属时，才附带 CBT 类目路径。属性和技术规格继续读取现有官方规则。机器及人工中文名称只供阅读，客户端保存官方分类 ID 和原文。

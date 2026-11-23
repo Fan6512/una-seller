@@ -34,6 +34,7 @@ type CBTCategorySuggestion struct {
 	DomainID     string             `json:"domain_id"`
 	DomainName   string             `json:"domain_name"`
 	Path         []CategoryPathNode `json:"path,omitempty"`
+	PathZH       []string           `json:"path_zh,omitempty"`
 }
 
 func (s *Service) PredictCBTCategories(ctx context.Context, owner, editedEnglishTitle string) ([]CBTCategorySuggestion, error) {
