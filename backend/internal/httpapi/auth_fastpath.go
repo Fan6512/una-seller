@@ -248,7 +248,7 @@ func (f *fastAuth) lookupKey(ctx context.Context, kid, alg string) (any, error) 
 	_, err, _ := f.jwksFlight.Do("jwks", func() (any, error) {
 		f.mu.Lock()
 		now := time.Now()
-		key, found := f.keys[kid]
+		_, found := f.keys[kid]
 		fresh := now.Before(f.keysUntil)
 		if fresh && (found || now.Sub(f.lastJWKSFetch) < jwksMissRetryDelay) {
 			f.mu.Unlock()
