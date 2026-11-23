@@ -1,6 +1,6 @@
 import { getAccessToken, rejectSession } from "./auth";
 import { readAPIError } from "./apiErrors";
-import type { ListingFields } from "./listingFields";
+import type { ListingFields, LocalizedTitles } from "./listingFields";
 
 export type CaptureStatus = "complete" | "partial";
 export const PAGE_SIZE = 24;
@@ -69,7 +69,7 @@ class CollectionRequestError extends Error {
 }
 
 async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true,
-  method: "GET" | "DELETE" | "PUT" = "GET", body?: string): Promise<T> {
+  method: "GET" | "DELETE" | "PUT" | "POST" = "GET", body?: string): Promise<T> {
   let response: Response;
   const fetchWithToken = (token: string | null) => fetch(apiBase + path, {
     method,
@@ -167,6 +167,22 @@ export function getCBTCategorySuggestions(editedEnglishTitle:string,signal:Abort
 
 export function getCollection(id: string, signal: AbortSignal) {
   return requestJSON<CollectionDetail>("/api/v1/collections/" + encodeURIComponent(id), signal);
+}
+
+export type AICopyProduct = ({ source_product_id: string; own_product_id?: never } |
+  { own_product_id: string; source_product_id?: never }) & { expected_revision: number };
+
+export type AICopyResults = {
+  titles: { titles: LocalizedTitles };
+  english: { description: string; selling_points: string[]; missing_facts: string[] };
+  translate: { es: string; pt: string; review_terms: string[]; source_digest: string };
+};
+
+export function generateAICopy<Operation extends keyof AICopyResults>(
+  product: AICopyProduct, operation: Operation, signal: AbortSignal,
+) {
+  return requestJSON<AICopyResults[Operation]>("/api/v1/products/ai-copy", signal, true, "POST",
+    JSON.stringify({ ...product, operation }));
 }
 
 export type CollectionWorkingDraft = {

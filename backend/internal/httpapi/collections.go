@@ -28,11 +28,11 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 	return HandlerWithServices(store, verifier, service, nil)
 }
 
-func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService) http.Handler {
-	return HandlerWithCategoryDictionary(store, verifier, storeService, translator, nil)
+func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, aiCopy ...*AICopyService) http.Handler {
+	return HandlerWithCategoryDictionary(store, verifier, storeService, translator, nil, aiCopy...)
 }
 
-func HandlerWithCategoryDictionary(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, dictionary *cbtcategory.Reader) http.Handler {
+func HandlerWithCategoryDictionary(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, dictionary *cbtcategory.Reader, aiCopy ...*AICopyService) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
 	// Public, read-only signed updater manifest. No account or store tokens involved.
@@ -42,6 +42,11 @@ func HandlerWithCategoryDictionary(store *collections.Store, verifier IdentityVe
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	mux.HandleFunc("/api/v1/products", api.ownProducts)
 	mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
+	var copyService *AICopyService
+	if len(aiCopy) > 0 {
+		copyService = aiCopy[0]
+	}
+	mux.HandleFunc("/api/v1/products/ai-copy", api.aiCopyHandler(copyService))
 	s := storeAPI{auth: api, service: storeService, translator: translator, categoryDictionary: dictionary}
 	if translator != nil {
 		s.localizeCategoryAttributes = func(ctx context.Context, rules meli.CategoryRules) map[string]string {

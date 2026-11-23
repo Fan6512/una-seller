@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ListingFieldsEditor from "./ListingFieldsEditor";
-import { initialListingFields, preferredTitle, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
+import { initialListingFields, listingTextCount, preferredTitle, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
 import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
 
 type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes"> & {listing_fields: ListingFields};
@@ -64,13 +64,13 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     return () => onDirtyChange?.(false);
   }, [touched,dirty,onDirtyChange]);
   const editable = !locked && loadState === "ready" && !saving;
-  const titleCount = charCount(fields.title);
+  const titleCount = listingTextCount(fields.title);
   const descriptionCount = charCount(fields.description);
   const notesCount = charCount(fields.notes);
   const validation = descriptionCount > 20000 ? "商品描述不能超过 20000 字符"
     : notesCount > 5000 ? "整理备注不能超过 5000 字符"
     : titleCount > 500 ? "商品标题不能超过 500 字符"
-    : validateListingFields(fields.listing_fields);
+    : validateListingFields(fields.listing_fields, saved?.listing_fields.titles);
   const valid = !validation && fields.title.trim().length > 0;
 
   const change = (key: keyof DraftFields, value: string) => {
@@ -130,6 +130,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         : saved ? (dirty ? "有未保存修改" : "已保存") : "尚未保存"}</span>
     </div>
     <ListingFieldsEditor value={fields.listing_fields} disabled={!editable}
+      aiProduct={{source_product_id:collectionId,expected_revision:revision}} aiSaved={saved?.listing_fields}
       onChange={listing_fields=>{
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
         setTouched(true);setNotice("");

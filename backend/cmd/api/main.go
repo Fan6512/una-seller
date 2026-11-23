@@ -90,6 +90,10 @@ func main() {
 		}
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, cbtcategory.NewReader(dictionaryDir)), ReadHeaderTimeout: 5 * time.Second}
+	aiCopy, err := httpapi.NewAICopyService(os.Getenv("AI_BASE_URL"), os.Getenv("AI_API_KEY"), os.Getenv("AI_MODEL"))
+	if err != nil {
+		log.Print(err)
+	}
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, cbtcategory.NewReader(dictionaryDir), aiCopy), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }
