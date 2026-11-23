@@ -17,6 +17,7 @@
 
 ## 产品工作流与商品编辑器
 
+- **[UNA Seller 功能状态总台账](product/FEATURE-STATUS.md)：长期记录已完成、进行中、待完成、新需求、PR 与真实验收状态；日常进度以此为准。**
 - [产品三区、智赢编辑窗口参考、AI 文案/白底、账号模板及刊登状态](product/PRODUCT-WORKFLOW-AND-EDITOR.md)：明确采集箱 → 产品库 → 产品列表；阶段化实现，不复制智赢源码和长表单。
 
 ## 当前 MVP 任务书
@@ -24,7 +25,7 @@
 - [ERP 后端与 Windows/macOS 桌面客户端 MVP](architecture/ERP-MVP.md)：Tauri 2 桌面客户端、单一后端 API、PostgreSQL、本地开发与后续云端部署。
 - [浏览器商品采集插件 MVP](product/BROWSER-COLLECTION-PLUGIN-MVP.md)：Chrome/Edge 插件、Amazon 与 Mercado Libre 卡片一键人工采集、商品详情/五点描述/多规格变体。
 
-当前进度（截至 2026-11-18）：**M0-00 基础 CI、Go 1.26、商品采集 Go + PostgreSQL 后端与 Supabase Auth 已合并**；PR #18 云端 HTTPS、Auth、数据库读回、Windows 登录据现场执行报告 PASS。PR #19 浏览器采集插件仍为 Draft，用户已确认 Amazon 商品真实入库和 Windows 采集箱读回，v0.1.3 新版搜索卡片、高清图片/去重、视频过滤尚待实机回归。PR #20 桌面缓存与历史图片展示去重仍为 Draft，切换速度等待 Windows 验收。macOS 实机未验收；产品库、AI 文案/图片、店铺授权及刊登记录为后续阶段。历史部署说明的“待部署”是旧状态，不代表当前未上线。
+历史进度快照（截至 2026-11-18；最新状态以功能总台账为准）：**M0-00 基础 CI、Go 1.26、商品采集 Go + PostgreSQL 后端与 Supabase Auth 已合并**；PR #18 云端 HTTPS、Auth、数据库读回、Windows 登录据现场执行报告 PASS。PR #19 浏览器采集插件仍为 Draft，用户已确认 Amazon 商品真实入库和 Windows 采集箱读回，v0.1.3 新版搜索卡片、高清图片/去重、视频过滤尚待实机回归。PR #20 桌面缓存与历史图片展示去重仍为 Draft，切换速度等待 Windows 验收。macOS 实机未验收；产品库、AI 文案/图片、店铺授权及刊登记录为后续阶段。历史部署说明的“待部署”是旧状态，不代表当前未上线。
 
 ## 历史规划与竞品资料
 
