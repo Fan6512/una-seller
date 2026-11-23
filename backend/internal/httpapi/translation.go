@@ -230,7 +230,12 @@ func categoryTranslationSource(categoryID string) string {
 	return ""
 }
 
-func categoryTranslationTexts(result meli.CategoryRules) []string {
+// TranslateCategoryBatch is for the offline CBT dictionary updater.
+func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts []string) map[string]string {
+	return s.translate(ctx, "en", texts)
+}
+
+func categoryAttributeTranslationTexts(result meli.CategoryRules) []string {
 	var fields []struct {
 		Name   string `json:"name"`
 		Values []struct {
@@ -239,9 +244,7 @@ func categoryTranslationTexts(result meli.CategoryRules) []string {
 	}
 	_ = json.Unmarshal(result.Attributes, &fields)
 	var texts []string
-	for _, node := range result.Path {
-		texts = append(texts, node.Name)
-	}
+
 	for _, field := range fields {
 		texts = append(texts, field.Name)
 	}
