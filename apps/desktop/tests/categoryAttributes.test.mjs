@@ -12,6 +12,7 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import ListingFieldsEditor from "/src/ListingFieldsEditor.tsx";
+import PublishedListingEditor from "/src/PublishedListingEditor.tsx";
 import { initialListingFields, validateListingFields } from "/src/listingFields.ts";
 
 const fields = [
@@ -49,15 +50,18 @@ window.fetch = (path, options) => {
   }
   if (url.pathname === "/api/v1/categories/predict") {
     return Promise.resolve(Response.json({ items: [{ category_id: "CBT2", category_name: "Other", domain_name: "Mixed",
-      path: [{ id: "CBT1", name: "Home" }, { id: "CBT2", name: "Other" }] }],
-      translations_zh: { Home: "家居" } }));
+      path: [{ id: "CBT1", name: "Home" }, { id: "CBT2", name: "Other" }], path_zh: ["家居", "Other"] }] }));
   }
   const id = url.searchParams.get("category_id");
   if (id === "CBT4") return Promise.resolve(Response.json({ error: "upstream failed" }, { status: 502 }));
   if (!options.headers.Authorization) throw Error("missing bearer");
+  if (id === "MLB771") {
+    return Promise.resolve(Response.json({ category_id: id, attributes: [], path: [{ id, name: "Jarras" }] }));
+  }
   return Promise.resolve(Response.json({
     category_id: id, technical_specs_verified: true,
-    translations_zh: id === "CBT2" ? { Home: "家居", Brand: "品牌", Plastic: "塑料", Style: "款式" } : undefined,
+    translations_zh: id === "CBT2" ? { Brand: "品牌", Plastic: "塑料", Style: "款式" } : undefined,
+    path_zh: id === "CBT2" ? ["家居", "Other"] : undefined,
     technical_requirements: id === "CBT2" ? ["STYLE"] : undefined,
     technical_requirement_names: id === "CBT2" ? { STYLE: "Style" } : undefined,
     path: [{ id: "CBT1", name: "Home" }, { id, name: id === "CBT1" ? "Jugs" : "Other" }],
@@ -272,6 +276,19 @@ try {
   await click("button", "AI 优化标题");
   await loaded('[role="alert"]', "AI fixture unavailable");
   assert(editor.titles.en === "Refined Glass Pitcher", "error changed adopted title");
+  const published = { id: "MLB1", category_id: "MLB771", description: "Fixture details",
+    cbt_category_path: { original: ["Home", "Other"], zh: ["家居", "其他"] } };
+  const showPublished = listing => flushSync(() => root.render(React.createElement(PublishedListingEditor, {
+    key: listing.id, listing, site: "MLB", logistic: "remote", store: "fixture", members: [listing],
+  })));
+  showPublished(published);
+  await loaded(".published-category-path", "家居 / 其他");
+  await loaded(".published-hint", "Home / Other");
+  await loaded(".published-category-path", "Jarras");
+  showPublished({ ...published, id: "MLB2", cbt_category_path: undefined });
+  await loaded(".published-category-path", "Jarras");
+  assert(![...document.querySelectorAll(".published-category-path")].some(node => node.textContent.includes("家居")),
+    "site-only listing reused another listing's CBT breadcrumb");
   document.body.dataset.result = "pass";
 } catch (error) { document.body.dataset.result = "fail"; document.body.append(error.message); }
 `;
@@ -290,7 +307,7 @@ test("listing editor keeps official CBT data with partial translations and expli
       },
       load(id) {
         if (id === "\0cbt-fixture.js") return fixture;
-        if (id === "\0cbt-auth") return 'export const getAccessToken = async () => "fixture"; export const rejectSession = () => {};';
+        if (id === "\0cbt-auth") return 'const lifetime = new AbortController().signal; export const authLifetime = () => lifetime; export const getAccessToken = async () => "fixture"; export const rejectSession = () => {};';
       },
       configureServer(server) {
         server.middlewares.use(async (req, res, next) => {

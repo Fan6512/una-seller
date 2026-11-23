@@ -138,6 +138,7 @@ export type CBTCategoryRules = {
   category_id: string;
   attributes: CBTAttributeRule[];
   path?: { id: string; name: string }[];
+  path_zh?: string[];
   translations_zh?: Record<string, string>;
   technical_specs_verified?: boolean;
   technical_requirements?: string[];
@@ -155,11 +156,12 @@ export type CBTCategorySuggestion = {
   domain_id: string;
   domain_name: string;
   path?: { id: string; name: string }[];
+  path_zh?: string[];
 };
 export function getCBTCategorySuggestions(editedEnglishTitle:string,signal:AbortSignal){
   const q=editedEnglishTitle.trim();
   if(!q||q.split(/\s+/u).length<2)throw new Error("请先填写完整英文标题，再请求 CBT 类目推荐");
-  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean;translations_zh?:Record<string,string>}>(
+  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean}>(
     "/api/v1/categories/predict?q="+encodeURIComponent(q),signal);
 }
 
