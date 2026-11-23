@@ -20,8 +20,8 @@ const (
 )
 
 var (
-	userIDFormat = regexp.MustCompile("^[1-9][0-9]{0,19}$")
-	siteIDFormat = regexp.MustCompile("^[A-Z]{3}$")
+	userIDFormat   = regexp.MustCompile("^[1-9][0-9]{0,19}$")
+	siteIDFormat   = regexp.MustCompile("^[A-Z]{3}$")
 	safeEnumFormat = regexp.MustCompile("^[a-z][a-z0-9_]{0,31}$")
 )
 
