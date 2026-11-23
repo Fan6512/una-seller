@@ -293,12 +293,20 @@ func sameAICopyTerms(source, text string, pattern *regexp.Regexp, fold bool) boo
 	for _, term := range pattern.FindAllString(source, -1) {
 		if fold {
 			term = strings.ToLower(strings.Join(strings.Fields(term), ""))
+			if pattern == aiCopyUnits {
+				number := aiCopyNumbers.FindString(term)
+				term = normalizedAICopyDecimal(number) + strings.TrimPrefix(term, number)
+			}
 		}
 		counts[term]++
 	}
 	for _, term := range pattern.FindAllString(text, -1) {
 		if fold {
 			term = strings.ToLower(strings.Join(strings.Fields(term), ""))
+			if pattern == aiCopyUnits {
+				number := aiCopyNumbers.FindString(term)
+				term = normalizedAICopyDecimal(number) + strings.TrimPrefix(term, number)
+			}
 		}
 		counts[term]--
 	}
@@ -310,6 +318,57 @@ func sameAICopyTerms(source, text string, pattern *regexp.Regexp, fold bool) boo
 	return true
 }
 
+// Locale decimal commas are equivalent to decimal points only when unambiguous.
+func normalizedAICopyDecimal(term string) string {
+	if strings.Contains(term, "/") || strings.Count(term, ",")+strings.Count(term, ".") != 1 {
+		return term
+	}
+	index := strings.IndexAny(term, ".,")
+	places := len(term) - index - 1
+	if places == 3 || places < 1 || places > 4 {
+		return term
+	}
+	return strings.ReplaceAll(term, ",", ".")
+}
+
+func compareAICopyNumbers(source, translated string) (bool, []string) {
+	before := aiCopyNumbers.FindAllString(source, -1)
+	after := aiCopyNumbers.FindAllString(translated, -1)
+	if len(before) != len(after) {
+		return false, nil
+	}
+	used := make([]bool, len(after))
+	var review []string
+	for _, original := range before {
+		index, uncertain := -1, false
+		for i, candidate := range after {
+			if !used[i] && (original == candidate ||
+				normalizedAICopyDecimal(original) == normalizedAICopyDecimal(candidate)) {
+				index = i
+				break
+			}
+		}
+		if index < 0 && !strings.Contains(original, "/") {
+			compact := strings.NewReplacer(",", "", ".", "").Replace(original)
+			for i, candidate := range after {
+				if !used[i] && !strings.Contains(candidate, "/") &&
+					compact == strings.NewReplacer(",", "", ".", "").Replace(candidate) {
+					index, uncertain = i, true
+					break
+				}
+			}
+		}
+		if index < 0 {
+			return false, nil
+		}
+		used[index] = true
+		if uncertain {
+			review = append(review, "数字格式请人工核对："+original+" / "+after[index])
+		}
+	}
+	return true, review
+}
+
 func parseAICopyTranslation(content, source string) (aiCopyTranslation, bool) {
 	var result aiCopyTranslation
 	if !strictAICopyJSON(content, &result) || !validateAICopyList(result.ReviewTerms, 0, 20, 120) {
@@ -318,11 +377,16 @@ func parseAICopyTranslation(content, source string) (aiCopyTranslation, bool) {
 	result.Spanish, result.Portuguese = norm.NFC.String(result.Spanish), norm.NFC.String(result.Portuguese)
 	paragraphs := len(aiCopyParagraph.FindAllString(strings.TrimSpace(source), -1))
 	for _, text := range []string{result.Spanish, result.Portuguese} {
-		if !validAICopyText(text, 20000, true) || !sameAICopyTerms(source, text, aiCopyNumbers, false) ||
+		matched, notes := compareAICopyNumbers(source, text)
+		if !validAICopyText(text, 20000, true) || !matched ||
 			!sameAICopyTerms(source, text, aiCopyModels, false) || !sameAICopyTerms(source, text, aiCopyUnits, true) ||
 			len(aiCopyParagraph.FindAllString(strings.TrimSpace(text), -1)) != paragraphs {
 			return result, false
 		}
+		result.ReviewTerms = append(result.ReviewTerms, notes...)
+	}
+	if len(result.ReviewTerms) > 20 {
+		return result, false
 	}
 	return result, true
 }

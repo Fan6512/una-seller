@@ -93,6 +93,24 @@ func TestAICopyValidatesStructuredOutput(t *testing.T) {
 	}
 }
 
+func TestAICopyLocaleNumbers(t *testing.T) {
+	if matched, notes := compareAICopyNumbers("Capacity 5.5 cm", "Capacidad 5,5 cm"); !matched || len(notes) != 0 {
+		t.Fatalf("decimal comma rejected or flagged: %v %v", matched, notes)
+	}
+	if matched, _ := compareAICopyNumbers("Capacity 250 g", "Capacidad 500 g"); matched {
+		t.Fatal("changed quantity accepted")
+	}
+	if matched, notes := compareAICopyNumbers("Pack 1,000 pieces", "Paquete 1.000 piezas"); !matched || len(notes) != 1 {
+		t.Fatalf("ambiguous grouping not flagged: %v %v", matched, notes)
+	}
+	source := "Capacity 5.5 cm.\\n\\nPack 1,000 pieces."
+	body := `{"es":"Capacidad 5,5 cm.\\n\\nPaquete 1.000 piezas.","pt":"Capacidade 5,5 cm.\\n\\nPacote 1.000 peças.","review_terms":[]}`
+	result, ok := parseAICopyTranslation(body, source)
+	if !ok || len(result.ReviewTerms) != 2 {
+		t.Fatalf("localized formatting should require review instead of 502: %+v %t", result, ok)
+	}
+}
+
 func TestAICopyProviderResponseBoundsAndRedirect(t *testing.T) {
 	var redirects atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
