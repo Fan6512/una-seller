@@ -365,7 +365,7 @@ func TestDictionaryFallbackForFullWidthAndLongAncestors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			leaf := tt.path[len(tt.path)-1]
 			categories := map[string]category{
-				leaf.ID: {ID: leaf.ID, Name: leaf.Name, Path: tt.path, Status: "enabled"},
+				leaf.ID:  {ID: leaf.ID, Name: leaf.Name, Path: tt.path, Status: "enabled"},
 				"CBT999": {ID: "CBT999", Name: "Other", Path: []PathNode{{ID: "CBT999", Name: "Other"}}, Status: "enabled"},
 			}
 			found := false
