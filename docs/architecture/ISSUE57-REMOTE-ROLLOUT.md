@@ -13,9 +13,11 @@
 | Go / Nginx | PASS | 固定提交 5bdac966，部署二进制前后一致；Go 仅监听回环。Nginx 仅增补产品箱与类目预测转发。 |
 | 匿名 HTTP | PASS | 回环及公网 healthz 200；采集、店铺、订单、产品箱与类目预测无 Token 返回 401。 |
 | 历史 Windows 部分验收 | PASS | #65 旧 QA HEAD c131da1b 记录了工作稿云端保存和重启读回、三语标题、图片及 9 变体保存。 |
-| 云端转库和独立产品重启读回 | MANUAL_PENDING(AUTH, GUI) | 从批准的非实盘采集来源保存工作稿，勾选转库后在产品箱编辑并重启复查。当前 #65 候选 GUI 同步复验。 |
+| 云端转库和 Windows 客户端重启读回（#57 必需） | MANUAL_PENDING(AUTH, GUI) | 从批准的非实盘采集来源保存工作稿，勾选转库后在产品箱编辑并重启复查。当前 #65 候选 GUI 同步复验。 |
 | CBT 官方类目推荐 | MANUAL_PENDING(AUTH) | 用已授权测试店铺提交英文测试标题，记录真实候选或官方拒绝状态。 |
 | 生产回退 | NOT_RUN | 备有 Go 与 Nginx 私有回退副本。切换门禁通过，实际未回退。 |
+
+**验收证据范围**：#57 必须完成 Windows 客户端重启后的独立产品读回。Go 进程重启后读回可在隔离环境作为附加验证。已有 PostgreSQL 恢复和迁移演练回执继续有效，本项验收沿用现役 Go 进程和已迁移的数据库，无需重启生产 Go 或重复迁移。
 
 [备份与恢复](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002) · [两次迁移演练](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7075825024) · [生产切换](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7077260112) · [Windows 历史反馈](https://github.com/Fan6512/una-seller/pull/65)
 
