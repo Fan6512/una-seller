@@ -7,9 +7,9 @@ type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes"> & 
 type LoadState = "loading" | "ready" | "error";
 const charCount = (value: string) => Array.from(value).length;
 
-export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDescription, sourceProduct, onDirtyChange }: {
+export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDescription, sourceProduct, onDirtyChange, locked }: {
   collectionId: string; sourceTitle: string; sourceDescription: string | null;
-  sourceProduct: ListingSource; onDirtyChange?: (dirty: boolean) => void;
+  sourceProduct: ListingSource; locked: boolean; onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [fields, setFields] = useState<DraftFields>({
     title: sourceTitle, description: sourceDescription ?? "", notes: "",
@@ -63,12 +63,15 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     onDirtyChange?.(touched && dirty);
     return () => onDirtyChange?.(false);
   }, [touched,dirty,onDirtyChange]);
+  const editable = !locked && loadState === "ready" && !saving;
   const titleCount = charCount(fields.title);
   const descriptionCount = charCount(fields.description);
   const notesCount = charCount(fields.notes);
-  const valid = fields.title.trim().length > 0 && titleCount <= 500 &&
-    descriptionCount <= 20000 && notesCount <= 5000 &&
-    !validateListingFields(fields.listing_fields);
+  const validation = descriptionCount > 20000 ? "商品描述不能超过 20000 字符"
+    : notesCount > 5000 ? "整理备注不能超过 5000 字符"
+    : titleCount > 500 ? "商品标题不能超过 500 字符"
+    : validateListingFields(fields.listing_fields);
+  const valid = !validation && fields.title.trim().length > 0;
 
   const change = (key: keyof DraftFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }));
@@ -84,7 +87,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   };
 
   const save = async () => {
-    if (!valid || loadState !== "ready" || saving || !dirty) return;
+    if (!valid || !editable || !dirty) return;
     const controller = new AbortController();
     active.current?.abort();
     active.current = controller;
@@ -126,31 +129,27 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       <span>{loadState === "loading" ? "读取中…" : loadState === "error" ? "状态未知 · 保存禁用"
         : saved ? (dirty ? "有未保存修改" : "已保存") : "尚未保存"}</span>
     </div>
-    <p>这里是转产品库前的暂存稿，原始采集标题、描述和图片不会被覆盖。</p>
-    <ListingFieldsEditor value={fields.listing_fields} disabled={loadState !== "ready" || saving}
+    <ListingFieldsEditor value={fields.listing_fields} disabled={!editable}
       onChange={listing_fields=>{
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
         setTouched(true);setNotice("");
       }} />
     <label>整理后的商品描述
-      <textarea rows={5} value={fields.description} readOnly={loadState !== "ready" || saving}
+      <textarea rows={5} value={fields.description} readOnly={!editable}
         onChange={(e) => change("description", e.target.value)} />
       <small>{descriptionCount} / 20000 字符</small>
     </label>
     <label>供应商 / 规格 / 包装等整理备注（仅内部使用，不直接刊登）
-      <textarea rows={3} value={fields.notes} readOnly={loadState !== "ready" || saving}
+      <textarea rows={3} value={fields.notes} readOnly={!editable}
         onChange={(e) => change("notes", e.target.value)} />
       <small>{notesCount} / 5000 字符</small>
     </label>
-    {loadState === "ready" && !valid && <p className="working-draft-error" role="alert">
-      请检查标题、描述、备注和上架资料中的字段格式；系统会标记不合规的具体输入。
-    </p>}
+    {loadState === "ready" && validation && <p className="working-draft-error" role="alert">{validation}</p>}
     {error && <p className="working-draft-error" role="alert">{error}</p>}
     {notice && <p className="working-draft-success" role="status">{notice}</p>}
     {loadState === "error" && <button type="button" className="refresh-button"
-      onClick={refreshDraft}>重新加载工作稿</button>}
+      disabled={locked} onClick={refreshDraft}>重新加载工作稿</button>}
     <button type="button" className="primary-button" onClick={() => void save()}
-      disabled={!valid || loadState !== "ready" || saving || !dirty}>{saving ? "保存中…" : "保存整理工作稿"}</button>
-    <p className="working-draft-hint">保存工作稿后可以选择「通过」，转入产品箱继续修改；不会自动刊登。</p>
+      disabled={!valid || !editable || !dirty}>{saving ? "保存中…" : "保存整理工作稿"}</button>
   </section>;
 }
