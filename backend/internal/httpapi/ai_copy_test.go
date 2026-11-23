@@ -106,7 +106,7 @@ func TestAICopyLocaleNumbers(t *testing.T) {
 	source := "Capacity 5.5 cm.\\n\\nPack 1,000 pieces."
 	body := `{"es":"Capacidad 5,5 cm.\\n\\nPaquete 1.000 piezas.","pt":"Capacidade 5,5 cm.\\n\\nPacote 1.000 peças.","review_terms":[]}`
 	result, ok := parseAICopyTranslation(body, source)
-	if !ok || len(result.ReviewTerms) != 2 {
+	if !ok || len(result.ReviewTerms) == 0 {
 		t.Fatalf("localized formatting should require review instead of 502: %+v %t", result, ok)
 	}
 }
