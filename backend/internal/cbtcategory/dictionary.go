@@ -116,7 +116,7 @@ func (r *Reader) Status() ReaderStatus {
 		return ReaderStatus{State: "not_initialized"}
 	}
 	status := ReaderStatus{State: "loaded", Version: view.snapshot.Version.Created}
-	for id, item := range view.snapshot.Categories {
+	for _, item := range view.snapshot.Categories {
 		if item.Status != "enabled" {
 			continue
 		}
