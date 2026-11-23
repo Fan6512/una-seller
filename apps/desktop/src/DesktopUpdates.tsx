@@ -5,6 +5,11 @@ import { formatDesktopVersion } from "./desktopVersion";
 
 type Phase = "checking" | "idle" | "downloading" | "ready" | "installing";
 type Activity = RefObject<{ syncs: number; installing: boolean }>;
+const TEST_UPDATES_KEY = "una-seller:include-test-updates";
+function readTestUpdatePreference(): boolean {
+  try { return window.localStorage.getItem(TEST_UPDATES_KEY) === "1"; }
+  catch { return false; }
+}
 
 export function useDesktopUpdates(activity: Activity) {
   const started = useRef(false);
@@ -18,8 +23,9 @@ export function useDesktopUpdates(activity: Activity) {
   const [current, setCurrent] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState({ received: 0, total: 0 });
+  const [includeTestUpdates, setIncludeTestUpdates] = useState(readTestUpdatePreference);
 
-  const checkForUpdate = useCallback(async (previous?: Update | null) => {
+  const checkForUpdate = useCallback(async (previous?: Update | null, testUpdates = includeTestUpdates) => {
     if (running.current) return;
     running.current = true;
     setPhase("checking");
@@ -33,7 +39,10 @@ export function useDesktopUpdates(activity: Activity) {
       const installed = isTauri() ? await invoke<string | null>("desktop_update_version") : null;
       setVersion(installed);
       if (!installed) return;
-      const next = await check({ timeout: 15_000 });
+      const next = await check({
+        timeout: 30_000,
+        headers: { "X-Una-Include-Prerelease": testUpdates ? "1" : "0" },
+      });
       setUpdate(next);
       setCurrent(!next);
     } catch (error) {
@@ -43,7 +52,7 @@ export function useDesktopUpdates(activity: Activity) {
       running.current = false;
       setPhase("idle");
     }
-  }, []);
+  }, [includeTestUpdates]);
 
   useEffect(() => {
     if (started.current) return;
@@ -59,6 +68,15 @@ export function useDesktopUpdates(activity: Activity) {
       .catch(() => { if(mounted)setInstalledVersionError(true); });
     return () => { mounted = false; };
   }, []);
+
+  function changeTestUpdates(enabled: boolean) {
+    try {
+      window.localStorage.setItem(TEST_UPDATES_KEY, enabled ? "1" : "0");
+    } catch { /* Preferences are optional; still apply for this session. */ }
+    setIncludeTestUpdates(enabled);
+    // Clear any previous channel's candidate before checking the new setting.
+    if (phase === "idle" || phase === "ready") void checkForUpdate(update, enabled);
+  }
 
   async function download() {
     if (!update || phase !== "idle" || running.current) return;
@@ -102,13 +120,13 @@ export function useDesktopUpdates(activity: Activity) {
     }
   }
 
-  return { installedVersion, installedVersionError, version, phase, update, current, error, progress, checkForUpdate, download, install };
+  return { installedVersion, installedVersionError, version, phase, update, current, error, progress, includeTestUpdates, changeTestUpdates, checkForUpdate, download, install };
 }
 
 export default function DesktopUpdates({ updates, syncCount, onLater }: {
   updates: ReturnType<typeof useDesktopUpdates>; syncCount: number; onLater: () => void;
 }) {
-  const { installedVersion, installedVersionError, version, phase, update, current, error, progress, checkForUpdate, download, install } = updates;
+  const { installedVersion, installedVersionError, version, phase, update, current, error, progress, includeTestUpdates, changeTestUpdates, checkForUpdate, download, install } = updates;
   const busy = phase === "checking" || phase === "downloading" || phase === "installing";
 
   return <>
@@ -116,7 +134,13 @@ export default function DesktopUpdates({ updates, syncCount, onLater }: {
     <section className="detail-section" aria-label="客户端更新">
       <h2>客户端更新</h2>
       <p role="status">当前版本：{installedVersion ? formatDesktopVersion(installedVersion) : (installedVersionError?"无法读取版本":isTauri()?"版本读取中…":"开发预览")}</p>
-      <p className="listing-fields-note">测试版不启用正式在线更新；正式更新由签名发行版本提供。</p>
+      <label className="desktop-test-updates-toggle">
+        <input type="checkbox" checked={includeTestUpdates}
+          disabled={busy}
+          onChange={e=>changeTestUpdates(e.target.checked)}/>
+        <span>接收测试版更新</span>
+      </label>
+      <p className="listing-fields-note">默认关闭，只检查已发布的正式版本；开启后会同时检查正式版与 Pre-release，仅提示版本更高的更新。测试版同样必须通过签名验证。</p>
       <p className="page-actions">
         <button type="button" disabled={busy || phase === "ready" || (!version && !error)} onClick={() => void checkForUpdate(update)}>检查更新</button>
       </p>

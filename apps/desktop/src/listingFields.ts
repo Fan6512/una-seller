@@ -38,7 +38,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   const defaults: ListingFields = {
     titles: titlesFromSource(capturedTitle),
     category_id:"",category_path:"",brand:"",model:"",
-    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"",
+    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"CNY",
     weight_g:"",length_cm:"",width_cm:"",height_cm:"",
     bullet_points:source?.bullet_points.slice()??[],
     attributes:[],
@@ -54,6 +54,8 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   if(!saved)return defaults;
   const result:ListingFields={...defaults,...saved,
     titles:saved.titles ? {...defaults.titles,...saved.titles} : defaults.titles};
+  // Do not silently reinterpret a legacy, unlabelled purchase amount as CNY.
+  if(saved.purchase_price && !saved.purchase_currency) result.purchase_currency="";
   result.bullet_points=saved.bullet_points?.slice()??defaults.bullet_points;
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
@@ -103,6 +105,7 @@ export function validateListingFields(v:ListingFields):string {
   if(v.variants&&v.variants.length>100)return "规格不能超过 100 项";
   if(v.variants?.some(x=>!isMoney(x.price)||Array.from(x.seller_sku).length>120||
     (x.currency!==""&&!/^[A-Z]{3}$/.test(x.currency))||
+    Object.keys(x.attributes).length===0||
     Object.entries(x.attributes).some(([k,val])=>!k||!val||Array.from(k).length>80||Array.from(val).length>200)||
     x.image_urls.length>30||x.image_urls.some(url=>!/^https:\/\/[^\s]+$/i.test(url)||url.length>2000))) {
     return "变体价格、币种（3 位大写字母）、SKU、属性或图片 URL 不符合要求";

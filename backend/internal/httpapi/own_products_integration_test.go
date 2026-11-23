@@ -86,9 +86,16 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if w := call(owner, "POST", approvePath, `{"expected_revision":0}`); w.Code != 409 {
 		t.Fatalf("stale approval %d", w.Code)
 	}
-	first := call(owner, "POST", approvePath, `{"expected_revision":1}`)
-	if first.Code != 201 {
-		t.Fatalf("approval %d %s", first.Code, first.Body.String())
+	approvals := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { approvals <- call(owner, "POST", approvePath, `{"expected_revision":1}`) }()
+	}
+	first, repeated := <-approvals, <-approvals
+	if repeated.Code == 201 {
+		first, repeated = repeated, first
+	}
+	if first.Code != 201 || repeated.Code != 200 {
+		t.Fatalf("concurrent approvals returned %d and %d", first.Code, repeated.Code)
 	}
 	var response struct {
 		Result  string                 `json:"result"`
@@ -98,6 +105,9 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := response.Product.ID
+	if err = json.Unmarshal(repeated.Body.Bytes(), &response); err != nil || response.Result != "already_approved" || response.Product.ID != id {
+		t.Fatalf("concurrent approval did not return the same product: %s", repeated.Body.String())
+	}
 	if !collections.ValidUserID(id) || response.Product.Title != "Curated English Title" ||
 		response.Product.SourceTitle != "Captured original" ||
 		response.Product.Notes != "Internal supplier" ||
