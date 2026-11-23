@@ -46,8 +46,8 @@
 | ID | 功能 | 当前状态 | 关联 PR / Issue | 下一步或完成判据 |
 | --- | --- | --- | --- | --- |
 | COL-02 | 采集图片高清化、去重、视频过滤、部分成功原因与变体完整性 | 代码已有；新版实测未完成 | [#19](https://github.com/Fan6512/una-seller/pull/19)、[#20](https://github.com/Fan6512/una-seller/pull/20) / [#6](https://github.com/Fan6512/una-seller/issues/6) | 选真实复杂商品，核实图片质量、规格归属、采集和切换速度 |
-| WB-01 | 采集箱整理工作稿：编辑、保存、并发冲突与重启恢复 | 代码已合并；最新 GUI 待验收 | [#52](https://github.com/Fan6512/una-seller/pull/52)、[#59](https://github.com/Fan6512/una-seller/pull/59) | 同一真实来源保存、重启读回，不覆盖原始采集 |
-| WB-02 | 独立产品箱、勾选转库、来源追溯和再次编辑 | 代码已合并；完整 Windows 验收待完成 | [#59](https://github.com/Fan6512/una-seller/pull/59)、[#65](https://github.com/Fan6512/una-seller/pull/65) / [#57](https://github.com/Fan6512/una-seller/issues/57) | 工作稿 → 产品箱 → 编辑 → 重启读回；不得重复建产品或丢字段 |
+| WB-01 | 采集箱整理工作稿：编辑、保存、并发冲突与重启恢复 | 核心实机流程 OWNER PASS（2026-11-23）；边界用例仍保留 CI 证据 | [#52](https://github.com/Fan6512/una-seller/pull/52)、[#59](https://github.com/Fan6512/una-seller/pull/59) | 负责人已确认真实采集→整理→保存→重启读回；不重复安装复测。保留原始快照与 CAS 的定向回归 |
+| WB-02 | 独立产品箱、勾选转库、来源追溯和再次编辑 | 转库→编辑→重启读回 OWNER PASS（2026-11-23）；批量/并发等边界仍以定向测试为准 | [#59](https://github.com/Fan6512/una-seller/pull/59)、[#65](https://github.com/Fan6512/una-seller/pull/65) / [#57](https://github.com/Fan6512/una-seller/issues/57) | 核心工作流已由负责人实测；仅产品箱发布前字段扩充与实际问题做定点回归，不重新执行整套验收 |
 | WB-03 | 语言标签、图片墙、变体 SKU 表、重量尺寸及采购成本编辑 | 代码已合并；最终 UI 验收待完成 | [#59](https://github.com/Fan6512/una-seller/pull/59)、[#65](https://github.com/Fan6512/una-seller/pull/65) | 用真实多变体产品核实编辑、保存、主图、图片顺序和 SKU 对应 |
 | CAT-01 | 官方 CBT 类目预测、分类必填属性和技术规格读取 | 代码已合并；真实类目/客户端回归待完成 | [#31](https://github.com/Fan6512/una-seller/pull/31)、[#68](https://github.com/Fan6512/una-seller/pull/68) | 选择两种官方类目，核对枚举、单位、必填与切换类目后的已保存字段 |
 | TR-01 | 订单标题、类目、属性、枚举等中文阅读（Azure/百度择一） | 代码已合并；真实翻译尚未验收 | [#67](https://github.com/Fan6512/una-seller/pull/67)、[#70](https://github.com/Fan6512/una-seller/pull/70) | 服务端配置合规凭据，测 EN/ES/PT、回退及原文/官方 ID 保留 |
@@ -73,6 +73,8 @@
 
 | ID | 功能 / 最小交付目标 | 前置条件 | 参考 PR / Issue | 优先级 |
 | --- | --- | --- | --- | --- |
+| ACC-01 | **设置 → 账号管理：**登录邮箱、修改密码与必要再验证；不增加独立账号系统 | 现有 Supabase Auth 登录和本人会话 | [Issue #75](https://github.com/Fan6512/una-seller/issues/75) | **P0**，集中 Windows QA 前交付 |
+| CRED-01 | **用户云端 AI/翻译服务绑定：**保存/替换/删除/测试用户自己的 AI Key、Azure 或百度 Key，服务端加密、按认证 owner 动态选择服务 | 私有加密凭据存储、owner scoped API、受控 HTTPS、限流及密钥不回传；与 #66 的 0010 迁移协调 | [Issue #75](https://github.com/Fan6512/una-seller/issues/75) | **P0**，AI 真机验证前交付 |
 | CBT-02 | **C1 真实刊登：**产品箱选择店铺/获准站点、官方模型创建、逐站点发布记录与安全回读重试 | CBT-01 实际账号取证；独立审批发布写入 | C0 [#69](https://github.com/Fan6512/una-seller/pull/69)、[#73](https://github.com/Fan6512/una-seller/pull/73)；[Issue #50](https://github.com/Fan6512/una-seller/issues/50) | **P0** |
 | CBT-03 | 站点售价/币种、库存、销售条件、店铺模板，核对 CBT/UP/Family/变体/SKU 映射 | 当前账号可写模型/官方字段已确认 | [Issue #50](https://github.com/Fan6512/una-seller/issues/50) | **P0** |
 | IMG-01 | 合法来源图片原件/选用版本可持续保存；上传 Mercado Libre 并取得真实 picture_id | 明确图片使用权、上传 API 和账号权限 | [Issue #50](https://github.com/Fan6512/una-seller/issues/50) | **P0** |
@@ -88,13 +90,16 @@
 | DESK-02 | macOS arm64/x64 原生实机登录、业务 UI 和更新验收 | macOS 测试环境与已批准构建 | [CROSS_PLATFORM](../architecture/CROSS_PLATFORM.md) | P1（正式双端交付前） |
 | DOC-01 | 将旧 README/部分早期阶段说明与最新实际状态对齐 | 以本台账与最终实测证据为准 | [README](../../README.md)、[docs/README](../README.md) | P2，不阻断开发 |
 
-## 六、下一轮执行顺序（先完整闭环，不并行扩大战线）
+## 六、下一轮执行顺序（2026-11-23 负责人最新决策：先实现，最后一次集中 Windows QA）
 
-1. **配置真实翻译 + AI 测试服务**：先 TR-02 五批中文试译，核对成功率/费用/停机恢复；同时用一个已保存商品测 TR-01、AI-01、AI-02。凭据只放服务端。
-2. **同一 main 版本的 Windows QA**：验收 WB-01/02/03、CAT-01、TR/AI 和产品字段保存读回，真实问题只做定点修复。测试包不冒充正式发行。
-3. **CBT C0 真实只读取证**：已有 OAuth 不代表明确 business_model。对获批账号运行现有探针，脱敏记录可写模型与站点能力。
-4. **推进首次真实 CBT 刊登**：先收敛 CBT-03/IMG-01，再作为一个最小 C1 交付 CBT-02 + PUB-03；先受控测试一件、多站点结果分别回读。**任何 POST/迁移/正式发布都需独立批准。**
-5. **商品可发布后再扩展运营**：已刊登维护 PUB-04；#66 Shipment 和 #49 Billing 的真实验证与合并；1688 自动化、客服等后置。
+1. **不重测已经实机确认的核心工作台**：负责人已确认真实采集、整理工作稿、产品箱转库、编辑、重启读回。后续仅做变更范围的 Go/PG17、TS/Mock 定向回归；高清图/复杂变体等尚未报告 PASS 的细项继续追踪。
+2. **先建设账号云端服务**：完成 ACC-01/CRED-01，设置中增加修改密码和用户自有 AI/中文翻译 Key；Go 服务器由启动级单一环境凭据调整为每个登录用户按请求取回加密 Key。服务端真实测试已保存产品的三语文案，失败不得覆盖草稿。 [Issue #75](https://github.com/Fan6512/una-seller/issues/75)。
+3. **并行推进 C0 只读账号取证**：使用已合并探针，对获批账号确认 Standard UP/Legacy/Fully Managed、业务模式、站点和计价权限。未明确资格前不能进行真实商品 POST。
+4. **补齐完整的刊登前置流程并打通 C1**：产品箱已经保存的多语言文案、官方分类/属性/变体/图片、站点报价与销售条件完整性核验；官方图片上传并记录 picture_id；仅在获批模型下完成单 SKU、单站点商品创建、结果回读与安全重试。各站点状态、错误原因及成功对象 ID 均要持久化。扩大到多站点/变体前先验证核心创建链路。
+5. **最后统一 Windows 客户端构建及 GUI 综合验收**：已对齐的云端 Go API、数据库迁移（均需独立审批）和客户端功能一次性以同一候选版本安装验收，重点验收账号管理、真实 AI 调用、完整预检和首次刊登回读。不要每合并一个 PR 就要求人工重装 Windows。
+6. **运营能力后置**：已刊登修改写回、#66 Shipment、#49 Billing、1688 自动化、客服等分别推进。离线 10,954 条词典翻译可先做小批次试译；不得成为单 SKU 刊登的阻塞项，也不得静默消耗某账号 Key。
+
+**PR 规则不变：**开发使用小型 Draft PR，Go/PG17 和 Desktop 定向 CI 必须保持，实际云端有授权的小样本可独立探测；不在本轮反复触发完整 Windows 发行。生产迁移、真实商品创建、签名发行均需负责人单独批准。
 
 ## 七、新需求登记、完成记录范例
 
@@ -112,6 +117,7 @@
 
 | 日期 | 变更 | 依据 |
 | --- | --- | --- |
+| 2026-11-23 | 负责人补充核心采集→整理→转库→编辑→重启读回已实机验证；新增 ACC-01/CRED-01；调整为刊登前功能/后端全部对齐后再集中 Windows QA，真实 AI 与 C1 为下一轮关键验收 | [Issue #75](https://github.com/Fan6512/una-seller/issues/75)、[Issue #50](https://github.com/Fan6512/una-seller/issues/50) |
 | 2026-11-23 | 初始化功能总台账；盘点 main、58 个已关闭 PR、[#66](https://github.com/Fan6512/una-seller/pull/66)、[#49](https://github.com/Fan6512/una-seller/pull/49) 与公开 Issue；将功能完成和真实验收分离 | main e9b29c8f；当前官方类目 11,668/714/10,954；截至本日已提供的实测报告 |
 
 
