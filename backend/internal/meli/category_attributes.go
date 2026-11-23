@@ -21,9 +21,10 @@ type CategoryPathNode struct {
 }
 
 type CategoryRules struct {
-	CategoryID string             `json:"category_id"`
-	Attributes json.RawMessage    `json:"attributes"`
-	Path       []CategoryPathNode `json:"path,omitempty"`
+	Translations map[string]string  `json:"translations_zh,omitempty"`
+	CategoryID   string             `json:"category_id"`
+	Attributes   json.RawMessage    `json:"attributes"`
+	Path         []CategoryPathNode `json:"path,omitempty"`
 }
 
 func validateCategoryForSite(category, site string) bool {

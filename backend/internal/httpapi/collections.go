@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +20,14 @@ type collectionAPI struct {
 }
 
 func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier, stores ...*meli.Service) http.Handler {
+	var service *meli.Service
+	if len(stores) != 0 {
+		service = stores[0]
+	}
+	return HandlerWithServices(store, verifier, service, nil)
+}
+
+func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
 	// Public, read-only signed updater manifest. No account or store tokens involved.
@@ -28,11 +37,13 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	mux.HandleFunc("/api/v1/products", api.ownProducts)
 	mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
-	var storeService *meli.Service
-	if len(stores) != 0 {
-		storeService = stores[0]
+	s := storeAPI{auth: api, service: storeService, translator: translator}
+	if translator != nil {
+		s.localizeCategory = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
+			return translator.translate(ctx, "", categoryTranslationTexts(rules))
+		}
 	}
-	s := storeAPI{auth: api, service: storeService}
+	mux.HandleFunc("/api/v1/stores/order-title-translations", s.orderTitleTranslations)
 	mux.HandleFunc("/api/v1/categories/predict", s.predictCBTCategory)
 	mux.HandleFunc("/api/v1/stores", s.stores)
 	mux.HandleFunc("/api/v1/stores/oauth/start", s.start)

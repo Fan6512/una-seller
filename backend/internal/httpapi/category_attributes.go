@@ -9,6 +9,13 @@ import (
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
+func (a storeAPI) writeCategoryRules(w http.ResponseWriter, r *http.Request, rules meli.CategoryRules) {
+	if a.localizeCategory != nil {
+		rules.Translations = a.localizeCategory(r.Context(), rules)
+	}
+	writeJSON(w, http.StatusOK, rules)
+}
+
 // Read-only, store-scoped category rules for the dynamic listing editor.
 // The caller must already pass requireOwner, and the service verifies
 // the CBT parent / marketplace child association before calling the platform.
@@ -28,7 +35,7 @@ func (a storeAPI) categoryRules(w http.ResponseWriter, r *http.Request, owner, s
 	}
 	result, err := a.service.GetCategoryRules(r.Context(), owner, store, scope, category)
 	if err == nil {
-		writeJSON(w, http.StatusOK, result)
+		a.writeCategoryRules(w, r, result)
 		return
 	}
 	var platform meli.ListingPlatformError

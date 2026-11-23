@@ -81,6 +81,7 @@ func main() {
 		}
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCollections(store, verifier, meliService), ReadHeaderTimeout: 5 * time.Second}
+	translator := httpapi.NewAzureTranslationService(os.Getenv("AZURE_TRANSLATOR_KEY"), os.Getenv("AZURE_TRANSLATOR_REGION"))
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithServices(store, verifier, meliService, translator), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }

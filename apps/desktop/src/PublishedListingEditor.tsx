@@ -8,7 +8,7 @@ type Rule = {
   tags?: Record<string, boolean>; values?: Choice[];
   attribute_group_id?: string; attribute_group_name?: string; allowed_units?: unknown;
 };
-type RulesResponse = { category_id: string; attributes: Rule[]; path?: { id: string; name: string }[] };
+type RulesResponse = { category_id: string; attributes: Rule[]; path?: { id: string; name: string }[]; translations_zh?: Record<string, string> };
 type Draft = {
   category_id: string;
   attributes: Record<string, string>;
@@ -113,13 +113,13 @@ function isFixed(rule: Rule): boolean { return rule.tags?.fixed === true || rule
 function Field({ label, value }: { label: string; value?: string | number | null }) {
   return <div className="published-field"><span>{label}</span><strong>{value == null || value === "" ? defaultLabel : value}</strong></div>;
 }
-function AttributeInput({ rule, value, change }: { rule: Rule; value: string; change: (v: string) => void }) {
+function AttributeInput({ rule, value, change, display }: { rule: Rule; value: string; change: (v: string) => void; display: (name: string) => string }) {
   const choices = normalizedChoices(rule);
   const locked = isFixed(rule) || rule.tags?.hidden === true;
   if (choices.length > 0) {
     return <select disabled={locked} value={value} onChange={(e) => change(e.target.value)}>
       <option value="">请选择</option>
-      {choices.map((choice, i) => <option key={String(choice.id ?? i)} value={choice.name || ""}>{choice.name}</option>)}
+      {choices.map((choice, i) => <option key={String(choice.id ?? i)} value={choice.name || ""}>{display(choice.name || "")}</option>)}
       {value && !choices.some((v) => v.name === value) && <option value={value}>{value}（原始值）</option>}
     </select>;
   }
@@ -133,8 +133,8 @@ function classify(rule: Rule): string {
   if (rule.tags?.conditional_required) return "条件必填 · 待平台判断";
   return "选填";
 }
-function AttributeGroup({ title, fields, draft, onChange }: {
-  title: string; fields: Rule[]; draft: Draft; onChange: (id: string, value: string) => void;
+function AttributeGroup({ title, fields, draft, onChange, display }: {
+  title: string; fields: Rule[]; draft: Draft; onChange: (id: string, value: string) => void; display: (name: string) => string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? fields : fields.filter((a) =>
@@ -143,8 +143,8 @@ function AttributeGroup({ title, fields, draft, onChange }: {
     <div className="published-attr-heading"><strong>{title}</strong><small>{fields.length} 项属性</small></div>
     <div className="published-edit-grid">
       {visible.map((rule) => <label className="published-edit-field" key={rule.id}>
-        <span>{rule.name || rule.id}{ruleRequired(rule) && <b className="published-required"> *</b>}</span>
-        <AttributeInput rule={rule} value={currentValue(draft, rule)} change={(v) => onChange(rule.id, v)}/>
+        <span>{display(rule.name || rule.id)}{ruleRequired(rule) && <b className="published-required"> *</b>}</span>
+        <AttributeInput rule={rule} value={currentValue(draft, rule)} change={(v) => onChange(rule.id, v)} display={display}/>
         <small>{classify(rule)}{isFixed(rule) ? " · 固定或 SKU 级属性，不在此编辑" : ""}
           {rule.value_max_length ? " · 最长 " + rule.value_max_length + " 字符" : ""}</small>
       </label>)}
@@ -162,6 +162,8 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   const [saved, setSaved] = useState("");
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [categoryPath, setCategoryPath] = useState<string[]>([]);
+  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const display = (name: string) => Object.hasOwn(translations, name) ? translations[name] + " · " + name : name;
   const [rulesError, setRulesError] = useState("");
   const [loading, setLoading] = useState(false);
   const [version, setVersion] = useState(0);
@@ -221,11 +223,12 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   }, [category]);
   useEffect(() => {
     const controller = new AbortController();
-    setRules(null); setCategoryPath([]); setRulesError(""); setLoading(false);
+    setRules(null); setCategoryPath([]); setTranslations({}); setRulesError(""); setLoading(false);
     if (!validCategory || settledCategory !== category) return () => controller.abort();
     const cacheKey = [store, site, logistic, category].join(":");
     const applyRules = (response: RulesResponse) => {
       setRules(response.attributes.filter((r) => r && /^[A-Z0-9_]+$/.test(r.id)));
+      setTranslations(response.translations_zh ?? {});
       setCategoryPath((response.path || []).filter((p) => p?.name).map((p) => p.name));
     };
     const cached = getCachedRules(cacheKey);
@@ -302,7 +305,7 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
     <section className="published-block">
       <div className="published-block-head"><h3>商品分类</h3><span>仅编辑本地草稿</span></div>
       <p className="published-category-path" title={categoryPath.join(" / ") || undefined}>
-        {categoryPath.length ? categoryPath.map(translatedCategory).join(" / ") : loading ? "正在加载分类名称…" : "官方分类名称暂未返回"}
+        {categoryPath.length ? categoryPath.map(name => Object.hasOwn(translations, name) ? translations[name] : translatedCategory(name)).join(" / ") : loading ? "正在加载分类名称…" : "官方分类名称暂未返回"}
       </p>
       <details className="published-detail-expand">
         <summary>调整类目（高级）</summary>
@@ -335,7 +338,7 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
           需在对应平台 / SKU 维护，不能在此表单直接修改。
         </p>}
         {groups.map((group) => <AttributeGroup key={group.name} title={group.name}
-          fields={group.fields} draft={draft} onChange={changeAttr}/>)}
+          fields={group.fields} draft={draft} onChange={changeAttr} display={display}/>)}
         {groups.length === 0 && metricRules.length === 0 && <p className="published-hint">该类目未返回可编辑属性。</p>}
       </>}
       {!rules && !loading && fallbackAttributes.length > 0 && <div className="published-field-grid">
@@ -353,9 +356,9 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
         <p className="published-hint">商品与包装分别填写，使用实际单位。修改仅保存在本机草稿。</p>
         <div className="published-edit-grid">
           {metricRules.map((rule) => <label className="published-edit-field" key={rule.id}>
-            <span>{rule.id.startsWith("PACKAGE_") ? "包装 · " : "商品 · "}{rule.name || rule.id}
+            <span>{rule.id.startsWith("PACKAGE_") ? "包装 · " : "商品 · "}{display(rule.name || rule.id)}
               {ruleRequired(rule) && <b className="published-required"> *</b>}</span>
-            <AttributeInput rule={rule} value={currentValue(draft, rule)} change={(value) => changeAttr(rule.id, value)} />
+            <AttributeInput rule={rule} value={currentValue(draft, rule)} change={(value) => changeAttr(rule.id, value)} display={display} />
             <small>{classify(rule)}{isFixed(rule) ? " · 固定或 SKU 级属性" : ""}</small>
           </label>)}
         </div>

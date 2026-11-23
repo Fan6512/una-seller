@@ -7,6 +7,7 @@ import {
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
+import TranslatedOrderTitle, { useOrderTitleTranslations } from "./TranslatedOrderTitle";
 import "./orders.css";
 
 const PAGE_SIZE = 20;
@@ -207,6 +208,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [offset, setOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
   const [page, setPage] = useState<OrderPage>({ items: [], has_more: false });
+  const translatedTitles = useOrderTitleTranslations(page.items, scope);
   const [loading, setLoading] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
   const [listError, setListError] = useState("");
@@ -862,7 +864,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <div className="orders-product-preview">
                         <ProductThumbnail src={order.order_items[0]?.image_url} title={order.order_items[0]?.title || ""} />
                         <div className="orders-product-info">
-                          <span className="orders-product-title" title={order.order_items[0]?.title || "平台未返回商品标题"}>{order.order_items[0]?.title || "平台未返回商品标题"}</span>
+                          <TranslatedOrderTitle title={order.order_items[0]?.title || "平台未返回商品标题"}
+                            translated={translatedTitles.get(order.order_items[0]?.title || "")} />
                           <span className="orders-product-meta">
                             {order.order_items.length > 1 ? order.order_items.length + " 个商品行 · " : ""}
                             {orderCount(order)} 件 · {order.order_items[0]?.item_id || "商品 ID 未返回"}
@@ -941,7 +944,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   <div className="orders-line-item" key={line.item_id + ":" + (line.variation_id ?? "") + ":" + i}>
                     <ProductThumbnail src={line.image_url} title={line.title || line.item_id} size="detail" />
                     <div className="orders-line-content">
-                      <strong>{line.title || line.item_id}</strong>
+                      <TranslatedOrderTitle title={line.title || line.item_id} translated={translatedTitles.get(line.title)} detail />
                       <small>商品 ID：{line.item_id}</small>
                       {line.variation_id && <small>变体 ID：{line.variation_id}</small>}
                       <span>{orderMoney(line.unit_price, line.currency_id)} × {line.quantity}</span>

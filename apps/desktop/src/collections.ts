@@ -130,11 +130,12 @@ export type CBTCategorySuggestion = {
   category_name: string;
   domain_id: string;
   domain_name: string;
+  path?: { id: string; name: string }[];
 };
 export function getCBTCategorySuggestions(editedEnglishTitle:string,signal:AbortSignal){
   const q=editedEnglishTitle.trim();
   if(!q||q.split(/\s+/u).length<2)throw new Error("请先填写完整英文标题，再请求 CBT 类目推荐");
-  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean}>(
+  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean;translations_zh?:Record<string,string>}>(
     "/api/v1/categories/predict?q="+encodeURIComponent(q),signal);
 }
 

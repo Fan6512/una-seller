@@ -15,8 +15,10 @@ import (
 )
 
 type storeAPI struct {
-	auth    collectionAPI
-	service *meli.Service
+	localizeCategory func(context.Context, meli.CategoryRules) map[string]string
+	auth             collectionAPI
+	service          *meli.Service
+	translator       *TranslationService
 }
 
 func (a storeAPI) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
