@@ -1,12 +1,17 @@
 package collections
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // ListingFields are editable preparation data, not official platform attributes.
@@ -15,6 +20,47 @@ type LocalizedTitles struct {
 	English    string `json:"en"`
 	Spanish    string `json:"es"`
 	Portuguese string `json:"pt"`
+}
+
+type LocalizedDescriptions = LocalizedTitles
+
+type DescriptionTranslation struct {
+	EnglishDigest          string `json:"en_digest,omitempty"`
+	SpanishSourceDigest    string `json:"es_source_digest,omitempty"`
+	PortugueseSourceDigest string `json:"pt_source_digest,omitempty"`
+	SpanishManualEdited    bool   `json:"es_manual_edited,omitempty"`
+	PortugueseManualEdited bool   `json:"pt_manual_edited,omitempty"`
+}
+
+func EnglishDescriptionDigest(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(norm.NFC.String(text)))
+	return hex.EncodeToString(digest[:])
+}
+
+var ErrInvalidTranslationSource = errors.New("description translation source does not match the saved English description")
+
+const LocalizedTitleLimit = 60
+
+var ErrLocalizedTitleTooLong = errors.New("MX Spanish and BR Portuguese titles must be at most 60 characters")
+
+func (titles LocalizedTitles) NFC() LocalizedTitles {
+	return LocalizedTitles{norm.NFC.String(titles.English), norm.NFC.String(titles.Spanish), norm.NFC.String(titles.Portuguese)}
+}
+
+func (titles LocalizedTitles) exceedsRegionalLimits() bool {
+	return utf8.RuneCountInString(titles.Spanish) > LocalizedTitleLimit ||
+		utf8.RuneCountInString(titles.Portuguese) > LocalizedTitleLimit
+}
+
+func (titles LocalizedTitles) validateRegionalLimits(previous LocalizedTitles) error {
+	if (utf8.RuneCountInString(titles.Spanish) > LocalizedTitleLimit && titles.Spanish != previous.Spanish) ||
+		(utf8.RuneCountInString(titles.Portuguese) > LocalizedTitleLimit && titles.Portuguese != previous.Portuguese) {
+		return ErrLocalizedTitleTooLong
+	}
+	return nil
 }
 
 func (titles LocalizedTitles) Preferred() string {
@@ -27,24 +73,26 @@ func (titles LocalizedTitles) Preferred() string {
 }
 
 type ListingFields struct {
-	Titles             LocalizedTitles             `json:"titles"`
-	CategoryID         string                      `json:"category_id"`
-	CategoryPath       string                      `json:"category_path"`
-	Brand              string                      `json:"brand"`
-	Model              string                      `json:"model"`
-	SellerSKU          string                      `json:"seller_sku"`
-	GTIN               string                      `json:"gtin"`
-	PurchasePrice      string                      `json:"purchase_price"`
-	PurchaseCurrency   string                      `json:"purchase_currency"`
-	WeightG            string                      `json:"weight_g"`
-	LengthCM           string                      `json:"length_cm"`
-	WidthCM            string                      `json:"width_cm"`
-	HeightCM           string                      `json:"height_cm"`
-	BulletPoints       []string                    `json:"bullet_points"`
-	Attributes         []ListingAttribute          `json:"attributes"`
-	CategoryAttributes *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
-	Images             *[]Image                    `json:"images,omitempty"`
-	Variants           *[]ListingVariant           `json:"variants,omitempty"`
+	Titles                 LocalizedTitles             `json:"titles"`
+	Descriptions           *LocalizedDescriptions      `json:"descriptions,omitempty"`
+	DescriptionTranslation *DescriptionTranslation     `json:"description_translation,omitempty"`
+	CategoryID             string                      `json:"category_id"`
+	CategoryPath           string                      `json:"category_path"`
+	Brand                  string                      `json:"brand"`
+	Model                  string                      `json:"model"`
+	SellerSKU              string                      `json:"seller_sku"`
+	GTIN                   string                      `json:"gtin"`
+	PurchasePrice          string                      `json:"purchase_price"`
+	PurchaseCurrency       string                      `json:"purchase_currency"`
+	WeightG                string                      `json:"weight_g"`
+	LengthCM               string                      `json:"length_cm"`
+	WidthCM                string                      `json:"width_cm"`
+	HeightCM               string                      `json:"height_cm"`
+	BulletPoints           []string                    `json:"bullet_points"`
+	Attributes             []ListingAttribute          `json:"attributes"`
+	CategoryAttributes     *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
+	Images                 *[]Image                    `json:"images,omitempty"`
+	Variants               *[]ListingVariant           `json:"variants,omitempty"`
 }
 
 type ListingAttribute struct {
@@ -107,9 +155,93 @@ func validListingText(text string, max int) bool {
 	return utf8.RuneCountInString(text) <= max
 }
 
+func validListingTitle(title string) bool {
+	return validListingText(norm.NFC.String(title), 500)
+}
+
+var listingMarkup = regexp.MustCompile("(?m)<(?:/?[A-Za-z][A-Za-z0-9:-]*(?:[ \\t\\r\\n][^<>]*)?[ \\t\\r\\n]*/?>|[!?][^<>]*>)|^[ \\t]{0,3}#{1,6}(?:[ \\t]|$)|\\[[^\\]\\n]+\\][ \\t]*(?:\\(|\\[)|(?:\\*\\*|__|~~)[^\\n]+(?:\\*\\*|__|~~)|`")
+
+func IsPlainListingText(text string) bool {
+	return utf8.ValidString(text) && !listingMarkup.MatchString(text) && strings.IndexFunc(text, func(r rune) bool {
+		return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t'
+	}) < 0
+}
+
+func (f ListingFields) normalizedCopy() *ListingFields {
+	f.Titles = f.Titles.NFC()
+	if f.Descriptions != nil {
+		descriptions := f.Descriptions.NFC()
+		f.Descriptions = &descriptions
+	}
+	return &f
+}
+
+func (f ListingFields) needsPrevious() bool {
+	return f.Descriptions != nil || f.Titles.NFC().exceedsRegionalLimits()
+}
+
+func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, error) {
+	next := f.normalizedCopy()
+	if err := next.Titles.validateRegionalLimits(previous.Titles.NFC()); err != nil {
+		return nil, err
+	}
+	if next.Descriptions == nil {
+		if next.DescriptionTranslation != nil {
+			return nil, ErrInvalidTranslationSource
+		}
+		return next, nil
+	}
+
+	var current, proposed DescriptionTranslation
+	if previous.DescriptionTranslation != nil {
+		current = *previous.DescriptionTranslation
+	}
+	if next.DescriptionTranslation != nil {
+		proposed = *next.DescriptionTranslation
+	}
+	var savedEnglish string
+	if previous.Descriptions != nil {
+		savedEnglish = previous.Descriptions.English
+	}
+	savedDigest := EnglishDescriptionDigest(savedEnglish)
+	current.EnglishDigest = EnglishDescriptionDigest(next.Descriptions.English)
+	for _, locale := range []struct {
+		text, oldText, proposal string
+		source                  *string
+		manual                  *bool
+	}{
+		{next.Descriptions.Spanish, "", proposed.SpanishSourceDigest, &current.SpanishSourceDigest, &current.SpanishManualEdited},
+		{next.Descriptions.Portuguese, "", proposed.PortugueseSourceDigest, &current.PortugueseSourceDigest, &current.PortugueseManualEdited},
+	} {
+		if previous.Descriptions != nil {
+			if locale.source == &current.SpanishSourceDigest {
+				locale.oldText = previous.Descriptions.Spanish
+			} else {
+				locale.oldText = previous.Descriptions.Portuguese
+			}
+		}
+		if strings.TrimSpace(locale.text) == "" {
+			*locale.source = ""
+			*locale.manual = false
+			continue
+		}
+		if locale.proposal != "" {
+			if locale.proposal != savedDigest || locale.proposal != current.EnglishDigest {
+				return nil, ErrInvalidTranslationSource
+			}
+			*locale.source = locale.proposal
+			*locale.manual = false
+		} else if locale.text != locale.oldText {
+			*locale.manual = true
+		}
+	}
+	next.DescriptionTranslation = &current
+	return next, nil
+}
+
 func (f ListingFields) Validate() error {
-	if !validListingText(f.Titles.English, 500) || !validListingText(f.Titles.Spanish, 500) ||
-		!validListingText(f.Titles.Portuguese, 500) ||
+	if !validListingTitle(f.Titles.English) || !validListingTitle(f.Titles.Spanish) ||
+		!validListingTitle(f.Titles.Portuguese) ||
 		!validListingText(f.CategoryID, 60) ||
 		!validListingText(f.CategoryPath, 400) || !validListingText(f.Brand, 120) ||
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
@@ -120,6 +252,14 @@ func (f ListingFields) Validate() error {
 		!listingDecimal(f.WidthCM, 10000, false) ||
 		!listingDecimal(f.HeightCM, 10000, false) {
 		return errors.New("invalid listing preparation fields")
+	}
+	if f.Descriptions != nil {
+		descriptions := f.Descriptions.NFC()
+		for _, text := range []string{descriptions.English, descriptions.Spanish, descriptions.Portuguese} {
+			if !validListingText(text, 20000) || !IsPlainListingText(text) {
+				return errors.New("localized descriptions must be plain text of at most 20000 characters each")
+			}
+		}
 	}
 	if f.PurchaseCurrency != "" && !currencyPattern.MatchString(f.PurchaseCurrency) {
 		return errors.New("purchase_currency must contain 3 uppercase letters, e.g. CNY or USD")
@@ -132,7 +272,7 @@ func (f ListingFields) Validate() error {
 		return errors.New("too many listing attributes")
 	}
 	for _, bullet := range f.BulletPoints {
-		if !validListingText(bullet, 500) {
+		if !validListingText(bullet, 500) || !IsPlainListingText(bullet) {
 			return errors.New("bullet point too long")
 		}
 	}

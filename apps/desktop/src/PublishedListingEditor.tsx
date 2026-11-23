@@ -37,14 +37,6 @@ function rememberRules(key: string, payload: RulesResponse): void {
   categoryRulesCache.set(key, { payload, expiresAt: Date.now() + CATEGORY_RULE_TTL_MS });
 }
 const unitField = /^(PACKAGE_(WEIGHT|HEIGHT|LENGTH|WIDTH)|WEIGHT|HEIGHT|LENGTH|WIDTH)$/;
-// Translate only verified category names. Unrecognized names remain in the official language.
-const categoryTranslations: Record<string, string> = {
-  "Beleza e Cuidado Pessoal": "美妆与个人护理",
-  "Maquiagem": "彩妆",
-  "Rosto": "面部",
-  "Primer Facial": "妆前乳",
-};
-const translatedCategory = (name: string) => categoryTranslations[name] || name;
 const charCount = (value: string) => Array.from(value).length;
 // Convert only explicit, unambiguous metric units; never invent missing units.
 function metricNumber(raw: string): { amount: number; unit: string } | undefined {
@@ -215,6 +207,7 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
     return () => controller.abort();
   }, [localKey, store, site, logistic, listing.id, listing.description, descriptionReload]);
   const category = draft.category_id.trim();
+  const cbtPath = category === listing.category_id ? listing.cbt_category_path : undefined;
   const [settledCategory, setSettledCategory] = useState(category);
   const validCategory = new RegExp("^" + site + "[0-9]{1,15}$").test(category);
   useEffect(() => {
@@ -304,9 +297,13 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   return <>
     <section className="published-block">
       <div className="published-block-head"><h3>商品分类</h3><span>仅编辑本地草稿</span></div>
-      <p className="published-category-path" title={categoryPath.join(" / ") || undefined}>
-        {categoryPath.length ? categoryPath.map(name => Object.hasOwn(translations, name) ? translations[name] : translatedCategory(name)).join(" / ") : loading ? "正在加载分类名称…" : "官方分类名称暂未返回"}
-      </p>
+      {cbtPath && <>
+        <p className="published-category-path">{site !== "CBT" && "CBT 分类 · "}{(cbtPath.zh ?? cbtPath.original).join(" / ")}</p>
+        {cbtPath.zh && <p className="published-hint">{cbtPath.original.join(" / ")}</p>}
+      </>}
+      {site !== "CBT" || !cbtPath ? <p className="published-category-path">
+        {categoryPath.length ? categoryPath.join(" / ") : loading ? "正在加载分类名称…" : "官方分类名称暂未返回"}
+      </p> : null}
       <details className="published-detail-expand">
         <summary>调整类目（高级）</summary>
         <label className="published-edit-field">

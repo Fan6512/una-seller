@@ -1,6 +1,6 @@
 import { getAccessToken, rejectSession } from "./auth";
 import { readAPIError } from "./apiErrors";
-import type { ListingFields } from "./listingFields";
+import type { ListingFields, LocalizedTitles } from "./listingFields";
 
 export type CaptureStatus = "complete" | "partial";
 export const PAGE_SIZE = 24;
@@ -69,7 +69,7 @@ class CollectionRequestError extends Error {
 }
 
 async function requestJSON<T>(path: string, signal: AbortSignal, requiresAuth = true,
-  method: "GET" | "DELETE" | "PUT" = "GET", body?: string): Promise<T> {
+  method: "GET" | "DELETE" | "PUT" | "POST" = "GET", body?: string): Promise<T> {
   let response: Response;
   const fetchWithToken = (token: string | null) => fetch(apiBase + path, {
     method,
@@ -138,9 +138,11 @@ export type CBTCategoryRules = {
   category_id: string;
   attributes: CBTAttributeRule[];
   path?: { id: string; name: string }[];
+  path_zh?: string[];
   translations_zh?: Record<string, string>;
   technical_specs_verified?: boolean;
   technical_requirements?: string[];
+  technical_requirement_names?: Record<string, string>;
   special_requirements?: boolean;
 };
 export function getCBTCategoryRules(category: string, signal: AbortSignal) {
@@ -154,16 +156,33 @@ export type CBTCategorySuggestion = {
   domain_id: string;
   domain_name: string;
   path?: { id: string; name: string }[];
+  path_zh?: string[];
 };
 export function getCBTCategorySuggestions(editedEnglishTitle:string,signal:AbortSignal){
   const q=editedEnglishTitle.trim();
   if(!q||q.split(/\s+/u).length<2)throw new Error("请先填写完整英文标题，再请求 CBT 类目推荐");
-  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean;translations_zh?:Record<string,string>}>(
+  return requestJSON<{items:CBTCategorySuggestion[];source:string;confirmed:boolean}>(
     "/api/v1/categories/predict?q="+encodeURIComponent(q),signal);
 }
 
 export function getCollection(id: string, signal: AbortSignal) {
   return requestJSON<CollectionDetail>("/api/v1/collections/" + encodeURIComponent(id), signal);
+}
+
+export type AICopyProduct = ({ source_product_id: string; own_product_id?: never } |
+  { own_product_id: string; source_product_id?: never }) & { expected_revision: number };
+
+export type AICopyResults = {
+  titles: { titles: LocalizedTitles };
+  english: { description: string; selling_points: string[]; missing_facts: string[] };
+  translate: { es: string; pt: string; review_terms: string[]; source_digest: string };
+};
+
+export function generateAICopy<Operation extends keyof AICopyResults>(
+  product: AICopyProduct, operation: Operation, signal: AbortSignal,
+) {
+  return requestJSON<AICopyResults[Operation]>("/api/v1/products/ai-copy", signal, true, "POST",
+    JSON.stringify({ ...product, operation }));
 }
 
 export type CollectionWorkingDraft = {

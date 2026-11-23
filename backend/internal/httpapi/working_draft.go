@@ -31,14 +31,14 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 			writeError(w, http.StatusUnsupportedMediaType, "expected application/json")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		var in collections.WorkingDraftInput
 		if err := dec.Decode(&in); err != nil {
 			var limit *http.MaxBytesError
 			if errors.As(err, &limit) {
-				writeError(w, http.StatusRequestEntityTooLarge, "working draft exceeds 256 KiB")
+				writeError(w, http.StatusRequestEntityTooLarge, "working draft exceeds 512 KiB")
 			} else {
 				writeError(w, http.StatusBadRequest, "invalid working draft JSON")
 			}
@@ -47,7 +47,7 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 		if err := dec.Decode(new(any)); err != io.EOF {
 			var limit *http.MaxBytesError
 			if errors.As(err, &limit) {
-				writeError(w, http.StatusRequestEntityTooLarge, "working draft exceeds 256 KiB")
+				writeError(w, http.StatusRequestEntityTooLarge, "working draft exceeds 512 KiB")
 			} else {
 				writeError(w, http.StatusBadRequest, "trailing working draft data")
 			}
@@ -67,6 +67,8 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 			})
 		} else if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, http.StatusConflict, "working draft updated; reload before saving")
+		} else if errors.Is(err, collections.ErrLocalizedTitleTooLong) || errors.Is(err, collections.ErrInvalidTranslationSource) {
+			writeError(w, http.StatusBadRequest, err.Error())
 		} else if err != nil {
 			writeError(w, http.StatusInternalServerError, "working draft not saved")
 		} else {
