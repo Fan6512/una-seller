@@ -315,11 +315,13 @@ func TestSkippedCategoryDoesNotBlockAndCanBeRetried(t *testing.T) {
 }
 
 func TestSpecialSeparatorFallsBackToLeaf(t *testing.T) {
-	tree := fixtureTree()
 	path := []PathNode{{ID: "CBT900", Name: "Out | doors"}, {ID: "CBT901", Name: "Other"}}
-	tree["CBT900"] = category{ID: "CBT900", Name: "Out | doors", Path: path[:1], Status: "enabled"}
-	tree["CBT901"] = category{ID: "CBT901", Name: "Other", Path: path, Status: "enabled"}
-	inputs := makeBatches(snapshot{Categories: tree}, nil, nil)
+	categories := map[string]category{
+		"CBT900": {ID: "CBT900", Name: "Out | doors", Path: path[:1], Status: "enabled"},
+		"CBT901": {ID: "CBT901", Name: "Other", Path: path, Status: "enabled"},
+		"CBT777": {ID: "CBT777", Name: "Other", Path: []PathNode{{ID: "CBT777", Name: "Other"}}, Status: "enabled"},
+	}
+	inputs := makeBatches(snapshot{Categories: categories}, nil, nil)
 	found := false
 	for _, batch := range inputs {
 		for _, item := range batch {
