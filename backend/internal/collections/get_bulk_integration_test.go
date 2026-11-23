@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/jackc/pgx/v5"
@@ -87,6 +88,8 @@ func TestCollectionGetFixedQueryCountAndImageOrdering(t *testing.T) {
 			}
 			tracer := &getQueryTracer{}
 			cfg.ConnConfig.Tracer = tracer
+			// Keep the pool health-check ping outside this short query-count test.
+			cfg.HealthCheckPeriod = time.Hour
 			readPool, err := pgxpool.NewWithConfig(ctx, cfg)
 			if err != nil {
 				t.Fatal(err)
