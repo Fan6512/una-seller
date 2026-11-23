@@ -135,7 +135,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
         setTouched(true);setNotice("");
       }} />
-    <label>整理后的商品描述
+    <label>旧版整理描述（历史参考，非默认刊登）
       <textarea rows={5} value={fields.description} readOnly={!editable}
         onChange={(e) => change("description", e.target.value)} />
       <small>{descriptionCount} / 20000 字符</small>

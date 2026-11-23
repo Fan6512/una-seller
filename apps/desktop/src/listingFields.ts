@@ -12,7 +12,7 @@ export type LocalizedDescriptions = LocalizedTitles;
 export type TitleLanguage = keyof LocalizedTitles;
 export const localizedTitleLimit = 60;
 export const listingTextCount = (text: string) => Array.from(text.normalize("NFC")).length;
-const listingMarkup = /<(?:\/?[A-Za-z][A-Za-z0-9:-]*(?:[ \t\r\n][^<>]*)?[ \t\r\n]*\/?>|[!?][^<>]*>)|^[ \t]{0,3}(?:#{1,6}(?:[ \t]|$)|>|[-+*][ \t]+|[0-9]{1,9}[.)][ \t]+|~{3,}|(?:[=*_~-][ \t]*){3,}$|\[[^\]\n]+\]:)|`|\[[^\]\n]+\][ \t]*(?:\(|\[)|(?:\*\*|__|~~)[^\n]+(?:\*\*|__|~~)|\*[^*\n]+\*|(?:^|[ \t(])_[^_\n]+_(?:[ \t).,!?]|$)/m;
+const listingMarkup = new RegExp("<(?:/?[A-Za-z][A-Za-z0-9:-]*(?:[ \\t\\r\\n][^<>]*)?[ \\t\\r\\n]*/?>|[!?][^<>]*>)|^[ \\t]{0,3}#{1,6}(?:[ \\t]|$)|\\[[^\\]\\n]+\\][ \\t]*(?:\\(|\\[)|(?:\\*\\*|__|~~)[^\\n]+(?:\\*\\*|__|~~)|`", "m");
 export const isPlainListingText = (text: string) =>
   !listingMarkup.test(text) && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\p{Surrogate}]/u.test(text);
 
@@ -31,6 +31,8 @@ export type ListingFields = {
     en_digest?: string;
     es_source_digest?: string;
     pt_source_digest?: string;
+    es_manual_edited?: boolean;
+    pt_manual_edited?: boolean;
   };
   category_id: string;
   category_path: string;
@@ -144,7 +146,7 @@ export function validateListingFields(v:ListingFields, previousTitles?: Localize
     x.image_urls.length>30||x.image_urls.some(url=>!/^https:\/\/[^\s]+$/i.test(url)||url.length>2000))) {
     return "变体价格、币种（3 位大写字母）、SKU、属性或图片 URL 不符合要求";
   }
-  if(v.bullet_points.length>20||v.bullet_points.some(x=>Array.from(x).length>500))return "商品卖点最多 20 条，每条 500 字符";
+  if(v.bullet_points.length>20||v.bullet_points.some(x=>listingTextCount(x)>500||!isPlainListingText(x)))return "商品卖点最多 20 条，每条 500 字符，必须是纯文本";
   if(v.attributes.length>60||v.attributes.some(a=>Array.from(a.name).length>120||Array.from(a.value).length>500))
     return "附加属性最多 60 条，名称 120 字符、值 500 字符以内";
   const categoryAttributes = v.category_attributes ?? [];

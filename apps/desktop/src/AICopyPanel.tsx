@@ -14,9 +14,10 @@ type Props = {
   saved?: Partial<ListingFields>;
   disabled: boolean;
   onAdopt: (field: CopyField, language: TitleLanguage, text: string, sourceDigest?: string) => void;
+  onAdoptPoints: (points: string[]) => void;
 };
 
-export default function AICopyPanel({ product, value, saved, disabled, onAdopt }: Props) {
+export default function AICopyPanel({ product, value, saved, disabled, onAdopt, onAdoptPoints }: Props) {
   const [titles, setTitles] = useState<LocalizedTitles | null>(null);
   const [english, setEnglish] = useState<AICopyResults["english"] | null>(null);
   const [regional, setRegional] = useState<(AICopyResults["translate"] & { revision: number }) | null>(null);
@@ -56,7 +57,7 @@ export default function AICopyPanel({ product, value, saved, disabled, onAdopt }
         case "english": {
           const result = await generateAICopy(product, operation, controller.signal);
           if (!controller.signal.aborted) {
-            setEnglish({ ...result, description: result.selling_points.join("\n") + "\n\n" + result.description });
+            setEnglish(result);
             setLanguage("en");
           }
           break;
@@ -175,6 +176,14 @@ export default function AICopyPanel({ product, value, saved, disabled, onAdopt }
           <strong>待补充的商品信息</strong>
           <ul>{english.missing_facts.map(fact => <li key={fact}>{fact}</li>)}</ul>
         </div>}
+        <label className="listing-field">英文卖点候选（每行一条）
+          <textarea rows={4} value={english.selling_points.join("\n")} disabled={disabled || generating}
+            onChange={e => setEnglish({ ...english, selling_points: e.target.value.split("\n") })} />
+        </label>
+        <button type="button" disabled={disabled || generating || english.selling_points.length === 0 ||
+          english.selling_points.length > 20 || english.selling_points.some(p => !p.trim() || listingTextCount(p) > 500 || !isPlainListingText(p))}
+          onClick={() => onAdoptPoints(english.selling_points)}>单独采纳英文卖点</button>
+        <p className="listing-fields-note">采纳后的卖点将作为后续 AI 生成的文案参考，不代替真实商品属性。</p>
         {renderField("descriptions", descriptionLabels.en, english.description, text => setEnglish({ ...english, description: text }))}
       </>}
       {language !== "en" && regional && <>

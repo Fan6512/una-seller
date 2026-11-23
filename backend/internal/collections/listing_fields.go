@@ -28,6 +28,8 @@ type DescriptionTranslation struct {
 	EnglishDigest          string `json:"en_digest,omitempty"`
 	SpanishSourceDigest    string `json:"es_source_digest,omitempty"`
 	PortugueseSourceDigest string `json:"pt_source_digest,omitempty"`
+	SpanishManualEdited    bool   `json:"es_manual_edited,omitempty"`
+	PortugueseManualEdited bool   `json:"pt_manual_edited,omitempty"`
 }
 
 func EnglishDescriptionDigest(text string) string {
@@ -157,9 +159,7 @@ func validListingTitle(title string) bool {
 	return validListingText(norm.NFC.String(title), 500)
 }
 
-var listingMarkup = regexp.MustCompile("(?m)<(?:/?[A-Za-z][A-Za-z0-9:-]*(?:[ \\t\\r\\n][^<>]*)?[ \\t\\r\\n]*/?>|[!?][^<>]*>)|" +
-	"^[ \\t]{0,3}(?:#{1,6}(?:[ \\t]|$)|>|[-+*][ \\t]+|[0-9]{1,9}[.)][ \\t]+|~{3,}|(?:[=*_~-][ \\t]*){3,}$|\\[[^\\]\\n]+\\]:)|" +
-	"`|\\[[^\\]\\n]+\\][ \\t]*(?:\\(|\\[)|(?:\\*\\*|__|~~)[^\\n]+(?:\\*\\*|__|~~)|\\*[^*\\n]+\\*|(?:^|[ \\t(])_[^_\\n]+_(?:[ \\t).,!?]|$)")
+var listingMarkup = regexp.MustCompile("(?m)<(?:/?[A-Za-z][A-Za-z0-9:-]*(?:[ \\t\\r\\n][^<>]*)?[ \\t\\r\\n]*/?>|[!?][^<>]*>)|^[ \\t]{0,3}#{1,6}(?:[ \\t]|$)|\\[[^\\]\\n]+\\][ \\t]*(?:\\(|\\[)|(?:\\*\\*|__|~~)[^\\n]+(?:\\*\\*|__|~~)|`")
 
 func IsPlainListingText(text string) bool {
 	return utf8.ValidString(text) && !listingMarkup.MatchString(text) && strings.IndexFunc(text, func(r rune) bool {
@@ -206,14 +206,23 @@ func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, e
 	savedDigest := EnglishDescriptionDigest(savedEnglish)
 	current.EnglishDigest = EnglishDescriptionDigest(next.Descriptions.English)
 	for _, locale := range []struct {
-		text, proposal string
-		source         *string
+		text, oldText, proposal string
+		source                  *string
+		manual                  *bool
 	}{
-		{next.Descriptions.Spanish, proposed.SpanishSourceDigest, &current.SpanishSourceDigest},
-		{next.Descriptions.Portuguese, proposed.PortugueseSourceDigest, &current.PortugueseSourceDigest},
+		{next.Descriptions.Spanish, "", proposed.SpanishSourceDigest, &current.SpanishSourceDigest, &current.SpanishManualEdited},
+		{next.Descriptions.Portuguese, "", proposed.PortugueseSourceDigest, &current.PortugueseSourceDigest, &current.PortugueseManualEdited},
 	} {
+		if previous.Descriptions != nil {
+			if locale.source == &current.SpanishSourceDigest {
+				locale.oldText = previous.Descriptions.Spanish
+			} else {
+				locale.oldText = previous.Descriptions.Portuguese
+			}
+		}
 		if strings.TrimSpace(locale.text) == "" {
 			*locale.source = ""
+			*locale.manual = false
 			continue
 		}
 		if locale.proposal != "" && locale.proposal != *locale.source {
@@ -221,6 +230,9 @@ func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, e
 				return nil, ErrInvalidTranslationSource
 			}
 			*locale.source = locale.proposal
+			*locale.manual = false
+		} else if locale.text != locale.oldText {
+			*locale.manual = true
 		}
 	}
 	next.DescriptionTranslation = &current
@@ -260,7 +272,7 @@ func (f ListingFields) Validate() error {
 		return errors.New("too many listing attributes")
 	}
 	for _, bullet := range f.BulletPoints {
-		if !validListingText(bullet, 500) {
+		if !validListingText(bullet, 500) || !IsPlainListingText(bullet) {
 			return errors.New("bullet point too long")
 		}
 	}
