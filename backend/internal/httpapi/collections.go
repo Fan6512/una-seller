@@ -177,6 +177,25 @@ func (a collectionAPI) ready(w http.ResponseWriter) bool {
 	return true
 }
 
+// authFastReadRoute explicitly names read-only product endpoints. New routes
+// default to remote verification: GET alone does not imply safe caching.
+func authFastReadRoute(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	switch r.URL.Path {
+	case "/api/v1/collections", "/api/v1/products":
+		return true
+	}
+	if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/collections/"); ok {
+		return collections.ValidUserID(id)
+	}
+	if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/products/"); ok {
+		return collections.ValidUserID(id)
+	}
+	return false
+}
+
 // Owner identity comes exclusively from a verified Supabase access token.
 func (a collectionAPI) owner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if !a.ready(w) {
@@ -187,7 +206,21 @@ func (a collectionAPI) owner(w http.ResponseWriter, r *http.Request) (string, bo
 		writeUnauthorized(w, "authentication required")
 		return "", false
 	}
-	id, err := a.verifier.Verify(r.Context(), fields[1])
+	// Fail closed to remote verification on every route not in the allowlist.
+	// IdentityVerifier mocks and custom verifiers remain compatible.
+	var id string
+	var err error
+	if authFastReadRoute(r) {
+		if fast, ok := a.verifier.(interface {
+			VerifyFast(context.Context, string) (string, error)
+		}); ok {
+			id, err = fast.VerifyFast(r.Context(), fields[1])
+		} else {
+			id, err = a.verifier.Verify(r.Context(), fields[1])
+		}
+	} else {
+		id, err = a.verifier.Verify(r.Context(), fields[1])
+	}
 	if err != nil {
 		if errors.Is(err, ErrAuthUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "authentication temporarily unavailable")
