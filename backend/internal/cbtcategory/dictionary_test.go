@@ -300,7 +300,12 @@ func TestSkippedCategoryDoesNotBlockAndCanBeRetried(t *testing.T) {
 	translate := func(_ context.Context, texts []string) map[string]string {
 		out := make(map[string]string)
 		for _, text := range texts {
-			out[text] = "中文"
+			parts := strings.Split(text, " | ")
+			translated := make([]string, len(parts))
+			for i := range parts {
+				translated[i] = "中文"
+			}
+			out[text] = strings.Join(translated, "｜")
 		}
 		return out
 	}
