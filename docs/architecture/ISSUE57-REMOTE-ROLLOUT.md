@@ -1,7 +1,7 @@
 # #57 · Una Seller 远程 Go API 受控升级 / 产品箱验收
 
 > 当前状态（2026-11-22）：**SERVER_BASELINE_PASS / BACKUP_VERIFIED / MIGRATION_REHEARSAL_PASS / SCHEMA_MIGRATED_PASS / GO_DEPLOYED_PASS / NGINX_ROUTED_PASS / HTTP_ANON_PASS / MANUAL_PENDING(AUTH, GUI)**。已核对 [生产部署脱敏回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7077260112)，完整保留 [服务器与恢复回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002) 及 [隔离迁移演练回执](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7075825024)。
-> 本文前半部分是已实际执行过的升级操作书（保留审计）；**生产切换已完成，不应再次执行 migrate、重复替换现役 Go/Nginx 或重复恢复备份**。下一步只做授权接口、桌面客户端和真实 CBT 类目推荐验收。验证通过前不可关闭 #57 或发布 V1.0 正式版。
+> 下方门禁 0–3 是已执行的历史操作书，保留供审计和未来经批准的维护使用。**生产切换已完成，不应再次执行 migrate、重复替换现役 Go/Nginx 或重复恢复备份**。下一步只做授权接口、桌面客户端和真实 CBT 类目推荐验收。验证通过前不可关闭 #57 或发布 V1.0 正式版。
 
 ## 生产切换回执
 
@@ -20,14 +20,14 @@
 [备份与恢复](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7074227002) · [两次迁移演练](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7075825024) · [生产切换](https://github.com/Fan6512/una-seller/issues/57#issuecomment-7077260112) · [Windows 历史反馈](https://github.com/Fan6512/una-seller/pull/65)
 
 
-## 当前已独立核对（2026-11-22）
+## 切换前历史快照（2026-11-22）
 
-- 主干固定待部署代码：`5bdac9660dbde39ae60d5de98c3ff1081fb94efa`（#59 Squash Merge），对应 [main CI #44979845433](https://github.com/Fan6512/una-seller/actions/runs/44979845433) **4/4 PASS**，Go/PG17 自动化集成测试已过。
-- 生产 Supabase **una-seller**：PostgreSQL **17.11**、`ACTIVE_HEALTHY`；`app.source_products`、`app.collection_working_drafts` 已存在，**`app.own_products` 不存在、工作稿 `listing_fields` 不存在**。私有 `app` schema 对 `anon`、`authenticated` 不开放 USAGE。
+- 当时固定部署的候选代码：`5bdac9660dbde39ae60d5de98c3ff1081fb94efa`（#59 Squash Merge），对应 [main CI #44979845433](https://github.com/Fan6512/una-seller/actions/runs/44979845433) **4/4 PASS**，Go/PG17 自动化集成测试已过。
+- 切换前的生产 Supabase **una-seller**：PostgreSQL **17.11**、`ACTIVE_HEALTHY`；`app.source_products`、`app.collection_working_drafts` 已存在，**`app.own_products` 不存在、工作稿 `listing_fields` 不存在**。私有 `app` schema 对 `anon`、`authenticated` 不开放 USAGE。
 - 已有业务资料（仅读取聚合计数，不查询个人数据）：采集商品 3、工作稿 0、订单 72、CBT 店铺连接 1。**不可清库、覆盖原订单或重建账号。**
 - 该 Supabase 组织当前为 **Free**；按 [官方 Backups 文档](https://supabase.com/docs/guides/platform/backups)，不能依赖 Pro/Team 的自动日备份。**2026-11-22 已收到备份与独立恢复验证 PASS 的脱敏回执**，其证据范围是 `app` 数据与结构（15 张表、142 列、66 约束、26 索引、逐表行摘要）；所有者/ACL、Supabase Auth、异地恢复未验证。AES-256 私有归档不得进入 Git。
 - 仓库的 `0008_own_products.sql` 新增独立产品箱（RLS、owner FK、source FK `ON DELETE SET NULL`），`0009_listing_editor_fields.sql` 对工作稿与产品箱加 `jsonb listing_fields`。迁移代码是**显式**执行，不会在 API 启动时自动迁移。
-- 已收到 Ubuntu 执行方脱敏结果：Ubuntu 26.04 LTS x86_64，Go 与 Nginx 正常运行，Go 只监听 `127.0.0.1:8787`；公网和回环健康检查均 200，匿名采集 401、产品箱和类目推荐仍 404，`nginx -t` 通过；旧 Go / vhost / systemd 已留私有校验副本。**不等于升级已执行**。本会话不具备 Ubuntu SSH 执行通道，不可自行声称现网二进制已经切换。
+- 已收到 Ubuntu 执行方脱敏结果：Ubuntu 26.04 LTS x86_64，Go 与 Nginx 正常运行，Go 只监听 `127.0.0.1:8787`；公网和回环健康检查均 200，匿名采集 401，切换前的产品箱和类目推荐返回 404，`nginx -t` 通过；旧 Go / vhost / systemd 已留私有校验副本。这些值来自切换前检查；切换后的 Go/Nginx 和匿名状态见上方回执。
 
 ## 门禁 0：Ubuntu 只读核对（不含任何写入）
 
@@ -89,7 +89,7 @@ sha256sum una-seller-api.issue57
 4. 仅在完成检查后，原位切换**一个 Go API 二进制**并 `systemctl start/restart una-seller-api`。密钥/店铺 Token 不修改。
 5. Nginx 只对实际 `mkd` vhost 增加/核对 `location ^~ /api/v1/products`、`location = /api/v1/categories/predict`，按仓库 [nginx 模板](../../deploy/una-seller/nginx-mkd.conf) 补充授权头和 `no-store`；**禁止直接覆盖现网整个 vhost**，不能影响 OAuth callback 或其他域名。先 `sudo nginx -t`，成功才 `sudo systemctl reload nginx`。
 6. 匿名只读冒烟：`/healthz = 200`；`/api/v1/collections`、`/api/v1/products`、`/api/v1/categories/predict?q=...` 均应 **401**（不携带 Token），不能仅凭 healthz 通过就宣称 DB/Auth 正常。
-7. 用自己的受控测试账号、经批准的测试来源，完成 `GET /api/v1/products = 200`，工作稿 `PUT`→批准转库→产品箱 `PUT/GET`→重启 API→再次读回；确认保存、来源只读、幂等、跨账号隔离。**不要对真实订单、客户发货或 CBT 实盘刊登执行写入**。官方 CBT 类目推荐须测试店铺已真实授权后单独记 PASS/FAIL/NOT_RUN。
+7. 用自己的受控测试账号、经批准的测试来源，完成 `GET /api/v1/products = 200`，工作稿 `PUT`→批准转库→产品箱 `PUT/GET`→重启 Windows 客户端→再次读回；确认保存、来源只读、幂等、跨账号隔离。**不要对真实订单、客户发货或 CBT 实盘刊登执行写入**。官方 CBT 类目推荐须测试店铺已真实授权后单独记 PASS/FAIL/NOT_RUN。
 
 ## 回退与判定
 
