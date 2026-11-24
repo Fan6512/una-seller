@@ -162,7 +162,8 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 					'category_attributes',d.listing_fields->'category_attributes',
 					'descriptions',d.listing_fields->'descriptions',
 					'description_translation',d.listing_fields->'description_translation',
-					'target_net_proceeds_usd',d.listing_fields->'target_net_proceeds_usd')) || $7::jsonb,
+					'target_net_proceeds_usd',d.listing_fields->'target_net_proceeds_usd',
+					'variants',d.listing_fields->'variants')) || $7::jsonb,
 				d.listing_fields),
 				revision=d.revision+1,updated_at=now()
 			FROM app.source_products p
