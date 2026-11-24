@@ -208,7 +208,7 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
                 {item.status !== "disconnected" && (
                   <button type="button" className="refresh-button" disabled={busy} onClick={() => void probeMode(item)}>核实刊登模式（只读）</button>
                 )}
-                {item.status !== "disconnected" && <button type="button" className="refresh-button" disabled={busy} onClick={() => void disconnect(item)}>断开连接</button>
+                {item.status !== "disconnected" && <button type="button" className="refresh-button" disabled={busy} onClick={() => void disconnect(item)}>断开连接</button>}
               </div>
             </article>
           ))}
