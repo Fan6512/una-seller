@@ -2,7 +2,7 @@ import CategoryAttributesForm from "./CategoryAttributesForm";
 import AICopyPanel from "./AICopyPanel";
 import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTitle } from "./listingFields";
-import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion } from "./collections";
+import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion, type CBTCategoryRules, type CBTAttributeRule } from "./collections";
 import { useEffect, useRef, useState } from "react";
 import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute } from "./editorUx";
 import { useSiteTitleMode } from "./titleModePreference";
@@ -10,6 +10,7 @@ import { useSiteTitleMode } from "./titleModePreference";
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean;aiProduct?:AICopyProduct;aiSaved?:Partial<ListingFields>};
 export default function ListingFieldsEditor({value,onChange,disabled=false,aiProduct,aiSaved}:Props) {
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
+  const [categoryRules,setCategoryRules]=useState<CBTCategoryRules|null>(null);
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
   const [predicting,setPredicting]=useState(false);
   const [predictMessage,setPredictMessage]=useState("");
@@ -83,6 +84,13 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   };
   const images=value.images??[];
   const variants=value.variants??[];
+  const activeRules=categoryRules?.category_id===value.category_id?categoryRules:null;
+  const childRules=(activeRules?.attributes??[]).filter(r=>r.hierarchy==="CHILD_PK"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(r.id));
+  const translations=activeRules?.translations_zh??{};
+  const bilingual=(name:string)=>Object.hasOwn(translations,name)&&translations[name]!==name?name+"（"+translations[name]+"）":name;
+  const options=(rule:CBTAttributeRule)=>(rule.values??[]).filter(v=>v.id!=null&&v.name);
+  const supported=(rule:CBTAttributeRule)=>!["read_only","hidden","fixed","multivalued","conditional_required","size_grid_required"].some(t=>rule.tags?.[t])&&
+    (rule.value_type==="string"||rule.value_type==="list"||rule.value_type==="number"||rule.value_type==="number_unit");
   const duplicateCount=images.length-removeDuplicateGalleryLinks(images).length;
   const languages=[
     {key:"en" as const,label:"英语 EN",full:"英文标题（源标题 / CBT 分类推荐）",target:"建议 45–55 字符"},
@@ -109,6 +117,34 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const updateVariant=(index:number,patch:Partial<ListingVariant>)=>{
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
   };
+  const setOfficialSpec=(index:number,rule:CBTAttributeRule,entered:string,valueId?:string,unitId?:string)=>{
+    const variant=variants[index];
+    const history=(variant.category_attributes??[]).filter(a=>a.category_id!==value.category_id||a.id!==rule.id);
+    if(entered||unitId)history.push({category_id:value.category_id,id:rule.id,value:entered,value_id:valueId,unit_id:unitId});
+    updateVariant(index,{category_attributes:history});
+  };
+  const exactMatch=(rule:CBTAttributeRule,variant:ListingVariant)=>{
+    const normalize=(s:string)=>s.trim().normalize("NFC").toLowerCase();
+    const names=[rule.id,rule.name,translations[rule.name]].filter(Boolean).map(normalize);
+    const raw=Object.entries(variant.attributes).filter(([name])=>names.includes(normalize(name)));
+    if(raw.length!==1)return undefined;
+    const matches=options(rule).filter(v=>[v.name,translations[v.name]].filter(Boolean).map(normalize).includes(normalize(raw[0][1])));
+    return matches.length===1?matches[0]:undefined;
+  };
+  const specIssue=(variant:ListingVariant,rule:CBTAttributeRule)=>{
+    const field=variant.category_attributes?.find(a=>a.category_id===value.category_id&&a.id===rule.id);
+    if(!supported(rule))return "特殊规格，刊登前人工核实";
+    if(!field?.value.trim())return "待填写";
+    if(rule.value_type==="list"&&!options(rule).some(o=>String(o.id)===field.value_id&&o.name===field.value))return "待核实官方选项";
+    if(!field.value_id&&/\p{Script=Han}/u.test(field.value))return "请填写英文规格";
+    if((rule.value_type==="number"||rule.value_type==="number_unit")&&!/^-?\d+(?:\.\d+)?$/.test(field.value))return "请输入数字";
+    if(rule.value_type==="number_unit"&&!(rule.allowed_units??[]).some(u=>u.id===field.unit_id))return "请选择官方单位";
+    return "";
+  };
+  const completeKeys=variants.map(v=>childRules.length&&childRules.every(r=>!specIssue(v,r))?JSON.stringify(childRules.map(r=>{
+    const f=v.category_attributes!.find(a=>a.category_id===value.category_id&&a.id===r.id)!;
+    return [r.id,f.value_id||f.value.trim().toLowerCase(),f.unit_id??""];
+  })):"");
   // These controls have separate identities across modes and languages so an
   // already focused Spanish/Portuguese textarea cannot become the English input.
   const renderTitle=(lang:"en"|"es"|"pt",label:string)=>{
@@ -233,7 +269,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     </fieldset>
 
     <CategoryAttributesForm category={value.category_id} values={value.category_attributes ?? []}
-      onChange={fields => set("category_attributes",fields)} disabled={disabled}/>
+      onChange={fields => set("category_attributes",fields)} disabled={disabled} onRules={setCategoryRules}/>
 
     <fieldset className="listing-editor-plain" aria-label="采购成本与目标净收益">
       <div className="listing-field-grid">
@@ -329,15 +365,41 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           + 添加变体
         </button>
       </div>
+      <p className="listing-fields-note">{!activeRules?"选择 CBT 类目并加载官方规则后可填写 UP 规格。":childRules.length===0?"当前规则未返回 CHILD_PK，保留原始规格，需在刊登前核实。":"官方规格使用英文及官方 ID，中文仅辅助阅读。原始规格不自动提交。"}</p>
       <div className="listing-variant-table-scroll" role="region" aria-label="可横向滚动的变体表格" tabIndex={0}>
         <table className="listing-variant-table">
-          <thead><tr><th scope="col">规格属性</th><th scope="col">SKU</th><th scope="col">价格</th><th scope="col">币种</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
+          <thead><tr>{childRules.map(rule=><th key={rule.id} scope="col">{bilingual(rule.name||rule.id)}</th>)}<th scope="col">原始规格（参考）</th><th scope="col">SKU</th><th scope="col">采购成本（¥）</th><th scope="col">净收益（$）</th><th scope="col">来源价格</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
           <tbody>{variants.map((v,i)=><tr key={i}>
+            {childRules.map(rule=>{
+              const f=v.category_attributes?.find(a=>a.category_id===value.category_id&&a.id===rule.id);
+              const issue=specIssue(v,rule);
+              const candidate=!f?.value&&exactMatch(rule,v);
+              const label="变体 "+(i+1)+" "+(rule.name||rule.id);
+              return <td key={rule.id}>
+                {supported(rule)?rule.value_type==="list"?<select disabled={disabled} aria-label={label} value={f?.value_id??""}
+                  onChange={e=>{const o=options(rule).find(o=>String(o.id)===e.target.value);setOfficialSpec(i,rule,o?.name??"",o?String(o.id):undefined);}}>
+                  <option value="">请选择</option>
+                  {f?.value_id&&!options(rule).some(o=>String(o.id)===f.value_id)&&<option value={f.value_id} disabled>{f.value}（待核实）</option>}
+                  {options(rule).map(o=><option key={String(o.id)} value={String(o.id)}>{bilingual(o.name)}</option>)}
+                </select>:<>
+                  <input disabled={disabled} aria-label={label} value={f?.value??""} placeholder="English"
+                    maxLength={Math.min(rule.value_max_length||500,500)} onChange={e=>setOfficialSpec(i,rule,e.target.value,undefined,f?.unit_id)}/>
+                  {rule.value_type==="number_unit"&&<select disabled={disabled} aria-label={label+" unit"} value={f?.unit_id??""}
+                    onChange={e=>setOfficialSpec(i,rule,f?.value??"",undefined,e.target.value||undefined)}>
+                    <option value="">单位</option>{(rule.allowed_units??[]).map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>}
+                </>:<small>特殊属性，保留历史值：{f?.value??"—"}</small>}
+                {candidate&&supported(rule)&&rule.value_type==="list"&&<button type="button" disabled={disabled}
+                  onClick={()=>setOfficialSpec(i,rule,candidate.name,String(candidate.id))}>匹配 {bilingual(candidate.name)}</button>}
+                {issue&&<small className="listing-validation">{issue}</small>}
+              </td>;
+            })}
             <td className="listing-variant-spec">
+              {completeKeys[i]&&completeKeys.filter(k=>k===completeKeys[i]).length>1&&<small className="listing-validation">重复官方规格组合 · 刊登前修正</small>}
               {Object.entries(v.attributes).map(([key,val],j)=><div className="listing-variant-attribute" key={j}>
-                <input disabled={disabled} aria-label={"变体 "+(i+1)+" 属性 "+(j+1)+" 名称"} value={key} placeholder="颜色 / 尺寸"
+                <input disabled={disabled} aria-label={"变体 "+(i+1)+" 属性 "+(j+1)+" 名称"} value={key} placeholder="Color / Size"
                   onChange={e=>updateVariant(i,{attributes:renameVariantAttribute(v.attributes,key,e.target.value)})}/>
-                <input disabled={disabled} aria-label={"变体 "+(i+1)+" 属性 "+(j+1)+" 值"} value={val} placeholder="黑色 / M"
+                <input disabled={disabled} aria-label={"变体 "+(i+1)+" 属性 "+(j+1)+" 值"} value={val} placeholder="Black / M"
                   onChange={e=>updateVariant(i,{attributes:{...v.attributes,[key]:e.target.value}})}/>
                 <button type="button" disabled={disabled} onClick={()=>{
                   const next={...v.attributes};delete next[key];updateVariant(i,{attributes:next});
@@ -351,10 +413,11 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
             </td>
             <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" SKU"} value={v.seller_sku}
               maxLength={120} onChange={e=>updateVariant(i,{seller_sku:e.target.value})} placeholder="自定义 SKU"/></td>
-            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 价格"} value={v.price}
-              onChange={e=>updateVariant(i,{price:e.target.value})} placeholder="可留空"/></td>
-            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 币种"} value={v.currency}
-              maxLength={3} onChange={e=>updateVariant(i,{currency:e.target.value})} placeholder="USD"/></td>
+            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 采购成本（¥）"} value={v.purchase_cost_cny??""}
+              onChange={e=>updateVariant(i,{purchase_cost_cny:e.target.value})} placeholder="CNY"/></td>
+            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 净收益（$）"} value={v.target_net_proceeds_usd??""}
+              onChange={e=>updateVariant(i,{target_net_proceeds_usd:e.target.value})} placeholder="USD"/></td>
+            <td><small>{v.price? v.price+" "+(v.currency||"币种未确认"):"—"}</small></td>
             <td><button type="button" className="listing-variant-images-button" disabled={disabled}
                 onClick={()=>{setVariantImageIndex(variantImageIndex===i?null:i);setVariantImageUrlDraft("");}}>
                 选择图片 ({v.image_urls.length})
