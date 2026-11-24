@@ -113,26 +113,8 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 				return Product{}, false, err
 			}
 		}
-		for i, image := range in.Images.Value {
-			if partial {
-				var exists bool
-				err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app.source_product_images WHERE source_product_id=$1 AND variant_id IS NULL AND image_url=$2)`, id, image.URL).Scan(&exists)
-				if err != nil {
-					return Product{}, false, err
-				}
-				if exists {
-					continue
-				}
-			}
-			order := i
-			if partial {
-				if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(image_order),-1)+1 FROM app.source_product_images WHERE source_product_id=$1 AND variant_id IS NULL`, id).Scan(&order); err != nil {
-					return Product{}, false, err
-				}
-			}
-			if _, err = tx.Exec(ctx, `INSERT INTO app.source_product_images(source_product_id,image_url,image_type,image_order) VALUES($1,$2,$3,$4)`, id, image.URL, image.Type, order); err != nil {
-				return Product{}, false, err
-			}
+		if err = insertCollectionImages(ctx, tx, id, in.Images.Value, partial); err != nil {
+			return Product{}, false, err
 		}
 	}
 	if in.Variants.Present && (!partial || (!in.Variants.Null && len(in.Variants.Value) > 0)) {
@@ -141,6 +123,8 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 				return Product{}, false, err
 			}
 		}
+		variantImageIDs := []string{}
+		variantImageURLs := []string{}
 		for i, v := range in.Variants.Value {
 			key, _ := json.Marshal(v.Attributes)
 			var variantID string
@@ -173,27 +157,14 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 						return Product{}, false, err
 					}
 				}
-				for j, imageURL := range v.ImageURLs.Value {
-					if partial {
-						var exists bool
-						if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app.source_product_images WHERE variant_id=$1 AND image_url=$2)`, variantID, imageURL).Scan(&exists); err != nil {
-							return Product{}, false, err
-						}
-						if exists {
-							continue
-						}
-					}
-					order := j
-					if partial {
-						if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(image_order),-1)+1 FROM app.source_product_images WHERE variant_id=$1`, variantID).Scan(&order); err != nil {
-							return Product{}, false, err
-						}
-					}
-					if _, err = tx.Exec(ctx, `INSERT INTO app.source_product_images(source_product_id,variant_id,image_url,image_type,image_order) VALUES($1,$2,$3,'variant',$4)`, id, variantID, imageURL, order); err != nil {
-						return Product{}, false, err
-					}
+				for _, imageURL := range v.ImageURLs.Value {
+					variantImageIDs = append(variantImageIDs, variantID)
+					variantImageURLs = append(variantImageURLs, imageURL)
 				}
 			}
+		}
+		if err = insertVariantImages(ctx, tx, id, variantImageIDs, variantImageURLs, partial); err != nil {
+			return Product{}, false, err
 		}
 	}
 	if err = tx.Commit(ctx); err != nil {
