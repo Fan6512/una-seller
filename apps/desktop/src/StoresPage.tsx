@@ -17,6 +17,13 @@ const publicationModeNames: Record<string, string> = {
   undetermined: "刊登类型待确认",
 };
 
+const publicationModeBadges: Record<string, string> = {
+  standard_up: "UP",
+  legacy_candidate: "传统",
+  fully_managed: "全托",
+  undetermined: "待检测",
+};
+
 export default function StoresPage({ onConnectionChecked }: { onConnectionChecked?: (storeId: string) => void }) {
   const [items, setItems] = useState<StoreConnection[]>(() => cachedStores() ?? []);
   const [loading, setLoading] = useState(true);
@@ -187,13 +194,15 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
                 <div>
                   <strong>{item.nickname || "未提供昵称"}</strong>
                   <p>CBT 主账号 ID：{item.seller_id}</p>
-                  <span className="store-type-label">
-                    刊登类型：{item.publication_mode_checked_at
-                      ? publicationModeNames[item.publication_mode ?? "undetermined"] ?? "刊登类型待确认"
-                      : "待检测确认"}
-                  </span>
                 </div>
-                <span className={"store-status " + (item.status === "connected" ? "store-connected" : "store-attention")}>{statusText[item.status] || "状态未知"}</span>
+                <div className="store-card-badges">
+                  <span className="store-type-label"
+                    title={item.publication_mode_checked_at ? publicationModeNames[item.publication_mode ?? "undetermined"] ?? "刊登类型待确认" : "尚未取得刊登类型证据"}
+                    aria-label={item.publication_mode_checked_at ? publicationModeNames[item.publication_mode ?? "undetermined"] ?? "刊登类型待确认" : "刊登类型待检测"}>
+                    {item.publication_mode_checked_at ? publicationModeBadges[item.publication_mode ?? "undetermined"] ?? "待检测" : "待检测"}
+                  </span>
+                  <span className={"store-status " + (item.status === "connected" ? "store-connected" : "store-attention")}>{statusText[item.status] || "状态未知"}</span>
+                </div>
               </div>
               <p className="store-note">
                 {item.marketplaces_status === "verified"
