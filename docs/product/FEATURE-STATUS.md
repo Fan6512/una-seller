@@ -1,7 +1,7 @@
 # UNA Seller · 功能状态总台账
 
 > **日常功能进度与需求登记的统一入口** · 首次盘点：2026-11-23  
-> 核对基线：main = c066ee1ef46db46b7072f9310b51c506e8f116c7（已合并 #87）；2026-11-24 本次仅核对 CBT C0/C1 与部署状态，其余功能沿用已有盘点，未重新验收。  
+> 核对基线：main 业务基线 = 823e6056b10c4b2f13e4025ca941baefa6655f49（已合并 #66）；2026-11-24 核对 ORD-04 生产验收及 CBT C0/C1，其余功能沿用已有盘点，未重新验收。  
 > 产品范围：自用的 Mercado Libre CBT ERP；核心链路 **采集 → 工作稿/产品箱 → AI 整理 → CBT 刊登 → 已刊登管理 → 订单/财务**。Amazon 等平台只作为采集来源。  
 > 本文件记录功能进度与验收，不替代 [产品定义](PRODUCT-WORKFLOW-AND-EDITOR.md)、[技术路线](../architecture/DELIVERY.md)、具体 PR/Issue 或官方 API 取证。发现记录与实际代码冲突时，先核实当前 main、PR 和真实验收证据，再更新本台账。
 
@@ -23,15 +23,15 @@
 
 | 指标 | 经核对的情况 |
 | --- | --- |
-| main | **c066ee1e**，#87 已 Squash Merge；合并前最终 HEAD 的 Go Backend / Desktop Frontend / Changed Files 均 PASS，MV3 按范围跳过 |
-| 仍开放的代码 PR | **[#66](https://github.com/Fan6512/una-seller/pull/66)** 官方 Shipment（Draft，含尚未合并的 0010 迁移）；**[#49](https://github.com/Fan6512/una-seller/pull/49)** 订单账单预览（Draft） |
+| main 业务基线 | **823e6056**，#66 已 Squash Merge；最终候选 CI 4/4 PASS，合并后 main CI 通过 |
+| 仍开放的代码 PR | **[#49](https://github.com/Fan6512/una-seller/pull/49)** 订单账单预览（Draft） |
 | 分类官方原文 | 11,668；停用 714；有效待译 10,954；隔离目录已初始化 |
 | 分类中文翻译 | **0/10,954**；真实翻译提供方凭据未配置，五批试译未执行 |
 | AI 真实服务 | 三语标题/详情代码已合并；真实 Key、已保存测试商品与 Windows 操作验收尚缺 |
 | CBT 刊登 | C0 生产只读取证 PASS，当前店铺分类 standard_up；C1 已进入开发阶段，实施 PR 待建，真实商品创建、官方图片上传及发布记录未验收 |
 | CBT 测试账号 | 一个真实账号、五站点 MLB/MLM/MLC/MCO/MLA 均为 remote、UP enabled、net_proceeds；business_model 脱敏为 other。最新只读回读 2026-11-24 14:39:47（北京时间），原始枚举及卖家后台交叉核实仍待完成 |
-| 桌面端 | Windows 已有历史真实登录/采集测试；最新 main 的 V0.3 + AI/词典整体 Windows QA 未完成；macOS 实机未验收 |
-| 部署 | #87 Go API 已部署并验收；0011/0012 已在上一轮生产迁移，#87 无新增迁移。当前真实 C0 已回读；新版四标签/自动取证的真实重授权及最新 Windows GUI 尚未验收；签名发行、真实写入仍需单独审批 |
+| 桌面端 | Windows 当前安装 V0.3；负责人批准构建与发布 V0.4 签名测试版，尚未完成构建、OTA 与 GUI 验收；AI/词典整体 QA 和 macOS 实机仍待验收 |
+| 部署 | #66 Go API 823e6056 已生产部署（据负责人报告）；0010 已迁移，0011/0012 保留；9 单真实 Shipment 后端验收 PASS。C0 已回读；新版四标签/自动取证的真实重授权及 Windows GUI 尚未验收；V0.4 测试版已批准，正式发布和真实官方写入仍需单独审批 |
 
 ## 三、已完成（限定范围内真实验收通过）
 
@@ -70,7 +70,7 @@
 | ORD-01 | 订单只读同步、列表详情、跨站点/跨店铺搜索 | 代码已合并；当前真实 Windows/账号闭环待复核 | [#40](https://github.com/Fan6512/una-seller/pull/40)、[#43](https://github.com/Fan6512/una-seller/pull/43)、[#55](https://github.com/Fan6512/una-seller/pull/55) | 真实店铺同步、Order ID 精确搜索和店铺隔离；仅搜索已同步订单 |
 | ORD-02 | 1688 采购订单号、成本、国内运单**手工关联** | 代码已合并；新版 GUI 与真实订单核对待完成 | [#46](https://github.com/Fan6512/una-seller/pull/46)、[#54](https://github.com/Fan6512/una-seller/pull/54) | 1688 采购记录与官方订单分开展示，确认跨店不串单；**未自动读取 1688** |
 | ORD-03 | 官方发货 SLA 与单笔订单状态刷新 | 代码已合并；真实 Seller Center 对照仍不完整 | [#48](https://github.com/Fan6512/una-seller/pull/48) | 真实订单时限及退款状态按官方回读，不把 Shipment ID 当运单 |
-| ORD-04 | 官方 Shipment 发货/运输/签收及运单追踪 | **Draft PR 开发中；未合并** | [#66](https://github.com/Fan6512/una-seller/pull/66) | 合流当前 main，真实 Shipment 只读回读、Windows 测试；0010 迁移和部署需审批 |
+| ORD-04 | 官方 Shipment 发货/运输/签收及运单追踪 | **代码已合并；生产后端 PASS，Windows 待验收** | [#66](https://github.com/Fan6512/una-seller/pull/66) | 2026-11-24 生产 0010、API 823e6056、9 单真实物流与完整缓存 PASS；[脱敏验收摘要](../architecture/ORD-04-DEPLOY-REPORT-20261124.md)。V0.4 测试版已批准，待签名发布、OTA 和真实 GUI；正式 Release 待审批 |
 | FIN-01 | 官方 CBT 账单只读预览、费用/冲正/退款明细 | **Draft PR 开发中；未合并** | [#49](https://github.com/Fan6512/una-seller/pull/49) | 合流当前 main，真实账单与 Seller Center 对账、Windows 验收；未核实净回款标注“待核账” |
 
 ## 五、待完成（尚无可用业务闭环）
@@ -97,7 +97,7 @@
 1. **P0 首次真实 CBT 刊登**：C0 已完成，不重复取证。先收敛 CBT-03/IMG-01 的单商品单站点字段与图片，再以 CBT-02 + PUB-03 完成标准 UP / net_proceeds / remote 的最小闭环。开发和模拟测试先行；真实图片上传及创建、迁移、生产部署需独立批准。真实发布前核实原始 business_model、卖家后台模式及目标站点权限。
 2. **同版 Windows 集中 QA**：产品编辑、类目、三语/平台自动英文模式、四标签、真实新授权后的自动 C0；不为每项功能单独打包，不把真实新授权探测或 GUI 未验收冒充 PASS。
 3. **配置真实翻译 + AI 测试服务**：用一个已保存商品验收 TR-01、AI-01、AI-02；TR-02 五批试译和离线词典推进与 C1 解耦，不阻断首次刊登。凭据只放受控环境。
-4. **首次刊登完成后再扩展**：多变体 Family、多店多站点批量与 PUB-04；#66 Shipment 和 #49 Billing 的真实验证与合并；1688 自动化、客服等后置。
+4. **首次刊登完成后再扩展**：多变体 Family、多店多站点批量与 PUB-04；ORD-04 Windows 验收及 #49 Billing 的真实验证与合并；1688 自动化、客服等后置。
 
 ## 七、新需求登记、完成记录范例
 
@@ -115,6 +115,7 @@
 
 | 日期 | 变更 | 依据 |
 | --- | --- | --- |
+| 2026-11-24 | ORD-04 生产后端验收 PASS（0010、9 单真实物流与缓存）；批准 V0.4 签名测试版，OTA/GUI 待验收，未正式发布 | [#66](https://github.com/Fan6512/una-seller/pull/66)；[脱敏验收摘要](../architecture/ORD-04-DEPLOY-REPORT-20261124.md) |
 | 2026-11-24 | 负责人批准普通台账直接提交 main；重要设计、合同、代码与治理变更仍走 PR，保留并发保护及正常 CI | PR #88 负责人决策 |
 | 2026-11-24 | CBT-01 单账号真实 C0 生产验收完成；CBT-02 P0 进入开发，实施 PR 待建；同步更新证据边界与流程 | [#87](https://github.com/Fan6512/una-seller/pull/87)；[PR #87 生产升级与真实 C0 验收摘要](../architecture/GO-API-PR87-DEPLOY-REPORT-20261124.md)；生产数据库最新回读 14:39:47 北京时间 |
 | 2026-11-24 | 新增 DESK-03 桌面端图片预览及加载速度优化（P1，待开发）；第一阶段限定前端低分辨率预览、失败回退、按需加载/有限预取、变体延迟渲染和脱敏耗时测量，保留原始高清 URL；与 #79/#82 数据库优化分离 | [Issue #83](https://github.com/Fan6512/una-seller/issues/83)；2026-11-24 负责人需求 |
@@ -342,7 +343,7 @@ flowchart TD
     class J complete
 ~~~
 
-**当前边界**：#40/#43/#55 的订单读取和搜索、#46/#54 的**人工采购关联**已合并；#66 官方 Shipment 仍 Draft；1688 自动授权/采购物流及货代自动跟踪未形成完整链路。图中的厂家、货代、买家节点描述卖家真实履约流程，不表示系统已经自动感知全部状态。
+**当前边界**：#40/#43/#55 的订单读取和搜索、#46/#54 的**人工采购关联**已合并；#66 官方 Shipment 已合并，生产后端 PASS，Windows GUI 待验收；1688 自动授权/采购物流及货代自动跟踪未形成完整链路。图中的厂家、货代、买家节点描述卖家真实履约流程，不表示系统已经自动感知全部状态。
 
 ### 9.8 账单、利润与售后（FIN / CS）
 
@@ -395,7 +396,7 @@ flowchart TD
     M -->|否| N["拒绝安装，保留当前版本"]
     M -->|是| O["用户确认更新、安装并重启"]
 
-    F -.-> P["当前 V0.3 整体 Windows GUI 待验收"]
+    F -.-> P["V0.4 测试版已批准；OTA 与 Windows GUI 待验收"]
     H -.-> Q["真实签名 OTA / macOS 实机尚未验收"]
 
     classDef verify fill:#fff5e5,color:#7a4d00,stroke:#e3ae56
