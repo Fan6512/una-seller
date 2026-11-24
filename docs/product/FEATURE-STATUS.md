@@ -86,6 +86,7 @@
 | CS-01 | 售前 Questions、售后 Messages、退款/争议在 ERP 内查询和处理 | 有真实运营需求与官方权限 | [Delivery](../architecture/DELIVERY.md) M3 | P2 |
 | OPS-01 | Webhook/通知、必要自动更新与异常待办 | 真实业务流程和官方 Topics/权限验证 | [Delivery](../architecture/DELIVERY.md) M3 | P2 |
 | DESK-02 | macOS arm64/x64 原生实机登录、业务 UI 和更新验收 | macOS 测试环境与已批准构建 | [CROSS_PLATFORM](../architecture/CROSS_PLATFORM.md) | P1（正式双端交付前） |
+| DESK-03 | **桌面缩略图与图片加载优化·第一阶段**：内部先做（原建议 P0）已知 CDN 小图预览/点开原图及变体图片按需渲染；随后（原建议 P1）主图优先、其他懒加载、相邻最多 1–2 张预加载、失败回退重试与脱敏耗时诊断；**P2 本地有界缩略图缓存仅作为第二阶段候选，不在本期开发**；始终保留高清原始 URL 供编辑、修图与 CBT 刊登 | 独立桌面 Draft PR；白名单 URL 单测、失败/重试、性能对比和 Windows 真机验收；**不增加 Go 图片代理/对象存储/数据库迁移** | [Issue #83](https://github.com/Fan6512/una-seller/issues/83)（已立项；实现 PR 待创建）；数据库读写优化 [#79](https://github.com/Fan6512/una-seller/pull/79)、[#82](https://github.com/Fan6512/una-seller/pull/82) 属于不同范围 | **P1（全局）**（待开发；行内 P0/P1/P2 仅表示本功能内实施顺序，不阻断 CBT 首次刊登） |
 | DOC-01 | 将旧 README/部分早期阶段说明与最新实际状态对齐 | 以本台账与最终实测证据为准 | [README](../../README.md)、[docs/README](../README.md) | P2，不阻断开发 |
 
 ## 六、下一轮执行顺序（先完整闭环，不并行扩大战线）
@@ -112,6 +113,7 @@
 
 | 日期 | 变更 | 依据 |
 | --- | --- | --- |
+| 2026-11-24 | 新增 DESK-03 桌面端图片预览及加载速度优化（P1，待开发）；第一阶段限定前端低分辨率预览、失败回退、按需加载/有限预取、变体延迟渲染和脱敏耗时测量，保留原始高清 URL；与 #79/#82 数据库优化分离 | [Issue #83](https://github.com/Fan6512/una-seller/issues/83)；2026-11-24 负责人需求 |
 | 2026-11-23 | 初始化功能总台账；盘点 main、58 个已关闭 PR、[#66](https://github.com/Fan6512/una-seller/pull/66)、[#49](https://github.com/Fan6512/una-seller/pull/49) 与公开 Issue；将功能完成和真实验收分离 | main e9b29c8f；当前官方类目 11,668/714/10,954；截至本日已提供的实测报告 |
 
 
