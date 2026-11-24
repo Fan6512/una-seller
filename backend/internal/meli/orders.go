@@ -876,6 +876,25 @@ func orderImageURLAllowed(raw string) bool {
 	return host == "mlstatic.com" || strings.HasSuffix(host, ".mlstatic.com")
 }
 
+// Keep this expression aligned with desktop orderFulfillmentStatus. Raw status
+// filters remain backward compatible; new fulfillment_* filters are applied
+// before pagination in both scoped list and global search.
+const orderFulfillmentStatusSQL = `CASE
+ WHEN o.status <> 'paid' OR o.shipment_id IS NULL OR
+   (o.shipment_snapshot->>'shipment_id') IS DISTINCT FROM o.shipment_id THEN o.status
+ WHEN o.shipment_snapshot->>'status'='ready_to_ship' AND o.shipment_snapshot->>'substatus'='printed' THEN 'label_printed'
+ WHEN o.shipment_snapshot->>'status' IN ('pending','handling','ready_to_ship') THEN 'awaiting_dispatch'
+ WHEN o.shipment_snapshot->>'status'='delivered' THEN 'delivered'
+ WHEN o.shipment_snapshot->>'status'='cancelled' THEN 'shipment_cancelled'
+ WHEN o.shipment_snapshot->>'status'='not_delivered' THEN 'logistics_exception'
+ WHEN o.shipment_snapshot->>'status'='shipped' THEN CASE
+   WHEN o.shipment_snapshot->>'substatus' IN ('receiver_absent','bad_address','delivery_blocked','impassable_zone') THEN 'logistics_exception'
+   WHEN o.shipment_snapshot->>'substatus' IN ('out_for_delivery','soon_deliver','at_the_door') THEN 'out_for_delivery'
+   WHEN o.shipment_snapshot->>'substatus'='in_transit' THEN 'in_transit'
+   ELSE 'shipped' END
+ ELSE o.status END`
+const orderStatusFilterSQL = `($5='' OR o.status=$5 OR ('fulfillment_' || (` + orderFulfillmentStatusSQL + `))=$5)`
+
 func (s *Service) ListOrders(ctx context.Context, owner, store string,
 	scope OrderScope, status, purchaseLink string, offset int) (OrderPage, error) {
 	if !orderScopeValid(scope) || offset < 0 || offset > 100000 ||
@@ -885,7 +904,7 @@ func (s *Service) ListOrders(ctx context.Context, owner, store string,
 	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
 		return OrderPage{}, err
 	}
-	rows, err := s.db.Query(ctx, orderSelect+` AND ($5='' OR o.status=$5)
+	rows, err := s.db.Query(ctx, orderSelect+` AND `+orderStatusFilterSQL+`
  AND ($8='' OR ($8='linked' AND p.purchase_order_id IS NOT NULL)
    OR ($8='unlinked' AND p.purchase_order_id IS NULL))
  ORDER BY o.date_created DESC,o.order_id DESC LIMIT $6 OFFSET $7`,

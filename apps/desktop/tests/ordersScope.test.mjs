@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
-  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel } from "/src/orders.ts";
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -295,6 +295,11 @@ try {
   assert(orderStatusLabel("partially_refunded") === "部分退款", "partial refund label missing");
   assert(displayOrderStatus({ ...order, purchase_order_id: "12345678" }) === "已付款",
     "purchase link must not replace the official paid label");
+  assert(displayOrderStatus({ ...order, shipment: shipmentDetails }) === "已签收", "delivered order must display fulfillment state");
+  assert(displayOrderStatus({ ...order, status: "refunded", shipment: shipmentDetails }) === "已退款", "refund must win over delivery");
+  assert(displayOrderStatus({ ...order, shipment: { ...shipmentDetails, shipment_id: "stale" } }) === "已付款", "stale shipment must not change order state");
+  assert(displayOrderStatus({ ...order, shipment: { ...shipmentDetails, status: "ready_to_ship", substatus: "printed" } }) === "标签已打印", "printed label must not imply dispatch");
+  assert(orderDate("2026-11-09T16:14:00-03:00").includes("2026/11/10") && orderDate("2026-11-09T16:14:00-03:00").includes("03:14"), "Beijing timezone must be independent of machine timezone");
   assert(hasProcurement({ ...order, purchase_order_id: "12345678" }), "purchase badge predicate incorrect");
   assert(!hasProcurement(order), "unlinked order must not be marked procured");
   assert(orderVariationText({ item_id: "MLM111", title: "", variation_id: "998" }) ===
@@ -318,6 +323,8 @@ try {
     ...order, status: "paid", dispatch_sla_status: status,
     dispatch_deadline: new Date(now + hours * 3600_000).toISOString(),
   });
+  assert(dispatchDeadlineLabel(sample(42), now, "remote").countdown === "剩余1天18小时", "show remaining days and hours");
+  assert(dispatchDeadlineLabel({ ...sample(-2), shipment: shipmentDetails }, now, "remote").countdown === "已签收", "delivered orders must not show expired countdown");
   assert(dispatchDeadlineLabel(sample(24), now, "remote").state === "neutral",
     "24h must not be red");
   assert(dispatchDeadlineLabel(sample(23.9), now, "remote").state === "late",
@@ -352,8 +359,8 @@ try {
   await waitFor(() => shipmentFetchCount === 1 &&
     document.querySelector(".orders-shipping-refs")?.textContent.includes("OFFICIAL-TRACK-102") &&
     document.querySelector(".orders-shipping-refs")?.textContent.includes("运输中") &&
-    document.querySelector(".orders-status")?.textContent.includes("已付款"),
-    "shipment and payment states were not displayed independently");
+    document.querySelector(".orders-status")?.textContent.includes("运输中"),
+    "main order state must follow current shipment");
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "real order detail modal did not open after purchase modal closed");

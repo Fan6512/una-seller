@@ -86,7 +86,7 @@ const globalOrderSearchSQL = `SELECT ` + orderColumns + `,
   WHERE ($2::uuid IS NULL OR o.store_id=$2::uuid)
     AND ($3='*' OR o.site_id=$3)
     AND ($4='*' OR o.logistic_type=$4)
-    AND ($5='' OR o.status=$5)
+    AND ` + orderStatusFilterSQL + `
     AND ($6='' OR ($6='linked' AND p.purchase_order_id IS NOT NULL)
       OR ($6='unlinked' AND p.purchase_order_id IS NULL))
     AND ($7='' OR ($8='id' AND o.order_id=$7)

@@ -141,10 +141,33 @@ export function orderStatusLabel(status: string) {
   };
   return labels[status] || status || "未知状态";
 }
-// Platform payment status is authoritative; procurement is a separate manually verified fact.
-// Shipment ID and dispatch SLA cannot establish "shipped" or "delivered".
+// Keep raw transaction status separate. Only a current official shipment can
+// refine a paid order's display; refunds/cancellations and unpaid states win.
+export function orderFulfillmentStatus(order: OrderRecord): string {
+  if (order.status !== "paid" || !order.shipment_id ||
+      order.shipment?.shipment_id !== order.shipment_id) return order.status;
+  const { status, substatus } = order.shipment;
+  if (status === "ready_to_ship" && substatus === "printed") return "label_printed";
+  if (["pending", "handling", "ready_to_ship"].includes(status)) return "awaiting_dispatch";
+  if (status === "delivered") return "delivered";
+  if (status === "cancelled") return "shipment_cancelled";
+  if (status === "not_delivered") return "logistics_exception";
+  if (status === "shipped") {
+    if (["receiver_absent", "bad_address", "delivery_blocked", "impassable_zone"].includes(substatus ?? "")) return "logistics_exception";
+    if (["out_for_delivery", "soon_deliver", "at_the_door"].includes(substatus ?? "")) return "out_for_delivery";
+    if (substatus === "in_transit") return "in_transit";
+    return "shipped";
+  }
+  return order.status;
+}
 export function displayOrderStatus(order: OrderRecord) {
-  return orderStatusLabel(order.status);
+  const state = orderFulfillmentStatus(order);
+  const labels: Record<string, string> = {
+    label_printed: "标签已打印", awaiting_dispatch: "待发货", delivered: "已签收",
+    shipment_cancelled: "物流已取消", logistics_exception: "物流异常",
+    out_for_delivery: "派送中", in_transit: "运输中", shipped: "已发货",
+  };
+  return Object.hasOwn(labels, state) ? labels[state] : orderStatusLabel(state);
 }
 
 export function shipmentStatusLabel(shipment?: Pick<OrderShipment, "status" | "substatus">) {
@@ -175,7 +198,8 @@ export function orderVariationText(line?: OrderLine) {
 export function orderDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN", {
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   });
 }
 export function orderMoney(value: string, currency: string) {

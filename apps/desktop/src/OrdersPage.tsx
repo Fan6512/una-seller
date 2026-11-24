@@ -3,7 +3,7 @@ import { cachedStores, listStores, watchStoreList, StoreRequestError, type Store
 import {
   getOrder, getOrderSyncState, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderMoney,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderLogistics, resetOrderCursor, skipOrder, syncOrders,
-  shouldApplyOrderRefresh, shouldStopLogisticsBatch, displayOrderStatus, hasProcurement, orderVariationText, shipmentStatusLabel,
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, displayOrderStatus, orderFulfillmentStatus, orderStatusLabel, hasProcurement, orderVariationText, shipmentStatusLabel,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
@@ -19,9 +19,19 @@ function logisticLabel(value?: string) {
 }
 const FILTERS = [
   { value: "", label: "全部订单" },
-  { value: "paid", label: "已付款" },
+  { value: "fulfillment_paid", label: "已付款" },
+  { value: "fulfillment_awaiting_dispatch", label: "待发货" },
+  { value: "fulfillment_label_printed", label: "标签已打印" },
+  { value: "fulfillment_shipped", label: "已发货" },
+  { value: "fulfillment_in_transit", label: "运输中" },
+  { value: "fulfillment_out_for_delivery", label: "派送中" },
+  { value: "fulfillment_delivered", label: "已签收" },
+  { value: "fulfillment_logistics_exception", label: "物流异常" },
+  { value: "fulfillment_shipment_cancelled", label: "物流已取消" },
   { value: "payment_required", label: "待付款" },
   { value: "cancelled", label: "已取消" },
+  { value: "refunded", label: "已退款" },
+  { value: "partially_refunded", label: "部分退款" },
 ];
 const REVIEW_LABELS: Record<string, string> = {
   invalid_detail: "平台订单详情字段异常",
@@ -38,7 +48,7 @@ function orderCount(order: OrderRecord) {
   return order.order_items.reduce((sum, item) => sum + item.quantity, 0);
 }
 function safeOrderStatus(status: string) {
-  return status === "paid" ? "paid" : status === "cancelled" ? "cancelled" : "other";
+  return ["paid", "delivered"].includes(status) ? "paid" : ["cancelled", "shipment_cancelled", "logistics_exception", "refunded", "partially_refunded"].includes(status) ? "cancelled" : "other";
 }
 function trustedOrderImage(src?: string) {
   if (!src) return false;
@@ -57,6 +67,12 @@ export function dispatchDeadlineLabel(order: OrderRecord, now = Date.now(), logi
     return { date: "不适用", countdown: "不适用", hint: "Fulfillment 不适用", state: "neutral" };
   if (!order.shipment_id)
     return { date: "无平台物流", countdown: "无平台物流", hint: "", state: "neutral" };
+  const currentShipment = order.shipment?.shipment_id === order.shipment_id ? order.shipment : undefined;
+  if (currentShipment && ["shipped", "delivered"].includes(currentShipment.status)) {
+    return { date: order.dispatch_deadline ? orderDate(order.dispatch_deadline) : "暂无截止时间",
+      countdown: currentShipment.status === "delivered" ? "已签收" : "已发货",
+      hint: "", state: "neutral" };
+  }
   if (!order.dispatch_deadline) {
     if (order.dispatch_sla_status === "delayed")
       return { date: "暂无截止时间", countdown: "平台标记逾期", hint: "请核实是否已发货", state: "late" };
@@ -71,17 +87,15 @@ export function dispatchDeadlineLabel(order: OrderRecord, now = Date.now(), logi
   const date = new Date(order.dispatch_deadline);
   if (!Number.isFinite(date.getTime()))
     return { date: "时间格式异常", countdown: "时间格式异常", hint: "请重新获取", state: "neutral" };
-  const dateLabel = date.toLocaleString("zh-CN", {
-    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  });
+  const dateLabel = orderDate(order.dispatch_deadline);
   const remaining = date.getTime() - now;
   const platformLate = order.dispatch_sla_status === "delayed";
+  const hours = Math.floor(remaining / 3_600_000);
   const countdown = platformLate ? "平台标记逾期"
     : remaining <= 0 ? "截止已过"
       : remaining < 3_600_000 ? "不足1小时"
         : remaining < 86_400_000 ? "剩余" + Math.floor(remaining / 3_600_000) + "小时"
-          : "约剩余" + Math.floor(remaining / 86_400_000) + "天";
+          : "剩余" + Math.floor(hours / 24) + "天" + (hours % 24) + "小时";
   const hint = platformLate || remaining <= 0 ? "请核实是否已发货" : "";
   // Red only in the final 24 hours (and for overdue/officially delayed).
   const state = platformLate || remaining < 86_400_000 ? "late" : "neutral";
@@ -94,6 +108,8 @@ function DispatchCountdown({ order, now, logistic }: {
   return <div className={"orders-dispatch orders-dispatch-" + result.state}
     title={order.dispatch_checked_at ? "官方 SLA 最近核验：" + order.dispatch_checked_at : "此订单尚未读取官方发货 SLA"}>
     <strong>{result.countdown}</strong>
+    {order.dispatch_deadline && result.date !== "—" && !["不适用", "时间格式异常", "无平台物流"].includes(result.date) &&
+      !["已发货", "已签收"].includes(result.countdown) && <small title="北京时间">截止：{result.date}</small>}
     {result.hint && <small>{result.hint}</small>}
   </div>;
 }
@@ -905,7 +921,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <small title="净收益待官方结算费用数据，尚未核算">净收益：—</small>
                       <small title="利润待实际采购成本、费用和汇率核算">利润：—</small>
                     </td>
-                    <td><span className={"orders-status " + safeOrderStatus(order.status)}>{displayOrderStatus(order)}</span>
+                    <td><span className={"orders-status " + safeOrderStatus(orderFulfillmentStatus(order))}>{displayOrderStatus(order)}</span>
                       {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
                     </td>
                     <td className="orders-shipping-refs">
@@ -955,7 +971,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {detailError && <p className="orders-alert" role="alert">{detailError}</p>}
             {detail && <>
               <div className="orders-detail-summary">
-                <span className={"orders-status " + safeOrderStatus(detail.status)}>{displayOrderStatus(detail)}</span>
+                <span className={"orders-status " + safeOrderStatus(orderFulfillmentStatus(detail))}>{displayOrderStatus(detail)}</span>
                 {hasProcurement(detail) && <small className="orders-purchase-badge">已采购</small>}
                 <strong>{orderMoney(detail.total_amount, detail.currency_id)}</strong>
                 <small>下单：{orderDate(detail.date_created)}</small>
@@ -979,6 +995,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <h3>订单与物流</h3>
                 <dl className="orders-detail-fields">
                   <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
+                  <dt>交易状态</dt><dd>{orderStatusLabel(detail.status)}</dd>
                   <dt>物流模式</dt><dd>{logisticLabel(selectedRowScope?.logistic ?? scope?.logistic)}</dd>
                   <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
                   <dt>平台运单号</dt><dd>{detail.shipment?.tracking_number ? <button type="button" onClick={() => copy(detail.shipment?.tracking_number ?? "")}>{detail.shipment.tracking_number}　复制</button> : (detail.shipment ? "平台未提供" : "尚未读取")}</dd>
@@ -992,14 +1009,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       ? <a href={detail.shipment.details.tracking_url} target="_blank" rel="noopener noreferrer">打开官方查询链接</a>
                       : "平台未提供") : "尚未读取"}</dd>
                   <dt>官方实际发货</dt><dd>{detail.shipment?.shipped_at
-                    ? <time title="本机时区" dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
+                    ? <time title="北京时间" dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
                     : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
                   <dt>{detail.shipment?.delivered_at && ["not_delivered", "cancelled"].includes(detail.shipment.status)
                     ? "平台记录的历史签收时间" : "买家签收时间"}</dt><dd>{detail.shipment?.delivered_at
-                    ? <time title="本机时区" dateTime={detail.shipment.delivered_at}>{orderDate(detail.shipment.delivered_at)}</time>
+                    ? <time title="北京时间" dateTime={detail.shipment.delivered_at}>{orderDate(detail.shipment.delivered_at)}</time>
                     : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
-                  <dt title="本机时区">物流最近核验</dt><dd>{detail.shipment ? orderDate(detail.shipment.checked_at) : "尚未读取"}</dd>
-                  {detail.shipment?.last_updated && <><dt title="本机时区">平台物流更新时间</dt><dd>{orderDate(detail.shipment.last_updated)}</dd></>}
+                  <dt title="北京时间">物流最近核验</dt><dd>{detail.shipment ? orderDate(detail.shipment.checked_at) : "尚未读取"}</dd>
+                  {detail.shipment?.last_updated && <><dt title="北京时间">平台物流更新时间</dt><dd>{orderDate(detail.shipment.last_updated)}</dd></>}
                   <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).date}
                     {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint &&
                       <small> · {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint}</small>}</dd>
@@ -1010,12 +1027,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
               </section>
               {detail.shipment?.details && <section className="orders-detail-block">
                 <h3>官方物流时间轴</h3>
-                {detail.shipment.details.checked_at && <p className="orders-muted" title="本机时区">详情最近核验：{orderDate(detail.shipment.details.checked_at)}
+                {detail.shipment.details.checked_at && <p className="orders-muted" title="北京时间">详情最近核验：{orderDate(detail.shipment.details.checked_at)}
                   {detail.shipment.checked_at && Date.parse(detail.shipment.checked_at) > Date.parse(detail.shipment.details.checked_at) && " · 概要已更新，详情可能较旧，可手动刷新"}</p>}
                 {detail.shipment.details.history?.length ? <ol className="orders-fulfillment-steps">
                   {detail.shipment.details.history.map((event, index) => <li key={index}>
                     <b>{shipmentStatusLabel(event)}</b>
-                    <small><time title="本机时区" dateTime={event.date}>{orderDate(event.date)}</time> · {event.status}
+                    <small><time title="北京时间" dateTime={event.date}>{orderDate(event.date)}</time> · {event.status}
                       {event.substatus && " / " + event.substatus}</small>
                   </li>)}
                 </ol> : <p className="orders-muted">{detail.shipment.details.history
