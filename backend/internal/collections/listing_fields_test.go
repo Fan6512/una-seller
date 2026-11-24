@@ -99,11 +99,11 @@ func TestPreserveVariantFields(t *testing.T) {
 	blue := map[string]string{"Color": "Blue"}
 	previous := []ListingVariant{
 		{SellerSKU: "black", Attributes: black, PurchaseCostCNY: new("25.50"), TargetNetProceedsUSD: new("8.50")},
-		{Attributes: white, PurchaseCostCNY: new("20.00"), CategoryAttributes: &[]ListingCategoryAttribute{{CategoryID: "CBT1055", ID: "COLOR", Value: "White", ValueID: "52055"}}},
+		{SellerSKU: "white", Attributes: white, PurchaseCostCNY: new("20.00"), CategoryAttributes: &[]ListingCategoryAttribute{{CategoryID: "CBT1055", ID: "COLOR", Value: "White", ValueID: "52055"}}},
 	}
 	current := []ListingVariant{
-		{Attributes: white, PurchaseCostCNY: new(""), CategoryAttributes: &[]ListingCategoryAttribute{}},
-		{SellerSKU: "black", Attributes: blue},
+		{SellerSKU: "white", Attributes: white, PurchaseCostCNY: new(""), CategoryAttributes: &[]ListingCategoryAttribute{}},
+		{SellerSKU: "black", Attributes: black, ImageURLs: []string{"https://example.com/new.jpg"}},
 	}
 	saved, err := preserveVariantFields(current, previous)
 	if err != nil {
@@ -111,9 +111,25 @@ func TestPreserveVariantFields(t *testing.T) {
 	}
 	if *saved[0].PurchaseCostCNY != "" || len(*saved[0].CategoryAttributes) != 0 ||
 		*saved[1].PurchaseCostCNY != "25.50" || *saved[1].TargetNetProceedsUSD != "8.50" || current[1].PurchaseCostCNY != nil {
-		t.Fatalf("old metadata was lost, copied to the wrong row, or restored after an explicit clear: %+v", saved)
+		t.Fatalf("old metadata lost or copied incorrectly: %+v", saved)
 	}
-	if _, err := preserveVariantFields([]ListingVariant{{Attributes: blue}}, previous); err != ErrDraftConflict {
-		t.Fatalf("ambiguous legacy replacement should conflict, got %v", err)
+	for _, rows := range [][]ListingVariant{
+		{{SellerSKU: "new", Attributes: blue}, {SellerSKU: "white", Attributes: white}},
+		{{SellerSKU: "black", Attributes: blue}, {SellerSKU: "white", Attributes: white}},
+		{{SellerSKU: "white", Attributes: white}},
+		{{SellerSKU: "black", Attributes: white}, {SellerSKU: "white", Attributes: black}},
+	} {
+		if _, err := preserveVariantFields(rows, previous); err != ErrVariantUpgradeRequired {
+			t.Fatalf("ambiguous legacy identity edit should request upgrade, got %v", err)
+		}
+	}
+	previous[0].SellerSKU, previous[1].SellerSKU = "", ""
+	legacy := []ListingVariant{{Attributes: black}, {Attributes: white}}
+	if _, err := preserveVariantFields(legacy, previous); err != nil {
+		t.Fatalf("unchanged unnamed variants should retain metadata: %v", err)
+	}
+	legacy[0].Attributes, legacy[1].Attributes = white, black
+	if _, err := preserveVariantFields(legacy, previous); err != ErrVariantUpgradeRequired {
+		t.Fatalf("unnamed attribute swap must not move financial values: %v", err)
 	}
 }

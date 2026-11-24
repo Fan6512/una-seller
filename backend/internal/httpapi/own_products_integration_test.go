@@ -88,6 +88,10 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	legacyDraft := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":1,
 "listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT1055",
 "seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY","weight_g":"850","images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],"variants":[` + legacyVariant + `]}}`
+	unsafeDraft := strings.Replace(strings.Replace(legacyDraft, "P-BLACK", "P-NEW", 1), "黑色", "蓝色", 1)
+	if w := call(owner, "PUT", draftPath, unsafeDraft); w.Code != 422 || !strings.Contains(w.Body.String(), "VARIANT_CLIENT_UPGRADE_REQUIRED") {
+		t.Fatalf("unsafe legacy draft edit should request upgrade: %d %s", w.Code, w.Body.String())
+	}
 	if w := call(owner, "PUT", draftPath, legacyDraft); w.Code != 200 {
 		t.Fatalf("legacy draft write %d %s", w.Code, w.Body.String())
 	}
@@ -193,6 +197,11 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	}
 	if w := call(owner, "PUT", "/api/v1/products/"+id, `{"title":"Stale","description":"","notes":"","expected_revision":1}`); w.Code != 409 {
 		t.Fatalf("stale own edit %d", w.Code)
+	}
+	unsafeVariant := strings.Replace(strings.Replace(legacyVariant, "P-BLACK", "P-NEW", 1), "黑色", "蓝色", 1)
+	if w := call(owner, "PUT", "/api/v1/products/"+id,
+		`{"title":"Edited product","description":"Own description","notes":"Own notes","expected_revision":2,"listing_fields":{"variants":[`+unsafeVariant+`]}}`); w.Code != 422 || !strings.Contains(w.Body.String(), "VARIANT_CLIENT_UPGRADE_REQUIRED") {
+		t.Fatalf("unsafe legacy product edit should request upgrade: %d %s", w.Code, w.Body.String())
 	}
 	// The own-product editor can update merchant fields without changing source facts.
 	updated := call(owner, "PUT", "/api/v1/products/"+id,

@@ -210,8 +210,12 @@ export function isDraftConflict(error: unknown) {
     !isDraftConverted(error);
 }
 
+export function isVariantUpgradeRequired(error: unknown) {
+  return error instanceof CollectionRequestError && error.status === 422 && error.code === "VARIANT_CLIENT_UPGRADE_REQUIRED";
+}
+
 export function isDraftRejected(error: unknown) {
-  return error instanceof CollectionRequestError && [400, 413, 415].includes(error.status);
+  return error instanceof CollectionRequestError && ([400, 413, 415].includes(error.status) || isVariantUpgradeRequired(error));
 }
 
 // Old API and missing source both return 404; check the source before diagnosing.

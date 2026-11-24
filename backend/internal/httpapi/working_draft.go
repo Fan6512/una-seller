@@ -65,6 +65,8 @@ func (a collectionAPI) workingDraft(w http.ResponseWriter, r *http.Request, owne
 				"error": "working draft is read-only after product-box approval; edit the product instead",
 				"code":  "WORKING_DRAFT_CONVERTED",
 			})
+		} else if errors.Is(err, collections.ErrVariantUpgradeRequired) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error(), "code": "VARIANT_CLIENT_UPGRADE_REQUIRED"})
 		} else if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, http.StatusConflict, "working draft updated; reload before saving")
 		} else if errors.Is(err, collections.ErrLocalizedTitleTooLong) || errors.Is(err, collections.ErrInvalidTranslationSource) {

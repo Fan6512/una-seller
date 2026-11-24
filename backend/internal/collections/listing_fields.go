@@ -195,60 +195,88 @@ func (v ListingVariant) omitsWorkbenchFields() bool {
 	return v.PurchaseCostCNY == nil || v.TargetNetProceedsUSD == nil || v.CategoryAttributes == nil
 }
 
+// Old clients have no immutable variant identity or workbench metadata fields.
+// Reject ambiguous legacy edits explicitly instead of guessing financial ownership.
+var ErrVariantUpgradeRequired = errors.New("请升级支持新版变体编辑的客户端，再修改变体 SKU、规格或删除替换变体；本次未保存")
+
+func (v ListingVariant) hasWorkbenchFields() bool {
+	return (v.PurchaseCostCNY != nil && *v.PurchaseCostCNY != "") ||
+		(v.TargetNetProceedsUSD != nil && *v.TargetNetProceedsUSD != "") ||
+		(v.CategoryAttributes != nil && len(*v.CategoryAttributes) > 0)
+}
+
+func sameLegacyVariant(a, b ListingVariant) bool {
+	return a.SellerSKU == b.SellerSKU && maps.Equal(a.Attributes, b.Attributes) &&
+		a.Price == b.Price && a.Currency == b.Currency && slices.Equal(a.ImageURLs, b.ImageURLs)
+}
+
 func preserveVariantFields(current, previous []ListingVariant) ([]ListingVariant, error) {
 	current = slices.Clone(current)
-	matched := make([]bool, len(current))
+	if !slices.ContainsFunc(previous, ListingVariant.hasWorkbenchFields) {
+		return current, nil
+	}
+	// With no SKU, only an unchanged legacy projection is safe. A swap of
+	// attributes between unnamed rows is otherwise indistinguishable from reordering.
+	unchanged := slices.EqualFunc(current, previous, sameLegacyVariant)
 	used := make([]bool, len(previous))
-	sameSKU := func(a, b ListingVariant) bool { return a.SellerSKU != "" && a.SellerSKU == b.SellerSKU }
-	sameAttributes := func(a, b ListingVariant) bool {
-		return len(a.Attributes) > 0 && maps.Equal(a.Attributes, b.Attributes)
-	}
-	// Legacy rows have no immutable ID. Match only unique pairs and never by position.
-	for _, same := range []func(ListingVariant, ListingVariant) bool{
-		func(a, b ListingVariant) bool { return sameSKU(a, b) && sameAttributes(a, b) },
-		sameSKU, sameAttributes,
-	} {
-		oldCount, newCount := make([]int, len(current)), make([]int, len(previous))
-		candidate := make([]int, len(current))
-		for i, v := range current {
-			if matched[i] {
-				continue
-			}
-			for j, old := range previous {
-				if !used[j] && same(v, old) {
-					oldCount[i]++
-					newCount[j]++
-					candidate[i] = j
-				}
-			}
-		}
-		for i, count := range oldCount {
-			j := candidate[i]
-			if count != 1 || newCount[j] != 1 {
-				continue
-			}
-			matched[i], used[j] = true, true
-			if current[i].PurchaseCostCNY == nil {
-				current[i].PurchaseCostCNY = previous[j].PurchaseCostCNY
-			}
-			if current[i].TargetNetProceedsUSD == nil {
-				current[i].TargetNetProceedsUSD = previous[j].TargetNetProceedsUSD
-			}
-			if current[i].CategoryAttributes == nil {
-				current[i].CategoryAttributes = previous[j].CategoryAttributes
-			}
-		}
-	}
 	for i, v := range current {
-		if matched[i] || !v.omitsWorkbenchFields() {
+		if !v.omitsWorkbenchFields() {
 			continue
 		}
+		candidate := -1
+		count := 0
 		for j, old := range previous {
-			if !used[j] && ((old.PurchaseCostCNY != nil && *old.PurchaseCostCNY != "") ||
-				(old.TargetNetProceedsUSD != nil && *old.TargetNetProceedsUSD != "") ||
-				(old.CategoryAttributes != nil && len(*old.CategoryAttributes) > 0)) {
-				return nil, ErrDraftConflict
+			match := v.SellerSKU != "" && v.SellerSKU == old.SellerSKU &&
+				maps.Equal(v.Attributes, old.Attributes)
+			if v.SellerSKU == "" {
+				match = unchanged && sameLegacyVariant(v, old)
 			}
+			if match {
+				candidate, count = j, count+1
+			}
+		}
+		if count != 1 || used[candidate] {
+			return nil, ErrVariantUpgradeRequired
+		}
+		old := previous[candidate]
+		// A duplicate SKU is not a stable identifier, even with different attributes.
+		if v.SellerSKU != "" {
+			oldCount, newCount := 0, 0
+			for _, row := range previous {
+				if row.SellerSKU == v.SellerSKU {
+					oldCount++
+				}
+			}
+			for _, row := range current {
+				if row.SellerSKU == v.SellerSKU {
+					newCount++
+				}
+			}
+			if oldCount != 1 || newCount != 1 {
+				return nil, ErrVariantUpgradeRequired
+			}
+		}
+		used[candidate] = true
+		if current[i].PurchaseCostCNY == nil {
+			current[i].PurchaseCostCNY = old.PurchaseCostCNY
+		}
+		if current[i].TargetNetProceedsUSD == nil {
+			current[i].TargetNetProceedsUSD = old.TargetNetProceedsUSD
+		}
+		if current[i].CategoryAttributes == nil {
+			current[i].CategoryAttributes = old.CategoryAttributes
+		}
+	}
+	// If a legacy array omits metadata, never silently delete an unmatched
+	// protected row. Fully explicit modern arrays bypass this compatibility path.
+	for j, old := range previous {
+		if used[j] || !old.hasWorkbenchFields() {
+			continue
+		}
+		if !slices.ContainsFunc(current, func(v ListingVariant) bool {
+			return !v.omitsWorkbenchFields() && sameLegacyVariant(v, old)
+		}) {
+			return nil, ErrVariantUpgradeRequired
 		}
 	}
 	return current, nil

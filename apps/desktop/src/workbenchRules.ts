@@ -18,7 +18,7 @@ export function countApprovalOutcomes(outcomes: readonly ApprovalOutcome[]) {
 
 export function productSaveNeedsReadback(status: number | undefined): boolean {
   // Validation/revision/not-found errors are known rejections, NOT unknown writes.
-  return status === undefined || ![400,404,409,415].includes(status);
+  return status === undefined || ![400,404,409,415,422].includes(status);
 }
 
 export function emptyProductPageFallback(offset: number, itemCount: number, pageSize: number): number | null {

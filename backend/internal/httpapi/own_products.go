@@ -100,6 +100,10 @@ func (a collectionAPI) ownProductDetail(w http.ResponseWriter, r *http.Request) 
 			writeError(w, 404, "product not found")
 			return
 		}
+		if errors.Is(err, collections.ErrVariantUpgradeRequired) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error(), "code": "VARIANT_CLIENT_UPGRADE_REQUIRED"})
+			return
+		}
 		if errors.Is(err, collections.ErrDraftConflict) {
 			writeError(w, 409, "product changed; reload before saving")
 			return
