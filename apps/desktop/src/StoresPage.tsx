@@ -19,9 +19,9 @@ const publicationModeNames: Record<string, string> = {
 
 const publicationModeBadges: Record<string, string> = {
   standard_up: "UP",
-  legacy_candidate: "传统?",
+  legacy_candidate: "传统",
   fully_managed: "全托",
-  undetermined: "待确认",
+  undetermined: "待检测",
 };
 
 export default function StoresPage({ onConnectionChecked }: { onConnectionChecked?: (storeId: string) => void }) {
@@ -199,7 +199,7 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
                   <span className="store-type-label" role="img"
                     title={item.publication_mode_checked_at ? publicationModeNames[item.publication_mode ?? "undetermined"] ?? "刊登类型待确认" : "尚未取得刊登类型证据"}
                     aria-label={item.publication_mode_checked_at ? publicationModeNames[item.publication_mode ?? "undetermined"] ?? "刊登类型待确认" : "刊登类型待检测"}>
-                    {item.publication_mode_checked_at ? publicationModeBadges[item.publication_mode ?? "undetermined"] ?? "待确认" : "待检测"}
+                    {item.publication_mode_checked_at ? publicationModeBadges[item.publication_mode ?? "undetermined"] ?? "待检测" : "待检测"}
                   </span>
                   <span className={"store-status " + (item.status === "connected" ? "store-connected" : "store-attention")}>{statusText[item.status] || "状态未知"}</span>
                 </div>
