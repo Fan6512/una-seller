@@ -163,7 +163,7 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", "10")
 			writeError(w, http.StatusTooManyRequests, "CBT account probe recently checked; retry later")
 		case errors.Is(err, meli.ErrCBTProbeStale):
-			writeError(w, http.StatusConflict, "CBT account changed during probe; rerun C0")
+			writeError(w, http.StatusConflict, "CBT probe superseded by changed authorization or newer evidence; refresh the store list")
 		case err != nil:
 			// Errors contain only stage labels and HTTP status, never IDs,
 			// auth headers, response bodies, or credential material.

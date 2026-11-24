@@ -21,6 +21,8 @@ var ErrSiteNotAuthorized = errors.New("marketplace site not verified for this se
 const refreshAhead = 60 * time.Second
 
 // AuthorizedStore is server-only. Do not JSON-encode it or send its token to clients.
+// AuthorizedStore contains plaintext access credentials and encrypted snapshots.
+// Never log or serialize the complete structure.
 type AuthorizedStore struct {
 	SellerID     string
 	AccessToken  string
