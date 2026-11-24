@@ -37,12 +37,14 @@ func imageBatchInput(t *testing.T, url string, count int, status, prefix string)
 
 // A larger image batch must not add database round trips. The existing
 // variant-row lookup/update count is held constant at two variants.
+// Keep absolute count assertions as a baseline: this test must catch
+// regressions even if both 1-image and 30-image cases get slower together.
 func TestCollectionSaveImageQueryCountIndependentOfImageVolume(t *testing.T) {
 	const owner = "2a9c0000-0000-4000-8000-000000000080"
 	store, ctx := disposableDB(t, owner)
 	for _, mode := range []string{"complete", "partial"} {
 		var firstQueries int64
-		for i, n := range []int{1, 20} {
+		for i, n := range []int{1, 20, 30} {
 			t.Run(fmt.Sprintf("%s_%d_images_per_group", mode, n), func(t *testing.T) {
 				url := fmt.Sprintf("https://www.amazon.com/dp/B%09d", 800000000+i+100*len(mode))
 				if mode == "partial" {
@@ -91,8 +93,15 @@ func TestCollectionSaveImageQueryCountIndependentOfImageVolume(t *testing.T) {
 				}
 				queries := tracer.count.Load()
 				t.Logf("%s %d images/group: %d SQL commands, Save latency %s", mode, n, queries, elapsed)
-				if queries == 0 {
-					t.Fatal("tracer did not count database statements")
+				// These totals include BEGIN/COMMIT and Get() readback (3 queries).
+				// Exact numbers are confirmed by PostgreSQL 17 CI, not inferred
+				// from source alone. The count may only change via reviewed edits.
+				wantQueries := int64(18) // new complete record, two new variants
+				if mode == "partial" {
+					wantQueries = 15 // existing record and two existing variants
+				}
+				if queries != wantQueries {
+					t.Fatalf("%s %d images/group: got %d SQL commands, want %d", mode, n, queries, wantQueries)
 				}
 				if i == 0 {
 					firstQueries = queries
@@ -189,5 +198,37 @@ func TestCollectionSaveBatchFailureRollsBack(t *testing.T) {
 	got, err := store.Get(ctx, owner, original.ID)
 	if err != nil || got.Title != "Original batch title" || len(got.Images) != 1 || got.Images[0].URL != "https://example.com/old.jpg" {
 		t.Fatalf("transaction failed to roll back earlier updates: err=%v got=%+v", err, got)
+	}
+}
+
+func TestCollectionSaveVariantImageBatchFailureRollsBack(t *testing.T) {
+	const owner = "2a9c0000-0000-4000-8000-000000000083"
+	store, ctx := disposableDB(t, owner)
+	seed := inputJSON(t, `{"source_platform":"amazon","source_site":"US","source_url":"https://www.amazon.com/dp/B800000083","title":"Before variant overflow","collection_status":"complete","images":[{"url":"https://example.com/main-original.jpg","type":"main"}],"variants":[{"attributes":{"Color":"Red"},"price":"1.00","image_urls":["https://example.com/variant-original.jpg"]}]}`)
+	original, created, err := store.Save(ctx, owner, seed)
+	if err != nil || !created || len(original.Variants) != 1 || len(original.Variants[0].ImageURLs) != 1 {
+		t.Fatalf("seed: created=%v err=%v product=%+v", created, err, original)
+	}
+	// A legal INT4 max image_order forces a cast overflow when the partial
+	// variant-image batch tries to append a second image.
+	tag, err := store.DB.Exec(ctx, `UPDATE app.source_product_images
+		SET image_order=2147483647
+		WHERE source_product_id=$1 AND variant_id IS NOT NULL`, original.ID)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("set variant image order: rows=%d err=%v", tag.RowsAffected(), err)
+	}
+	partial := inputJSON(t, `{"source_platform":"amazon","source_site":"US","source_url":"https://www.amazon.com/dp/B800000083","title":"Should roll back variant update","collection_status":"partial","images":[{"url":"https://example.com/should-not-insert-main.jpg","type":"additional"}],"variants":[{"attributes":{"Color":"Red"},"price":"2.00","image_urls":["https://example.com/variant-new.jpg"]}]}`)
+	if _, _, err := store.Save(ctx, owner, partial); err == nil {
+		t.Fatal("variant image_order overflow unexpectedly committed")
+	}
+	got, err := store.Get(ctx, owner, original.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Before variant overflow" || len(got.Images) != 1 || got.Images[0].URL != "https://example.com/main-original.jpg" {
+		t.Fatalf("variant batch failure did not roll back product/main images: %+v", got)
+	}
+	if len(got.Variants) != 1 || got.Variants[0].Price == nil || *got.Variants[0].Price != "1.00" || len(got.Variants[0].ImageURLs) != 1 || got.Variants[0].ImageURLs[0] != "https://example.com/variant-original.jpg" {
+		t.Fatalf("variant batch failure did not roll back variant and images: %+v", got.Variants)
 	}
 }
