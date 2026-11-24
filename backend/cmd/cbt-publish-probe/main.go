@@ -147,9 +147,10 @@ func inferPublicationMode(e accountEvidence) string {
 		})
 	}
 	return meli.ClassifyPublicationEvidence(meli.PublicationEvidence{
-		SellAllowed:       e.SellAllowed,
-		UserProductSeller: e.UserProductSeller,
-		Sites:             sites,
+		SellAllowed:         e.SellAllowed,
+		UserProductSeller:   e.UserProductSeller,
+		WarehouseManagement: e.WarehouseAccess,
+		Sites:               sites,
 	})
 }
 

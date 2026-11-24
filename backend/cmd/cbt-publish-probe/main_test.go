@@ -258,8 +258,8 @@ func TestInferenceRequiresExplicitC0Evidence(t *testing.T) {
 	}{
 		{"managed_mixed_with_missing", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: unverified}}, "undetermined"},
 		{"managed_all_children", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: "CBT CN Fulfillment Managed"}}, "fully_managed"},
-		{"up_tag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "enabled"}}, "standard_up"},
-		{"up_tag_without_marketplace_flag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: unverified}}, "standard_up"},
+		{"up_tag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, LogisticType: "remote", UserProduct: "enabled"}}, "standard_up"},
+		{"up_tag_without_marketplace_flag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, LogisticType: "remote", UserProduct: unverified}}, "undetermined"},
 		{"up_conflicting_disabled", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "disabled"}}, "undetermined"},
 		{"legacy_not_confirmed", "absent", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "disabled"}}, "legacy_candidate"},
 		{"unknown_business_model", "present", "enabled", []marketplaceEvidence{{BusinessModel: "unrecognized:CBT CN Unfamiliar", UserProduct: "enabled"}}, "undetermined"},
@@ -270,10 +270,29 @@ func TestInferenceRequiresExplicitC0Evidence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := inferPublicationMode(accountEvidence{UserProductSeller: tc.tags, SellAllowed: tc.allowed, Marketplaces: tc.sites})
+			got := inferPublicationMode(accountEvidence{UserProductSeller: tc.tags, SellAllowed: tc.allowed, WarehouseAccess: "absent", Marketplaces: tc.sites})
 			if got != tc.want {
 				t.Fatalf("mode=%q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestInferPublicationModeRemoteUPWithUnknownBusinessModel(t *testing.T) {
+	e := accountEvidence{
+		UserProductSeller: "present",
+		WarehouseAccess:   "absent",
+		SellAllowed:       "enabled",
+		Marketplaces: []marketplaceEvidence{
+			{SiteID: "MLB", LogisticType: "remote", BusinessModel: "unrecognized:standard", PricingModel: "net_proceeds", UserProduct: "enabled"},
+			{SiteID: "MLM", LogisticType: "remote", BusinessModel: "unrecognized", PricingModel: "net_proceeds", UserProduct: "enabled"},
+		},
+	}
+	if got := inferPublicationMode(e); got != "standard_up" {
+		t.Fatalf("CLI and service classification disagree: got %s", got)
+	}
+	e.WarehouseAccess = "unverified"
+	if got := inferPublicationMode(e); got != "undetermined" {
+		t.Fatalf("missing warehouse evidence must remain undetermined: got %s", got)
 	}
 }

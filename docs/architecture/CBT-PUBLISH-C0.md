@@ -20,13 +20,31 @@
 探针现会在脱敏 JSON 中输出 `publication_mode` 与 `mode_evidence_level`，供后续 UNA Seller 店铺模式配置使用：
 
 - `fully_managed`：**全部**已核实子站点一致返回 `business_model = "CBT CN Fulfillment Managed"`，且主账号允许销售；混合、缺失或未知值保持 `undetermined`，并保留逐站点脱敏证据。
-- `standard_up`：主账号启用 `user_product_seller`，没有全托管指示、没有矛盾的子站点 UP 标记，且账号允许销售。
+- `standard_up`：主账号允许销售、UP 标签 present、warehouse_management absent，全部已核实子站点均为 remote 且明确启用 UP，无明确全托管业务枚举。缺失和未知的 business_model 使用同一门槛，不因字段缺失降低要求。这是只读路由候选，不是最终商业模式或写权限证明。
 - `legacy_candidate`：账号没有 UP 标签，也未返回已启用的子站点 UP；**仅是待确认的旧版候选，不能据此使用 Legacy POST**。
-- `undetermined`：标签缺失、业务模式未知或矛盾、账号销售状态不明等；必须人工确认，不能按默认模型发布。
+- `undetermined`：标签缺失、业务模式未知且不满足上述独立证据组合、站点矛盾、账号销售状态不明等；必须人工确认，不能按默认模型发布。
 
 `mode_evidence_level = c0_read_only_not_publish_approved` 始终表明只是发布模型只读识别，**不等于具备创建或图片上传权限**。模式名称只用于 UNA Seller 内部适配，绝不修改 Mercado Libre 官方账号类别。没有真实账号脱敏输出前，不得将当前已连接店铺设成任何确定模式。
 
-实际执行必须在持有有效授权、可安全刷新 OAuth Token 的受控环境中进行；不得读取 Supabase 存放的加密 Token 并尝试绕过 Go 解密，也不得把 Token 发到 GitHub Issues、聊天或日志。完成真实三次 GET 后，以官方证据将店铺按 `publication_mode` 分类，并额外核对官方可写接口权限；当前 Draft PR #85 已包含只读探针、独立私有证据表、店铺模式显示及基于授权记录中全局唯一 Seller ID 的单进程 10 秒触发冷却（HTTP 429 返回 `Retry-After: 10`）；**需要独立批准迁移/部署后才能运行真实 GET 并写入真实店铺证据**。C1 发布前仍必须逐站点核对创建/图片上传权限，不能把店铺级模式当作站点级写入授权。断开连接可保留历史证据，但任何消费者读取当前证据必须同时按 owner、store 关联连接记录并要求 `status = 'connected'`。
+实际执行必须在持有有效授权、可安全刷新 OAuth Token 的受控环境中进行；不得读取 Supabase 存放的加密 Token 并尝试绕过 Go 解密，也不得把 Token 发到 GitHub Issues、聊天或日志。完成真实三次 GET 后，以官方证据将店铺按 `publication_mode` 分类，并额外核对官方可写接口权限；已合并 PR #85 已包含只读探针、独立私有证据表、店铺模式显示及基于授权记录中全局唯一 Seller ID 的单进程 10 秒触发冷却（HTTP 429 返回 `Retry-After: 10`）；生产迁移与 Go API 部署已获批准并完成；真实 C0 已成功返回并持久化一份脱敏证据，旧分类器因非全托管业务枚举被归为 `other` 而显示 `undetermined`。修订分类器后必须在获批的新服务版本上重新触发真实 C0，不能直接改数据库模式。C1 发布前仍必须逐站点核对创建/图片上传权限，不能把店铺级模式当作站点级写入授权。断开连接可保留历史证据，但任何消费者读取当前证据必须同时按 owner、store 关联连接记录并要求 `status = 'connected'`。
+
+### 2026-11-24 实际只读证据与规则依据（1 个账号）
+
+生产 C0 时间：2026-11-24T05:48:14Z（UTC）。旧分类器输出 undetermined。主账号 sell_allowed=enabled、user_product_seller=present、warehouse_management=absent；映射已验证。以下为已保存的脱敏证据，不含任何用户 ID、令牌或原始响应：
+
+| site_id | logistic_type | business_model（脱敏） | pricing_model | user_product |
+|---|---|---|---|---|
+| MLB | remote | other | net_proceeds | enabled |
+| MLM | remote | other | net_proceeds | enabled |
+| MLC | remote | other | net_proceeds | enabled |
+| MCO | remote | other | net_proceeds | enabled |
+| MLA | remote | other | net_proceeds | enabled |
+
+官方 [全托管](https://global-selling.mercadolibre.com/devsite/zh_cn/quan-tuo-guan) 和 [全托管产品发布](https://global-selling.mercadolibre.com/devsite/zh_cn/quan-tuo-guan-chan-pin-fa-bu)（2026-11-24 核对）：全托管的主识别依据是任一子站点明确的 CBT CN Fulfillment Managed；全托管物流为 fulfillment，标准 CBT 为 remote；仓储与 UP 标签均非全托管独有，标签缺失本身不能证明非全托管。UNA Seller 对混合站点保持未确认，不把部分全托管证据提升为整个账号的统一刊登权限。
+
+**待独立核实**：原始 business_model 已被既有生产探针归为 other，无法由持久化证据还原，不能断言其原始值一定是非全托管枚举，也未独立核验该账号卖家后台的 UP/全托管状态。只观察到一个真实账号，标准 UP 规则是基于一致证据的保守本地识别候选。后续在受控授权环境中核对原始业务枚举（仅记录已审查、无敏感内容的枚举），并与卖家后台或官方资料交叉确认；不向日志、公开仓库输出未知原始值或响应。C1 实际写入前必须完成此独立核验和逐站点能力验收，不能仅凭本地分类器输出选路。修订后的真实 C0 仍待部署和复验。
+
+新授权或重新授权成功提交后，由 Go 服务基于该次授权的凭据和已验证映射自动尝试一次 C0（额外最多 8 秒；映射未核实则不发起请求）。失败不回滚已成功授权、不自动重试，客户端显示待检测并保留手动核实入口。普通 Token 续签、打开或刷新店铺列表不重复取证。回写锁定连接记录并匹配授权密文及映射快照，拒绝断开、授权替换、映射变化及过时并发取证。店铺卡片右上角统一显示 UP、传统、全托、待检测四种短标签；legacy_candidate 显示传统，但悬停及无障碍名称仍标明候选、尚未确认，不能据此使用 Legacy 写接口。undetermined 与无证据均显示待检测，由悬停说明及最近取证时间区分，C0 仍不代表写入授权。
 
 ## 负责人只读验证
 
