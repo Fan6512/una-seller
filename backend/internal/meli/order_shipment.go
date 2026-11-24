@@ -121,7 +121,7 @@ func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string,
 			switch {
 			case event.Status == "shipped" && snapshot.ShippedAt == nil:
 				snapshot.ShippedAt = &event.Date
-			case event.Status == "delivered" && snapshot.DeliveredAt == nil:
+			case event.Status == "delivered" && snapshot.DeliveredAt == nil && snapshot.Status != "not_delivered" && snapshot.Status != "cancelled":
 				snapshot.DeliveredAt = &event.Date
 			}
 		}
@@ -153,7 +153,8 @@ UPDATE app.meli_orders o SET shipment_snapshot=CASE
  THEN o.shipment_snapshot
  ELSE $8::jsonb || jsonb_strip_nulls(jsonb_build_object(
    'shipped_at', COALESCE($8::jsonb->'shipped_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'shipped_at' END),
-   'delivered_at', COALESCE($8::jsonb->'delivered_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'delivered_at' END),
+   'delivered_at', COALESCE($8::jsonb->'delivered_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7
+     AND $8::jsonb->>'status' NOT IN ('not_delivered','cancelled') THEN o.shipment_snapshot->'delivered_at' END),
    'details', COALESCE($8::jsonb->'details', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'details' END)
  )) END
 FROM authorized c

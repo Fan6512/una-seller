@@ -994,7 +994,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   <dt>官方实际发货</dt><dd>{detail.shipment?.shipped_at
                     ? <time title="本机时区" dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
                     : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
-                  <dt>买家签收时间</dt><dd>{detail.shipment?.delivered_at
+                  <dt>{detail.shipment?.delivered_at && ["not_delivered", "cancelled"].includes(detail.shipment.status)
+                    ? "平台记录的历史签收时间" : "买家签收时间"}</dt><dd>{detail.shipment?.delivered_at
                     ? <time title="本机时区" dateTime={detail.shipment.delivered_at}>{orderDate(detail.shipment.delivered_at)}</time>
                     : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
                   <dt title="本机时区">物流最近核验</dt><dd>{detail.shipment ? orderDate(detail.shipment.checked_at) : "尚未读取"}</dd>

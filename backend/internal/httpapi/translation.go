@@ -213,7 +213,7 @@ func (a storeAPI) orderTitleTranslations(w http.ResponseWriter, r *http.Request)
 		}
 		seen[ref] = true
 		// Titles come only from a local order scoped to this owner and verified marketplace.
-		row, err := a.service.GetOrder(ctx, owner, ref.Store, meli.OrderScope{Site: ref.Site, Logistic: ref.Logistic}, ref.OrderID)
+		row, err := a.service.GetOrderSummary(ctx, owner, ref.Store, meli.OrderScope{Site: ref.Site, Logistic: ref.Logistic}, ref.OrderID)
 		if err != nil {
 			continue
 		}

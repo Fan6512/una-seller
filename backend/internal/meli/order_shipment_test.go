@@ -193,6 +193,14 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 		!cached.Shipment.Details.CheckedAt.Equal(shipment.CheckedAt) || calls.Load() != before {
 		t.Fatalf("cached detail read lost official history, carrier or dates: %+v, %v", cached.Shipment, err)
 	}
+	// Non-detail consumers use the same scoped summary projection.
+	summary, err := s.GetOrderSummary(ctx, owner, store, scope, "10001")
+	if err != nil || summary.Shipment == nil || summary.Shipment.Details != nil || summary.Shipment.DeliveredAt == nil {
+		t.Fatalf("summary read returned wrong projection: %+v, %v", summary.Shipment, err)
+	}
+	if _, err := s.GetOrderSummary(ctx, owner, otherStore, scope, "10001"); !errors.Is(err, ErrStoreNotFound) {
+		t.Fatalf("summary read bypassed owner scope: %v", err)
+	}
 	// List and global search must not expose cached details.
 	page, err := s.ListOrders(ctx, owner, store, scope, "", "", 0)
 	if err != nil || len(page.Items) != 2 {
@@ -240,6 +248,28 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 		result.Shipment.Details.TrackingURL != "" || result.Shipment.Details.History != nil ||
 		result.Shipment.DeliveredAt == nil || !result.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) {
 		t.Fatalf("missing history or unsafe tracking URL accepted: %+v, %v", result.Shipment, err)
+	}
+	// Explicit negative current status must not inherit a prior delivered date.
+	for _, status := range []string{"not_delivered", "cancelled"} {
+		reply.Store(&response{code: http.StatusOK, body: delivered, carrierCode: http.StatusOK,
+			historyBody: `[{"status":"delivered","date":"2026-11-19T09:30:00-03:00"}]`})
+		if restored, err := s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true); err != nil ||
+			restored.Shipment == nil || restored.Shipment.DeliveredAt == nil {
+			t.Fatalf("restore confirmed delivery before reversal: %+v, %v", restored.Shipment, err)
+		}
+		body := fmt.Sprintf(`{"id":987651234,"status":%q,"last_updated":"2026-11-20T08:07:00-03:00"}`, status)
+		reply.Store(&response{code: http.StatusOK, body: body})
+		reversed, err := s.RefreshOrderShipment(ctx, owner, store, scope, "10001", false)
+		if err != nil || reversed.Shipment == nil || reversed.Shipment.Status != status || reversed.Shipment.DeliveredAt != nil {
+			t.Fatalf("negative status inherited obsolete delivery date: %+v, %v", reversed.Shipment, err)
+		}
+		reply.Store(&response{code: http.StatusOK, body: body, carrierCode: http.StatusOK,
+			historyBody: `[{"status":"delivered","date":"2026-11-19T09:30:00-03:00"}]`})
+		reversed, err = s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true)
+		if err != nil || reversed.Shipment == nil || reversed.Shipment.DeliveredAt != nil ||
+			reversed.Shipment.Details == nil || len(reversed.Shipment.Details.History) != 1 {
+			t.Fatalf("negative status reused historical date or erased history: %+v, %v", reversed.Shipment, err)
+		}
 	}
 	// With no prior confirmed delivery date, a substatus alone cannot create one.
 	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET shipment_snapshot=shipment_snapshot-'delivered_at'

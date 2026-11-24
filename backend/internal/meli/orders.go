@@ -917,6 +917,13 @@ func (s *Service) GetOrder(ctx context.Context, owner, store string,
 	return s.getOrder(ctx, owner, store, scope, id, true)
 }
 
+// GetOrderSummary reads the same scoped cached order without shipment details.
+// Use for non-detail consumers such as title translation and image refresh.
+func (s *Service) GetOrderSummary(ctx context.Context, owner, store string,
+	scope OrderScope, id string) (OrderRecord, error) {
+	return s.getOrder(ctx, owner, store, scope, id, false)
+}
+
 func (s *Service) getOrder(ctx context.Context, owner, store string,
 	scope OrderScope, id string, withDetails bool) (OrderRecord, error) {
 	if !orderScopeValid(scope) || !orderNumber(id) {
