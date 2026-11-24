@@ -48,6 +48,7 @@ type OrderScope struct {
 }
 
 type OrderLine struct {
+	ElementID   string `json:"element_id,omitempty"`
 	ItemID      string `json:"item_id"`
 	Title       string `json:"title"`
 	VariationID string `json:"variation_id,omitempty"`
@@ -58,23 +59,24 @@ type OrderLine struct {
 }
 
 type OrderRecord struct {
-	ID                     string         `json:"order_id"`
-	PackID                 string         `json:"pack_id,omitempty"`
-	Status                 string         `json:"status"`
-	CurrencyID             string         `json:"currency_id"`
-	TotalAmount            string         `json:"total_amount"` // Raw upstream field; its currency label can disagree with its value.
-	SalesAmountUSD         string         `json:"sales_amount_usd,omitempty"`
-	DateCreated            time.Time      `json:"date_created"`
-	LastUpdated            time.Time      `json:"last_updated"`
-	ShipmentID             string         `json:"shipment_id,omitempty"`
-	Shipment               *OrderShipment `json:"shipment,omitempty"`
-	Items                  []OrderLine    `json:"order_items"`
-	PurchaseOrderID        string         `json:"purchase_order_id,omitempty"`
-	PurchaseCostCNY        *string        `json:"purchase_cost_cny,omitempty"`
-	PurchaseTrackingNumber string         `json:"purchase_tracking_number,omitempty"`
-	DispatchDeadline       *time.Time     `json:"dispatch_deadline,omitempty"`
-	DispatchSLAStatus      string         `json:"dispatch_sla_status,omitempty"`
-	DispatchCheckedAt      *time.Time     `json:"dispatch_checked_at,omitempty"`
+	ID                       string         `json:"order_id"`
+	PackID                   string         `json:"pack_id,omitempty"`
+	Status                   string         `json:"status"`
+	CurrencyID               string         `json:"currency_id"`
+	TotalAmount              string         `json:"total_amount"` // Raw upstream field; its currency label can disagree with its value.
+	SalesAmountUSD           string         `json:"sales_amount_usd,omitempty"`
+	OrderItemsReviewRequired bool           `json:"order_items_review_required,omitempty"`
+	DateCreated              time.Time      `json:"date_created"`
+	LastUpdated              time.Time      `json:"last_updated"`
+	ShipmentID               string         `json:"shipment_id,omitempty"`
+	Shipment                 *OrderShipment `json:"shipment,omitempty"`
+	Items                    []OrderLine    `json:"order_items"`
+	PurchaseOrderID          string         `json:"purchase_order_id,omitempty"`
+	PurchaseCostCNY          *string        `json:"purchase_cost_cny,omitempty"`
+	PurchaseTrackingNumber   string         `json:"purchase_tracking_number,omitempty"`
+	DispatchDeadline         *time.Time     `json:"dispatch_deadline,omitempty"`
+	DispatchSLAStatus        string         `json:"dispatch_sla_status,omitempty"`
+	DispatchCheckedAt        *time.Time     `json:"dispatch_checked_at,omitempty"`
 }
 
 type OrderPage struct {
@@ -338,6 +340,7 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 			if !orderNumber(elementID) {
 				return OrderRecord{}, ErrOrderInvalidResponse
 			}
+			line.ElementID = elementID
 			if previous, found := seenElements[elementID]; found {
 				if previous != line {
 					return OrderRecord{}, ErrOrderInvalidResponse
@@ -351,10 +354,36 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 	return record, nil
 }
 
+// Legacy snapshots lack element IDs. Equal commercial lines are only candidates
+// for duplication, not proof: never delete or silently merge them. A fresh
+// official order read may establish distinct element IDs or deduplicate them.
+func orderItemsNeedReview(items []OrderLine) bool {
+	type signature struct {
+		item, variation, currency, price string
+		quantity                         int
+	}
+	seen := make(map[signature]bool, len(items))
+	for _, line := range items {
+		price := line.UnitPrice
+		if orderAmountPattern.MatchString(price) {
+			if value, ok := new(big.Rat).SetString(price); ok {
+				price = value.RatString()
+			}
+		}
+		key := signature{line.ItemID, line.VariationID, line.CurrencyID, price, line.Quantity}
+		missing := line.ElementID == ""
+		if previousMissing, exists := seen[key]; exists && (previousMissing || missing) {
+			return true
+		}
+		seen[key] = missing
+	}
+	return false
+}
+
 // Marketplace Orders can report a local total under a USD header. Only sum
 // explicit USD merchandise lines, per Order, excluding shipping and payments.
 func orderSalesAmountUSD(items []OrderLine) string {
-	if len(items) == 0 {
+	if len(items) == 0 || orderItemsNeedReview(items) {
 		return ""
 	}
 	total := new(big.Rat)
@@ -933,6 +962,7 @@ func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 		}
 		o.Items = append(o.Items, line.OrderLine)
 	}
+	o.OrderItemsReviewRequired = orderItemsNeedReview(o.Items)
 	o.SalesAmountUSD = orderSalesAmountUSD(o.Items)
 	if cost.Valid {
 		o.PurchaseCostCNY = &cost.String

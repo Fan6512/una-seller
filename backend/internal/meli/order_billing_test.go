@@ -17,7 +17,7 @@ func TestBillingPreviewSanitizesAndDoesNotInventNet(t *testing.T) {
 	"payment_info":[{"status":"approved","money_release_status":"released","base_amount_usd":25.19,
 	"payer_id":999,"tax_details":[{"mov_financial_entity":"iva","original_amount_usd":4.03,"refunded_amount_usd":0}]}],
 	"sale_fee":{"net":22},"details":[{"charge_info":{"detail_id":345,"detail_amount":0.53,
-	"detail_type":"CHARGE","detail_sub_type":"CVMPI","debited_from_operation":"YES"},
+	"detail_type":"CHARGE","detail_sub_type":"CVMPI","debited_from_operation":"YES","transaction_detail":"SECRET_BUYER address"},
 	"currency_info":{"currency_id":"USD"},"sales_info":[{"payer_nickname":"SECRET_BUYER"}]}]}]}`)
 	page, err := parseBillingPreview(raw, []string{"123456789", "123456788"})
 	if err != nil || len(page.Items) != 2 || !page.Items[0].Available ||

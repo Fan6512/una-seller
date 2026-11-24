@@ -476,6 +476,7 @@ try {
   assert(profit().textContent.includes("同类物流扣项逐项展示") && profit().querySelector("details")?.open &&
     profit().textContent.includes("USD 2.45") && !profit().textContent.includes("USD 13.55"),
     "mixed shipping group must expose remaining charges without showing a misleading subtotal");
+  assert(profit().textContent.includes("不可相加或重复扣减"), "shipping cost bases need an explicit warning");
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => profit()?.textContent.includes("-USD 3.38"),
@@ -621,7 +622,8 @@ try {
   resumed.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: testingThumbnail }] }));
   await waitFor(() => imageRequests.length === 1, "unattempted image was not processed after interruption");
   const remaining = imageRequests.shift();
-  assert(remaining.path.includes("/orders/103/image-refresh"), "remaining distinct item was not requested");
+  assert(decodeURIComponent(new URL(remaining.path, location.href).pathname).endsWith("/orders/103/image-refresh"),
+    "remaining distinct item was not requested: " + remaining.path);
   remaining.resolve(Response.json({ error: "order_rate_limited" }, { status: 429 }));
   await waitFor(() => [...document.querySelectorAll(".orders-heading-actions button")].some(btn => btn.textContent === "补全本页主图"),
     "image batch did not stop after rate limit");

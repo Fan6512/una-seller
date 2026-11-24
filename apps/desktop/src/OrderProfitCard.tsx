@@ -10,7 +10,7 @@ type BillingPreview = {
     taxes: Array<{ type: string; original_usd?: string; refunded_usd?: string }>;
     charges: Array<{
       detail_id?: string; type: string; subtype?: string; amount: string; currency: string;
-      description?: string; status?: string; reversal_of?: string; debited_from_operation?: string;
+      status?: string; reversal_of?: string; debited_from_operation?: string;
     }>;
     charge_groups?: Array<{ currency: string; type: string; subtype?: string; original_total: string }>;
     shipping?: { buyer_cost_usd?: string; seller_charge_usd?: string; seller_net_cost_usd?: string;
@@ -24,9 +24,14 @@ export type OrderBillingCache = Map<string, {
 
 function signedUSD(value: string | undefined, sign = "") {
   if (!value) return "待核实";
+  if (!/^-?\d+(\.\d{1,8})?$/.test(value)) return "待核实";
   const negative = value.startsWith("-");
-  const amount = orderUSD(negative ? value.slice(1) : value);
-  return amount === "待核实" ? amount : (negative ? "-" : /^0+(\.0+)?$/.test(value) ? "" : sign) + amount;
+  const [whole, fraction = ""] = (negative ? value.slice(1) : value).split(".");
+  const padded = fraction.padEnd(3, "0");
+  // Round the displayed value to cents without changing the precise receipt.
+  const cents = BigInt(whole) * 100n + BigInt(padded.slice(0, 2)) + (padded[2] >= "5" ? 1n : 0n);
+  const amount = "USD " + (cents / 100n).toString() + "." + (cents % 100n).toString().padStart(2, "0");
+  return (cents === 0n ? "" : negative ? "-" : sign) + amount;
 }
 
 export default function OrderProfitCard({ order, scope, disabled, cache, cacheKey }: {
@@ -112,6 +117,7 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
         <dt>物流运输（货件净成本）</dt><dd>{signedUSD(shipping.seller_net_cost_usd, "-")}</dd>
         <dt>　买家承担运费</dt><dd>{signedUSD(shipping.buyer_cost_usd, "+")}</dd>
         <dt>　卖家承担运费（账单原额）</dt><dd>{signedUSD(shipping.seller_charge_usd, "-")}</dd>
+        <dt>运费说明</dt><dd>同一货件的不同费用口径，不可相加或重复扣减。</dd>
       </>}
       <dt>当前官方总计</dt><dd>待核账</dd>
       <dt>实际结算回款</dt><dd>{pendingRelease ? "待释放，待核账" : "待核账"}</dd>
@@ -137,7 +143,7 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
       {(otherCharges.length > 0 || billing.taxes.length > 0) && <details open={hasAdditionalShippingCharges || undefined}>
         <summary>查看官方项目</summary>
         <ul>{otherCharges.map((charge, index) => <li key={charge.detail_id ?? "charge-" + index}>
-          {[charge.description, charge.type, charge.subtype, charge.status].filter(Boolean).join(" · ")}
+          {[charge.type, charge.subtype, charge.status].filter(Boolean).join(" · ")}
           {" "}{charge.currency === "USD" ? signedUSD(charge.amount) : "USD 待核实"}
           {charge.reversal_of && <small> · 关联费用 {charge.reversal_of}</small>}
         </li>)}

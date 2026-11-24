@@ -54,7 +54,9 @@ pub async fn official_tracking(
         if external {
             return windows::open_browser(&url).map_err(str::to_owned);
         }
-        return windows::open_window(&app, url, &carrier);
+        return tauri::async_runtime::spawn_blocking(move || windows::open_window(&app, url, &carrier))
+            .await
+            .map_err(|_| "无法启动官方物流查询窗口".to_owned())?;
     }
     #[cfg(not(windows))]
     {
@@ -132,10 +134,8 @@ mod windows {
             .stdin
             .take()
             .ok_or_else(|| std::io::Error::other("clipboard unavailable"))?;
-        input.write_all(&[0xff, 0xfe])?;
-        for unit in url.as_str().encode_utf16() {
-            input.write_all(&unit.to_le_bytes())?;
-        }
+        // URL serialization uses percent-encoded UTF-8 and ASCII hostnames.
+        input.write_all(url.as_str().as_bytes())?;
         drop(input);
         if child.wait()?.success() {
             Ok(())
@@ -256,6 +256,7 @@ mod windows {
                     settings.SetIsWebMessageEnabled(false)?;
                     settings.SetAreHostObjectsAllowed(false)?;
                     settings.SetAreDevToolsEnabled(false)?;
+                    settings.SetAreDefaultScriptDialogsEnabled(false)?;
                     let deny_permissions =
                         PermissionRequestedEventHandler::create(Box::new(|_, args| {
                             if let Some(args) = args {

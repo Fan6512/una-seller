@@ -21,7 +21,8 @@ function logisticLabel(value?: string) {
 }
 const FILTERS = [
   { value: "", label: "全部订单" },
-  { value: "fulfillment_paid", label: "已付款" },
+  { value: "paid", label: "全部已付款" },
+  { value: "fulfillment_paid", label: "已付款（物流待确认）" },
   { value: "fulfillment_awaiting_dispatch", label: "待发货" },
   { value: "fulfillment_label_printed", label: "标签已打印" },
   { value: "fulfillment_shipped", label: "已发货" },
@@ -47,7 +48,7 @@ function displayError(error: unknown) {
   return error instanceof Error ? error.message : "订单请求失败";
 }
 function orderCount(order: OrderRecord) {
-  return order.order_items.reduce((sum, item) => sum + item.quantity, 0);
+  return order.order_items_review_required ? "件数待核实" : order.order_items.reduce((sum, item) => sum + item.quantity, 0) + " 件";
 }
 function safeOrderStatus(status: string) {
   return ["paid", "delivered"].includes(status) ? "paid" : ["cancelled", "shipment_cancelled", "logistics_exception", "refunded", "partially_refunded"].includes(status) ? "cancelled" : "other";
@@ -980,7 +981,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                         selectedRowScope?.logistic ?? scope?.logistic ?? "", selectedId].join("|") ? "selected" : ""}>
                     <td><button type="button" className="orders-id" onClick={() =>
                         openOrder(order.order_id, orderRecordScope(order, scope))}>{order.pack_id || order.order_id}</button>
-                      {!order.pack_id && <small className="orders-subline">内部 Order ID</small>}
+                      <small className="orders-subline">{order.pack_id ? "内部 Order ID：" + order.order_id : "内部 Order ID"}</small>
                       <span className="orders-subline">{(
                         stores.find((item) => item.id === (order.store_id ?? scope?.storeId))?.nickname ||
                         store?.nickname || "店铺").trim().slice(0, 12)}（{
@@ -995,7 +996,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                             translated={translatedTitles.get(order.order_items[0]?.title || "")} />
                           <span className="orders-product-meta">
                             {order.order_items.length > 1 ? order.order_items.length + " 个商品行 · " : ""}
-                            {orderCount(order)} 件 · {order.order_items[0]?.item_id || "商品 ID 未返回"}
+                            {orderCount(order)} · {order.order_items[0]?.item_id || "商品 ID 未返回"}
                           </span>
                           {orderVariationText(order.order_items[0]) && <span className="orders-product-spec"
                             title="官方订单尚未返回可读规格时，仅保留变体 ID">
@@ -1065,7 +1066,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 <small>更新：{orderDate(detail.last_updated)}</small>
               </div>
               <section className="orders-detail-block">
-                <h3>商品清单 <small>{orderCount(detail)} 件</small></h3>
+                <h3>商品清单 <small>{orderCount(detail)}</small></h3>
+                {detail.order_items_review_required && <p className="orders-alert">存在无法确认是否重复的商品行。请更新订单状态后核实销售金额与件数，不自动删除商品行。</p>}
                 {detail.order_items.length === 0 && <p className="orders-muted">平台未返回商品明细。</p>}
                 {detail.order_items.map((line, i) =>
                   <div className="orders-line-item" key={line.item_id + ":" + (line.variation_id ?? "") + ":" + i}>
@@ -1084,6 +1086,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   <dt>{detail.pack_id ? "销售订单号" : "内部 Order ID"}</dt>
                   <dd><button type="button" onClick={() => copy(detail.pack_id || detail.order_id)}>
                     {detail.pack_id || detail.order_id}　复制</button></dd>
+                  {detail.pack_id && <><dt>内部 Order ID</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd></>}
                   {detail.shipment_id && <><dt>官方 Shipment ID</dt><dd>{detail.shipment_id}</dd></>}
                   <dt>交易状态</dt><dd>{orderStatusLabel(detail.status)}</dd>
                   <dt>物流模式</dt><dd>{logisticLabel(selectedRowScope?.logistic ?? scope?.logistic)}</dd>

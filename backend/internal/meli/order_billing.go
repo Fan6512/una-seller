@@ -24,7 +24,6 @@ type BillingCharge struct {
 	Amount               string `json:"amount"`
 	Currency             string `json:"currency"`
 	DebitedFromOperation string `json:"debited_from_operation,omitempty"`
-	Description          string `json:"description,omitempty"`
 	ReversalOf           string `json:"reversal_of,omitempty"`
 	Status               string `json:"status,omitempty"`
 	ShipmentID           string `json:"shipment_id,omitempty"`
@@ -122,7 +121,6 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 					DetailType           string      `json:"detail_type"`
 					DetailSubtype        string      `json:"detail_sub_type"`
 					DetailAmount         json.Number `json:"detail_amount"`
-					Description          string      `json:"transaction_detail"`
 					Status               string      `json:"status"`
 					ReversalOf           json.Number `json:"charge_bonified_id"`
 					DebitedFromOperation string      `json:"debited_from_operation"`
@@ -178,13 +176,13 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 			amount, err := billingAmount(c.DetailAmount)
 			if err != nil || amount == "" || len(c.DetailType) > 80 || len(c.DetailSubtype) > 80 ||
 				len(line.CurrencyInfo.CurrencyID) > 8 || len(c.DetailID) > 30 || len(c.ReversalOf) > 30 ||
-				len(c.Description) > 160 || len(c.Status) > 40 || len(c.DebitedFromOperation) > 10 ||
+				len(c.Status) > 40 || len(c.DebitedFromOperation) > 10 ||
 				(line.ShippingInfo.ID != "" && !orderSLAShipmentID.MatchString(line.ShippingInfo.ID.String())) {
 				return BillingPreviewPage{}, ErrOrderBillingInvalid
 			}
 			charge := BillingCharge{DetailID: c.DetailID.String(), Type: c.DetailType,
 				Subtype: c.DetailSubtype, Amount: amount, Currency: line.CurrencyInfo.CurrencyID,
-				DebitedFromOperation: c.DebitedFromOperation, Description: c.Description,
+				DebitedFromOperation: c.DebitedFromOperation,
 				ReversalOf: c.ReversalOf.String(), Status: c.Status, ShipmentID: line.ShippingInfo.ID.String()}
 			if charge.DetailID != "" {
 				if previous, exists := chargeIDs[charge.DetailID]; exists {

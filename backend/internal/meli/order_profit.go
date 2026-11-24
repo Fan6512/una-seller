@@ -68,6 +68,8 @@ func fixedPoint(whole string, places int) string {
 	return whole[:len(whole)-places] + "." + whole[len(whole)-places:]
 }
 
+// A2-only calculation contract: currently exercised by tests, not called by any
+// runtime route or UI. Do not expose it before reconciliation is verified.
 // EstimateProfitFromVerifiedNet never derives net USD from order total,
 // tax base, sale_fee.net, charge totals, or listing net_proceeds.
 func EstimateProfitFromVerifiedNet(receipt VerifiedUSDNet, fx ProfitFXRate, purchaseCNY, extraCNY string) (EstimatedProfitUSD, error) {
