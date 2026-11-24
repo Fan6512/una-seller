@@ -183,7 +183,7 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 			charge := BillingCharge{DetailID: c.DetailID.String(), Type: c.DetailType,
 				Subtype: c.DetailSubtype, Amount: amount, Currency: line.CurrencyInfo.CurrencyID,
 				DebitedFromOperation: c.DebitedFromOperation,
-				ReversalOf: c.ReversalOf.String(), Status: c.Status, ShipmentID: line.ShippingInfo.ID.String()}
+				ReversalOf:           c.ReversalOf.String(), Status: c.Status, ShipmentID: line.ShippingInfo.ID.String()}
 			if charge.DetailID != "" {
 				if previous, exists := chargeIDs[charge.DetailID]; exists {
 					if previous != charge {
