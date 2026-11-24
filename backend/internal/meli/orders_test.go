@@ -115,7 +115,11 @@ func TestLegacyOrderDuplicateCandidatesRequireReview(t *testing.T) {
 	if !orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "" {
 		t.Fatal("legacy duplicate candidate was shown as confirmed sales")
 	}
-	items[0].ElementID, items[1].ElementID = "1", "2"
+	items[0].ElementID = "1"
+	if !orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "" {
+		t.Fatal("mixed known and missing element IDs must require review")
+	}
+	items[1].ElementID = "2"
 	if orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "22.56" {
 		t.Fatal("distinct official elements were incorrectly treated as duplicates")
 	}
