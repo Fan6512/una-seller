@@ -51,6 +51,18 @@ sudo systemctl is-active una-seller-api
 ```
 在 `sudoedit` 中填入服务器专用的 `DATABASE_URL`、`SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY`。不要复制到 GitHub、日志或桌面程序。
 
+**P0 / Issue #75：用户自行绑定云端 AI、翻译 Key（PR #77，独立授权后才部署）**
+
+先审核/合并代码并确认生产备份，再单独批准执行 `backend/cmd/api/main.go` 对应的 `api migrate`（新表为私有的 `app.user_service_credentials`，版本文件 `0011`；未合并的 PR #66 使用 `0010`，两者的迁移在最终 main 合流后统一核对）。**不得在未授权时运行 migrate、重启生产 API 或试真实付费调用。**
+
+`deploy/una-seller/api.env.example` 同步新增：
+- `UNA_SELLER_SERVICE_CREDENTIALS_KEY`：在服务器内独立生成的随机 32 字节 Base64 主密钥（可用 `openssl rand -base64 32`），绝不复用 Mercado Libre Token 加密密钥；保管备份，权限仅限服务进程；留空会禁用所有账号 Key 管理功能，启动时明确 WARNING，客户端查询返回 503。
+- `UNA_SELLER_SERVICE_CREDENTIALS_KEY_ID=v1`：每次正式换主密钥必须同时换 ID（例如 `v2`）。旧记录不会被自动删除或不安全降级；旧账号需重新绑定 Key，或者由负责人另行审批全量重加密流程。客户端看到“需重新绑定”的提示。严禁无计划更换或丢失主密钥。
+- `AI_ALLOWED_BASE_URLS`：服务器允许的 OpenAI-compatible HTTPS API 地址，多个用英文逗号分隔，如 `https://api.deepseek.com/v1`。官方 `https://api.openai.com/v1` 内置；尾部单个 `/` 可规范化，非法条目被跳过并记录通用 warning，不允许任意域名代理。部署时确认实际模型可用及受支持的 JSON 模式。
+- `TRANSLATION_PROVIDER`、`AI_API_KEY` 等原部署级变量仍供兼容及维护用；**启用用户 Key 模式后，未绑定的用户不能自动消费共享 Key 配额**。离线 CBT 类目全量翻译仍由独立运维配置运行，不使用用户的付费 Key。
+
+按此前审批的 HTTPS/Go 服务流程重新加载配置后，先进行带 Bearer 的账号配置 GET（仅返回状态、不返回密钥），再由负责人手动测试一个已保存商品的云 AI；不得直接启动全词典批量翻译。操作日志仅记录 owner/kind/provider/绑定或删除事件，不能收集 Key 或用户输入。完成后仍需 Windows 集中 GUI 验收。
+
 Supabase 数据库已建立 `app` schema，无需重新执行 migrate。连接串从 Supabase Dashboard → Connect 获取：服务器支持 IPv6 可选 Direct `:5432`；仅 IPv4 使用 **Session Pooler `:5432`**，均启用 TLS 校验（例如 `sslmode=verify-full`）。不要把 HTTP 代理用于 PostgreSQL 连接；若服务器访问 Auth 失败再单独核查服务器出站网络。
 
 **本机验证：**

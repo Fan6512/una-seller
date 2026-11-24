@@ -21,6 +21,7 @@ type storeAPI struct {
 	auth                       collectionAPI
 	service                    *meli.Service
 	translator                 *TranslationService
+	accounts                   *AccountServices
 }
 
 func (a storeAPI) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {

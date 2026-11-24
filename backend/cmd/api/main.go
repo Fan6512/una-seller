@@ -13,6 +13,7 @@ import (
 	"github.com/Fan6512/una-seller/backend/internal/httpapi"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 	"github.com/Fan6512/una-seller/backend/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -97,6 +98,17 @@ func main() {
 	if err != nil {
 		log.Printf("AI listing copy disabled: %v", err)
 	}
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCategoryDictionary(store, verifier, meliService, translator, dictionary, aiCopy), ReadHeaderTimeout: 5 * time.Second}
+	var db *pgxpool.Pool
+	if store != nil {
+		db = store.DB
+	}
+	accounts, err := httpapi.NewAccountServices(db, os.Getenv("UNA_SELLER_SERVICE_CREDENTIALS_KEY"), os.Getenv("UNA_SELLER_SERVICE_CREDENTIALS_KEY_ID"), os.Getenv("AI_ALLOWED_BASE_URLS"))
+	if err != nil {
+		log.Fatalf("account credentials config: %v", err)
+	}
+	if accounts == nil && os.Getenv("UNA_SELLER_CLOUD") == "1" {
+		log.Print("WARNING: account AI/translation key management is disabled: UNA_SELLER_SERVICE_CREDENTIALS_KEY is not configured")
+	}
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithAccountServices(store, verifier, meliService, translator, dictionary, aiCopy, accounts), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }
