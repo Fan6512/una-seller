@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
-	"log"
 	"time"
 )
 
@@ -295,4 +295,3 @@ func ClassifyPublicationEvidence(e PublicationEvidence) string {
 	}
 	return publicationUnverified
 }
-

@@ -52,8 +52,8 @@ type Service struct {
 	orderNextRequest time.Time
 	orderNextSearch  time.Time
 	orderRetryUntil  time.Time
-	probeMu         sync.Mutex
-	probeNext       map[string]time.Time
+	probeMu          sync.Mutex
+	probeNext        map[string]time.Time
 }
 
 type Store struct {
