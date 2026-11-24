@@ -122,16 +122,28 @@ test("site title preference defaults safely, persists, survives a failed write, 
   setSiteTitleMode("localized");
 });
 
-test("auto title editor has an independent English field above description-only tabs",()=>{
+test("auto mode binds both editors to English without language tabs; localized mode retains all languages",()=>{
   const source=readFileSync(new URL("../src/ListingFieldsEditor.tsx",import.meta.url),"utf8");
   const auto=source.slice(source.indexOf('<fieldset key="platform-auto-title"'),
     source.indexOf('<fieldset key="localized-title-description"'));
   const title=auto.indexOf('{renderTitle("en",');
   const desc=auto.indexOf('<fieldset key="platform-auto-description"');
-  const tabs=auto.indexOf("{languageTabs}");
-  assert.ok(title>=0 && desc>title && tabs>desc);
-  assert.ok(auto.indexOf("{descriptionEditor}")>tabs);
-  assert.doesNotMatch(auto.slice(0,desc),/\{languageTabs\}|renderTitle\(activeLanguage/);
+  assert.ok(title>=0 && desc>title);
+  assert.ok(auto.indexOf('{renderDescription("en")}')>desc);
+  assert.doesNotMatch(auto,/\{languageTabs\}|render(?:Title|Description)\(activeLanguage/);
   assert.match(source,/key=\{siteTitleMode\+":"\+lang\}/);
+  assert.match(source,/key=\{siteTitleMode\+":description:"\+lang\}/);
   assert.match(source,/renderTitle\(activeLanguage,selectedLanguage.full\)/);
+  assert.match(source,/renderDescription\(activeLanguage\)/);
+  assert.match(source,/englishOnly=\{platformAuto\}/);
+  assert.match(source,/if\(platformAuto&&lang!=="en"\)return/);
+});
+
+test("AI copy UI hides regional candidates and translation in English-only mode",()=>{
+  const source=readFileSync(new URL("../src/AICopyPanel.tsx",import.meta.url),"utf8");
+  assert.match(source,/const language = englishOnly \? "en" : selectedLanguage/);
+  assert.match(source,/englishOnly && operation === "translate"/);
+  assert.match(source,/!englishOnly && <div className="listing-language-tabs"/);
+  assert.match(source,/!englishOnly && <button[^>]+!savedEnglish\.trim\(\)/);
+  assert.match(source,/!englishOnly && language !== "en" && regional/);
 });

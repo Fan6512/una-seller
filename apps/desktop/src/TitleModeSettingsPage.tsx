@@ -15,18 +15,18 @@ export default function TitleModeSettingsPage() {
         <label className={"title-mode-option"+(mode === "platform_auto" ? " is-selected" : "")}>
           <input type="radio" name="site-title-mode" value="platform_auto"
             checked={mode === "platform_auto"} onChange={() => setSiteTitleMode("platform_auto")} />
-          <span>UP 平台自动生成站点标题（只填写英文主标题）</span>
+          <span>UP 平台自动生成站点标题（仅英文标题与详情）</span>
         </label>
-        <p className="title-mode-option-note">商品编辑器仅显示英文 Family Name / 主标题输入；西语、葡语商品描述仍可编辑。</p>
+        <p className="title-mode-option-note">商品编辑器仅显示英文 Family Name / 主标题和英文商品详情，隐藏西语、葡语文案及语言标签。</p>
         <label className={"title-mode-option"+(mode === "localized" ? " is-selected" : "")}>
           <input type="radio" name="site-title-mode" value="localized"
             checked={mode === "localized"} onChange={() => setSiteTitleMode("localized")} />
           <span>自定义站点标题（英语 EN / 墨西哥西语 MX / 巴西葡语 BR）</span>
         </label>
-        <p className="title-mode-option-note">商品编辑器显示三语标题切换、字符统计与复制功能，保留每个站点的 SEO 文案。</p>
+        <p className="title-mode-option-note">商品编辑器显示三语标题与详情切换、字符统计与复制功能，保留每个站点的 SEO 文案。</p>
       </fieldset>
       <p className="account-help" role="status">
-        当前选择：{mode === "platform_auto" ? "平台自动生成（英文标题模式）" : "自定义站点标题（三语模式）"}。
+        当前选择：{mode === "platform_auto" ? "平台自动生成（英文标题与详情模式）" : "自定义站点标题（三语模式）"}。
         设置仅对当前客户端的编辑界面生效，切换不会覆盖或删除任何已保存的标题、描述及变体。
       </p>
       <p className="account-help">

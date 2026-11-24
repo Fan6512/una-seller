@@ -13,15 +13,17 @@ type Props = {
   value: ListingFields;
   saved?: Partial<ListingFields>;
   disabled: boolean;
+  englishOnly?: boolean;
   onAdopt: (field: CopyField, language: TitleLanguage, text: string, sourceDigest?: string) => void;
   onAdoptPoints: (points: string[]) => void;
 };
 
-export default function AICopyPanel({ product, value, saved, disabled, onAdopt, onAdoptPoints }: Props) {
+export default function AICopyPanel({ product, value, saved, disabled, englishOnly = false, onAdopt, onAdoptPoints }: Props) {
   const [titles, setTitles] = useState<LocalizedTitles | null>(null);
   const [english, setEnglish] = useState<AICopyResults["english"] | null>(null);
   const [regional, setRegional] = useState<(AICopyResults["translate"] & { revision: number }) | null>(null);
-  const [language, setLanguage] = useState<TitleLanguage>("en");
+  const [selectedLanguage, setLanguage] = useState<TitleLanguage>("en");
+  const language = englishOnly ? "en" : selectedLanguage;
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -41,7 +43,7 @@ export default function AICopyPanel({ product, value, saved, disabled, onAdopt, 
   }, [disabled]);
 
   const generate = async (operation: Operation) => {
-    if (active.current) return;
+    if (active.current || (englishOnly && operation === "translate")) return;
     const controller = new AbortController();
     active.current = controller;
     setGenerating(true);
@@ -131,6 +133,7 @@ export default function AICopyPanel({ product, value, saved, disabled, onAdopt, 
           <button type="button" disabled={!text} onClick={() => void copy(text, label)}>复制候选{label}</button>
           <button type="button" disabled={disabled || generating || !eligible}
             onClick={() => {
+              if (englishOnly && language !== "en") return;
               onAdopt(field, language, text.normalize("NFC"), sourceDigest);
               setMessage("");
             }}>采纳{label}</button>
@@ -145,13 +148,13 @@ export default function AICopyPanel({ product, value, saved, disabled, onAdopt, 
       <div className="localized-title-actions">
         <button type="button" disabled={disabled || generating} onClick={() => void generate("titles")}>AI 优化标题</button>
         <button type="button" disabled={disabled || generating} onClick={() => void generate("english")}>AI 生成英文详情</button>
-        <button type="button" disabled={disabled || generating || !savedEnglish.trim() || englishDirty}
-          onClick={() => void generate("translate")}>{regional ? "重新翻译详情至 MX/BR" : "翻译详情至 MX/BR"}</button>
+        {!englishOnly && <button type="button" disabled={disabled || generating || !savedEnglish.trim() || englishDirty}
+          onClick={() => void generate("translate")}>{regional ? "重新翻译详情至 MX/BR" : "翻译详情至 MX/BR"}</button>}
         {generating && <button type="button" onClick={cancel}>取消生成</button>}
       </div>
     </div>
-    <p className="listing-fields-note">生成使用已保存的商品资料。采纳或编辑英文详情后，先保存，再翻译为西语和葡语。</p>
-    {(Object.keys(descriptionLabels) as TitleLanguage[]).filter(lang => lang !== "en").map(lang => {
+    <p className="listing-fields-note">{englishOnly ? "生成使用已保存的商品资料。当前仅显示英文标题及英文详情候选。" : "生成使用已保存的商品资料。采纳或编辑英文详情后，先保存，再翻译为西语和葡语。"}</p>
+    {!englishOnly && (Object.keys(descriptionLabels) as TitleLanguage[]).filter(lang => lang !== "en").map(lang => {
       const current = value.descriptions?.[lang];
       const digest = value.description_translation?.[`${lang}_source_digest`];
       if (!current?.trim()) return null;
@@ -161,16 +164,16 @@ export default function AICopyPanel({ product, value, saved, disabled, onAdopt, 
       }
       return null;
     })}
-    {regionalIsStale && <p className="listing-validation">英文母版已变化。请保存后重新翻译再采纳。</p>}
+    {!englishOnly && regionalIsStale && <p className="listing-validation">英文母版已变化。请保存后重新翻译再采纳。</p>}
     {generating && <p className="listing-fields-note" role="status">正在生成文案…</p>}
     {error && <p className="listing-validation" role="alert">{error}</p>}
     {message && <p className="listing-fields-note" role="status">{message}</p>}
-    {(titles || english || regional) && <>
-      <div className="listing-language-tabs" role="group" aria-label="候选文案语言">
+    {(titles || english || (!englishOnly && regional)) && <>
+      {!englishOnly && <div className="listing-language-tabs" role="group" aria-label="候选文案语言">
         {(Object.keys(languages) as TitleLanguage[]).map(lang => <button key={lang} type="button"
           aria-pressed={language === lang} onClick={() => setLanguage(lang)}>{languages[lang]}</button>)}
-      </div>
-      {titles && renderField("titles", "标题", titles[language], text => setTitles({ ...titles, [language]: text }))}
+      </div>}
+      {titles && <div key={"title:"+language}>{renderField("titles", englishOnly ? "英文标题" : "标题", titles[language], text => setTitles({ ...titles, [language]: text }))}</div>}
       {language === "en" && english && <>
         {english.missing_facts.length > 0 && <div>
           <strong>待补充的商品信息</strong>
@@ -186,7 +189,7 @@ export default function AICopyPanel({ product, value, saved, disabled, onAdopt, 
         <p className="listing-fields-note">采纳后的卖点将作为后续 AI 生成的文案参考，不代替真实商品属性。</p>
         {renderField("descriptions", descriptionLabels.en, english.description, text => setEnglish({ ...english, description: text }))}
       </>}
-      {language !== "en" && regional && <>
+      {!englishOnly && language !== "en" && regional && <>
         {regional.review_terms.length > 0 && <div>
           <strong>请核对译文术语</strong>
           <ul>{regional.review_terms.map(term => <li key={term}>{term}</li>)}</ul>
