@@ -40,6 +40,7 @@ export type OrderRecord = {
   currency_id: string;
   total_amount: string;
   sales_amount_usd?: string;
+  order_items_review_required?: boolean;
   date_created: string;
   last_updated: string;
   shipment_id?: string;

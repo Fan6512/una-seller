@@ -581,7 +581,8 @@ try {
   resumed.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: testingThumbnail }] }));
   await waitFor(() => imageRequests.length === 1, "unattempted image was not processed after interruption");
   const remaining = imageRequests.shift();
-  assert(remaining.path.includes("/orders/103/image-refresh"), "remaining distinct item was not requested");
+  assert(decodeURIComponent(new URL(remaining.path, location.href).pathname).endsWith("/orders/103/image-refresh"),
+    "remaining distinct item was not requested: " + remaining.path);
   remaining.resolve(Response.json({ error: "order_rate_limited" }, { status: 429 }));
   await waitFor(() => [...document.querySelectorAll(".orders-heading-actions button")].some(btn => btn.textContent === "补全本页主图"),
     "image batch did not stop after rate limit");

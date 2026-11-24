@@ -92,6 +92,9 @@ func TestOrderSalesAmountUsesScopedMerchandiseLines(t *testing.T) {
 	if err != nil || order.TotalAmount != "67.23" || order.PackID != "920" || len(order.Items) != 2 {
 		t.Fatalf("merchant detail was not preserved and deduplicated: %+v, %v", order, err)
 	}
+	if order.Items[0].ElementID != "1" || order.Items[1].ElementID != "2" {
+		t.Fatalf("element IDs were not preserved: %+v", order.Items)
+	}
 	if got := orderSalesAmountUSD(order.Items); got != "22.59000003" {
 		t.Fatalf("USD sales per Order = %q", got)
 	}
@@ -101,6 +104,20 @@ func TestOrderSalesAmountUsesScopedMerchandiseLines(t *testing.T) {
 	}
 	if got := orderSalesAmountUSD([]OrderLine{{CurrencyID: "USD", UnitPrice: "0.00", Quantity: 1}}); got != "0.00" {
 		t.Fatalf("explicit zero USD sale missing: %q", got)
+	}
+}
+
+func TestLegacyOrderDuplicateCandidatesRequireReview(t *testing.T) {
+	first := OrderLine{ItemID: "MLB101", Quantity: 1, UnitPrice: "11.28", CurrencyID: "USD"}
+	second := first
+	second.UnitPrice = "11.2800"
+	items := []OrderLine{first, second}
+	if !orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "" {
+		t.Fatal("legacy duplicate candidate was shown as confirmed sales")
+	}
+	items[0].ElementID, items[1].ElementID = "1", "2"
+	if orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "22.56" {
+		t.Fatal("distinct official elements were incorrectly treated as duplicates")
 	}
 }
 
