@@ -90,7 +90,13 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const variants=value.variants??[];
   const activeRules=categoryRules?.category_id===value.category_id?categoryRules:null;
   const childRules=(activeRules?.attributes??[]).filter(r=>r.hierarchy==="CHILD_PK"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(r.id));
-  const translations=activeRules?.translations_zh??{};
+  // These are display-only hints; never change the platform option's value or ID.
+  const glossary:Record<string,string>={Color:"颜色",Colour:"颜色",Size:"尺寸",Style:"款式",Material:"材质",Voltage:"电压",
+    Capacity:"容量",Black:"黑色",White:"白色",Red:"红色",Blue:"蓝色",Green:"绿色",Yellow:"黄色",
+    Pink:"粉色",Purple:"紫色",Gray:"灰色",Grey:"灰色",Brown:"棕色",Orange:"橙色",
+    Beige:"米色","Navy Blue":"藏青色",Silver:"银色",Gold:"金色",Khaki:"卡其色",Burgundy:"酒红色"};
+  const translations={...glossary,...activeRules?.translations_zh};
+  const [specSearch,setSpecSearch]=useState<Record<string,string>>({});
   const bilingual=(name:string)=>Object.hasOwn(translations,name)&&translations[name]!==name?name+"（"+translations[name]+"）":name;
   const options=(rule:CBTAttributeRule)=>(rule.values??[]).filter(v=>v.id!=null&&v.name);
   const supported=(rule:CBTAttributeRule)=>!["read_only","hidden","fixed","multivalued","conditional_required","size_grid_required"].some(t=>rule.tags?.[t])&&
@@ -183,6 +189,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     const field=variant.category_attributes?.find(a=>a.category_id===value.category_id&&a.id===rule.id);
     if(!supported(rule))return "特殊规格，刊登前人工核实";
     if(!field?.value.trim())return "待填写";
+    if(Array.from(field.value).length>Math.min(rule.value_max_length||500,500))return "超过官方长度上限";
     if(rule.value_type==="list"&&!options(rule).some(o=>String(o.id)===field.value_id&&o.name===field.value))return "待核实官方选项";
     if(!field.value_id&&/\p{Script=Han}/u.test(field.value))return "请填写英文规格";
     if((rule.value_type==="number"||rule.value_type==="number_unit")&&!/^-?\d+(?:\.\d+)?$/.test(field.value))return "请输入数字";
@@ -411,14 +418,20 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       <div className="listing-variant-toolbar">
         <strong>现有 {variants.length} 个变体</strong>
         <button type="button" disabled={disabled||variants.length>=100}
-          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{"属性1":""},price:"",currency:"",image_urls:[]}])}>
+          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[]}])}>
           + 添加变体
         </button>
       </div>
+      {activeRules&&variants.length>0&&activeRules.attributes.some(r=>r.hierarchy==="PARENT_PK"&&(r.tags?.required||r.tags?.new_required)&&
+        !(value.category_attributes??[]).some(a=>a.category_id===value.category_id&&a.id===r.id&&a.value.trim()))&&
+        <p className="listing-validation">家族公共必填属性尚待核实（包含品牌等基础字段），请在刊登前确认 PARENT_PK 一致。</p>}
       <p className="listing-fields-note">{!activeRules?"选择 CBT 类目并加载官方规则后可填写 UP 规格。":childRules.length===0?"当前规则未返回 CHILD_PK，保留原始规格，需在刊登前核实。":"官方规格使用英文及官方 ID，中文仅辅助阅读。原始规格不自动提交。"}</p>
       <div className="listing-variant-table-scroll" role="region" aria-label="可横向滚动的变体表格" tabIndex={0}>
         <table className="listing-variant-table">
-          <thead><tr>{childRules.map(rule=><th key={rule.id} scope="col">{bilingual(rule.name||rule.id)}</th>)}<th scope="col">原始规格（参考）</th><th scope="col">SKU</th><th scope="col">采购成本（¥）</th><th scope="col">净收益（$）</th><th scope="col">来源价格</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
+          <thead><tr>{childRules.map(rule=><th key={rule.id} scope="col">{bilingual(rule.name||rule.id)}
+        {rule.value_type==="list"&&<input aria-label={"搜索规格 "+rule.id} disabled={disabled} placeholder="英文 / 中文"
+          value={specSearch[rule.id]??""} onChange={e=>setSpecSearch(old=>({...old,[rule.id]:e.target.value}))}/>}
+      </th>)}<th scope="col">原始规格（参考）</th><th scope="col">SKU</th><th scope="col">采购成本（¥）</th><th scope="col">净收益（$）</th><th scope="col">来源价格</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
           <tbody>{variants.map((v,i)=><tr key={i}>
             {childRules.map(rule=>{
               const f=v.category_attributes?.find(a=>a.category_id===value.category_id&&a.id===rule.id);
@@ -430,7 +443,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
                   onChange={e=>{const o=options(rule).find(o=>String(o.id)===e.target.value);setOfficialSpec(i,rule,o?.name??"",o?String(o.id):undefined);}}>
                   <option value="">请选择</option>
                   {f?.value_id&&!options(rule).some(o=>String(o.id)===f.value_id)&&<option value={f.value_id} disabled>{f.value}（待核实）</option>}
-                  {options(rule).map(o=><option key={String(o.id)} value={String(o.id)}>{bilingual(o.name)}</option>)}
+                  {options(rule).filter(o=>String(o.id)===f?.value_id||bilingual(o.name).toLowerCase().includes((specSearch[rule.id]??"").trim().toLowerCase())).map(o=><option key={String(o.id)} value={String(o.id)}>{bilingual(o.name)}</option>)}
                 </select>:<>
                   <input disabled={disabled} aria-label={label} value={f?.value??""} placeholder="English"
                     maxLength={Math.min(rule.value_max_length||500,500)} onChange={e=>setOfficialSpec(i,rule,e.target.value,undefined,f?.unit_id)}/>
@@ -446,6 +459,10 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
             })}
             <td className="listing-variant-spec">
               {completeKeys[i]&&completeKeys.filter(k=>k===completeKeys[i]).length>1&&<small className="listing-validation">重复官方规格组合 · 刊登前修正</small>}
+              {(v.category_attributes??[]).filter(a=>a.category_id!==value.category_id||!childRules.some(r=>r.id===a.id)).map(a=><div key={a.category_id+":"+a.id}>
+                <small>历史规格：{a.category_id} · {a.id} · {a.value}</small>
+                <button type="button" disabled={disabled} onClick={()=>updateVariant(i,{category_attributes:(v.category_attributes??[]).filter(x=>x.category_id!==a.category_id||x.id!==a.id)})}>删除历史规格</button>
+              </div>)}
               {Object.entries(v.attributes).map(([key,val],j)=><div className="listing-variant-attribute" key={j}>
                 <input disabled={disabled} aria-label={"变体 "+(i+1)+" 属性 "+(j+1)+" 名称"} value={key} placeholder="Color / Size"
                   onChange={e=>updateVariant(i,{attributes:renameVariantAttribute(v.attributes,key,e.target.value)})}/>
