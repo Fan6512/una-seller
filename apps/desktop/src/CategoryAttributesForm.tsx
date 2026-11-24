@@ -25,11 +25,12 @@ function validation(rule: CBTAttributeRule, field?: CategoryAttributeValue) {
   return "";
 }
 
-export default function CategoryAttributesForm({ category, values, onChange, disabled }: {
+export default function CategoryAttributesForm({ category, values, onChange, disabled, onRules }: {
   category: string;
   values: CategoryAttributeValue[];
   onChange: (values: CategoryAttributeValue[]) => void;
   disabled: boolean;
+  onRules?: (rules: CBTCategoryRules | null) => void;
 }) {
   const [result, setResult] = useState<CBTCategoryRules | null>(null);
   const [requestError, setRequestError] = useState("");
@@ -55,11 +56,12 @@ export default function CategoryAttributesForm({ category, values, onChange, dis
   }, [category, validCategory, attempt]);
 
   const current = result?.category_id === category ? result : null;
+  useEffect(() => { onRules?.(current); }, [current, onRules]);
   const translations = current?.translations_zh ?? {};
   const display = (name: string) => Object.hasOwn(translations, name) ? translations[name] + " · " + name : name;
   const categories = current?.path?.map(node => node.name) ?? [];
   const rules = (current?.attributes ?? []).filter(rule => rule && /^[A-Z][A-Z0-9_]{0,79}$/.test(rule.id));
-  const editable = rules.filter(rule => supportedTypes.has(rule.value_type ?? "") &&
+  const editable = rules.filter(rule => rule.hierarchy !== "CHILD_PK" && supportedTypes.has(rule.value_type ?? "") &&
     !deferredTags.some(tag => rule.tags?.[tag]) &&
     (rule.value_type !== "list" || choicesFor(rule).length > 0) &&
     (rule.value_type !== "number_unit" || unitsFor(rule).length > 0));
