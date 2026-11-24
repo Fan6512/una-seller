@@ -127,6 +127,7 @@ export async function getCollectionPage(q: string, offset: number, signal: Abort
 
 export type CBTAttributeRule = {
   id: string;
+  hierarchy?: string;
   name: string;
   value_type?: string;
   value_max_length?: number;
