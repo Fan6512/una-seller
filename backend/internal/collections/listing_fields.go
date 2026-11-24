@@ -111,14 +111,14 @@ type ListingCategoryAttribute struct {
 var listingCategoryAttributeID = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,79}$`)
 
 type ListingVariant struct {
-	SellerSKU  string            `json:"seller_sku"`
-	Attributes map[string]string `json:"attributes"`
-	Price      string            `json:"price"`
-	Currency   string            `json:"currency"`
-	ImageURLs  []string          `json:"image_urls"`
-	PurchaseCostCNY string `json:"purchase_cost_cny,omitempty"`
-	TargetNetProceedsUSD string `json:"target_net_proceeds_usd,omitempty"`
-	CategoryAttributes []ListingCategoryAttribute `json:"category_attributes,omitempty"`
+	SellerSKU            string                     `json:"seller_sku"`
+	Attributes           map[string]string          `json:"attributes"`
+	Price                string                     `json:"price"`
+	Currency             string                     `json:"currency"`
+	ImageURLs            []string                   `json:"image_urls"`
+	PurchaseCostCNY      string                     `json:"purchase_cost_cny,omitempty"`
+	TargetNetProceedsUSD string                     `json:"target_net_proceeds_usd,omitempty"`
+	CategoryAttributes   []ListingCategoryAttribute `json:"category_attributes,omitempty"`
 }
 
 func allNumeric(value string) bool {
@@ -286,19 +286,8 @@ func (f ListingFields) Validate() error {
 		}
 	}
 	if f.CategoryAttributes != nil {
-		if len(*f.CategoryAttributes) > 180 {
-			return errors.New("too many category attribute fields")
-		}
-		seen := make(map[[2]string]bool)
-		for _, field := range *f.CategoryAttributes {
-			key := [2]string{field.CategoryID, field.ID}
-			if !strings.HasPrefix(field.CategoryID, "CBT") || !allNumeric(strings.TrimPrefix(field.CategoryID, "CBT")) ||
-				!listingCategoryAttributeID.MatchString(field.ID) || seen[key] ||
-				!validListingText(field.Value, 500) || !validListingText(field.ValueID, 80) ||
-				!validListingText(field.UnitID, 80) || (field.ValueID != "" && strings.TrimSpace(field.Value) == "") {
-				return errors.New("invalid category attribute field")
-			}
-			seen[key] = true
+		if err := validateListingCategoryAttributes(*f.CategoryAttributes, 180); err != nil {
+			return err
 		}
 	}
 	if f.Images != nil {
@@ -326,10 +315,7 @@ func (f ListingFields) Validate() error {
 					return errors.New("invalid variant attribute")
 				}
 			}
-			if len(v.CategoryAttributes) > 12 {
-				return errors.New("too many variant category attributes")
-			}
-			if err := (ListingFields{CategoryAttributes: &v.CategoryAttributes}).Validate(); err != nil {
+			if err := validateListingCategoryAttributes(v.CategoryAttributes, 12); err != nil {
 				return err
 			}
 			for _, u := range v.ImageURLs {
@@ -338,6 +324,24 @@ func (f ListingFields) Validate() error {
 				}
 			}
 		}
+	}
+	return nil
+}
+
+func validateListingCategoryAttributes(fields []ListingCategoryAttribute, limit int) error {
+	if len(fields) > limit {
+		return errors.New("too many category attribute fields")
+	}
+	seen := make(map[[2]string]bool)
+	for _, field := range fields {
+		key := [2]string{field.CategoryID, field.ID}
+		if !strings.HasPrefix(field.CategoryID, "CBT") || !allNumeric(strings.TrimPrefix(field.CategoryID, "CBT")) ||
+			!listingCategoryAttributeID.MatchString(field.ID) || seen[key] ||
+			!validListingText(field.Value, 500) || !validListingText(field.ValueID, 80) ||
+			!validListingText(field.UnitID, 80) || (field.ValueID != "" && strings.TrimSpace(field.Value) == "") {
+			return errors.New("invalid category attribute field")
+		}
+		seen[key] = true
 	}
 	return nil
 }
