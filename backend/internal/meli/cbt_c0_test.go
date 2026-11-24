@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCBTC0ReadOnlySanitizedAndManaged(t *testing.T) {
@@ -43,6 +44,7 @@ func TestCBTC0ReadOnlySanitizedAndManaged(t *testing.T) {
 	if !reflect.DeepEqual(paths, []string{"/users/me", "/users/7000", "/marketplace/users/7000"}) {
 		t.Fatalf("paths: %v", paths)
 	}
+	e.CheckedAt = time.Date(2026, 11, 24, 1, 2, 3, 0, time.UTC)
 	raw, err := json.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +65,8 @@ func TestCBTC0ClassificationDoesNotInventLegacyEligibility(t *testing.T) {
 		want  string
 	}{
 		{"managed", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}}, "fully_managed"},
+		{"mixed_managed_unknown", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: "unverified"}}, "undetermined"},
+		{"mixed_managed_standard", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: "other"}}, "undetermined"},
 		{"standard", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", UserProduct: "enabled"}}, "standard_up"},
 		{"standard_when_flag_missing", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", UserProduct: "unverified"}}, "standard_up"},
 		{"contradictory_up", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", UserProduct: "disabled"}}, "undetermined"},
@@ -74,7 +78,7 @@ func TestCBTC0ClassificationDoesNotInventLegacyEligibility(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classifyPublicationEvidence(PublicationEvidence{UserProductSeller: tc.tags, SellAllowed: tc.sell, Sites: tc.sites})
+			got := ClassifyPublicationEvidence(PublicationEvidence{UserProductSeller: tc.tags, SellAllowed: tc.sell, Sites: tc.sites})
 			if got != tc.want {
 				t.Fatalf("got %s, want %s", got, tc.want)
 			}

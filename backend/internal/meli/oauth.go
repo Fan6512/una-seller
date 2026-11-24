@@ -52,6 +52,8 @@ type Service struct {
 	orderNextRequest time.Time
 	orderNextSearch  time.Time
 	orderRetryUntil  time.Time
+	probeMu         sync.Mutex
+	probeNext       map[string]time.Time
 }
 
 type Store struct {
@@ -288,9 +290,17 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 	if err != nil {
 		return Store{}, err
 	}
+	// Keep updated authorization credentials and invalidated C0 evidence
+	// in one transaction. A failed cleanup must never leave an apparently
+	// valid new authorization carrying old mode evidence.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Store{}, err
+	}
+	defer tx.Rollback(ctx)
 	// seller_id is globally unique: one seller cannot silently migrate to a second owner.
 	var out Store
-	err = s.db.QueryRow(ctx, `INSERT INTO app.meli_store_connections
+	err = tx.QueryRow(ctx, `INSERT INTO app.meli_store_connections
  (owner_user_id,seller_id,nickname,status,access_token_ciphertext,refresh_token_ciphertext,
  access_token_expires_at,last_checked_at,marketplaces,marketplaces_status,marketplaces_checked_at)
  VALUES($1::uuid,$2,$3,'connected',$4,$5,now()+($6::bigint*interval '1 second'),now(),$7::jsonb,$8,
@@ -316,7 +326,10 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 	if err != nil {
 		return Store{}, err
 	}
-	if err := s.clearC0Evidence(ctx, owner, out.ID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM app.meli_cbt_c0_evidence WHERE store_id=$1::uuid AND owner_user_id=$2::uuid`, out.ID, owner); err != nil {
+		return Store{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Store{}, err
 	}
 	out.PublicationMode = publicationUnverified

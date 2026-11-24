@@ -19,14 +19,14 @@
 
 探针现会在脱敏 JSON 中输出 `publication_mode` 与 `mode_evidence_level`，供后续 UNA Seller 店铺模式配置使用：
 
-- `fully_managed`：任何获准子站点明确返回 `business_model = "CBT CN Fulfillment Managed"`，且主账号允许销售。
+- `fully_managed`：**全部**已核实子站点一致返回 `business_model = "CBT CN Fulfillment Managed"`，且主账号允许销售；混合、缺失或未知值保持 `undetermined`，并保留逐站点脱敏证据。
 - `standard_up`：主账号启用 `user_product_seller`，没有全托管指示、没有矛盾的子站点 UP 标记，且账号允许销售。
 - `legacy_candidate`：账号没有 UP 标签，也未返回已启用的子站点 UP；**仅是待确认的旧版候选，不能据此使用 Legacy POST**。
 - `undetermined`：标签缺失、业务模式未知或矛盾、账号销售状态不明等；必须人工确认，不能按默认模型发布。
 
 `mode_evidence_level = c0_read_only_not_publish_approved` 始终表明只是发布模型只读识别，**不等于具备创建或图片上传权限**。模式名称只用于 UNA Seller 内部适配，绝不修改 Mercado Libre 官方账号类别。没有真实账号脱敏输出前，不得将当前已连接店铺设成任何确定模式。
 
-实际执行必须在持有有效授权、可安全刷新 OAuth Token 的受控环境中进行；不得读取 Supabase 存放的加密 Token 并尝试绕过 Go 解密，也不得把 Token 发到 GitHub Issues、聊天或日志。完成真实三次 GET 后，以官方证据将店铺按 `publication_mode` 分类，并额外核对官方可写接口权限；后续店铺模式持久化和客户端展示在独立小型 Draft PR 中实施，未经实证不提前写入生产数据库。
+实际执行必须在持有有效授权、可安全刷新 OAuth Token 的受控环境中进行；不得读取 Supabase 存放的加密 Token 并尝试绕过 Go 解密，也不得把 Token 发到 GitHub Issues、聊天或日志。完成真实三次 GET 后，以官方证据将店铺按 `publication_mode` 分类，并额外核对官方可写接口权限；当前 Draft PR #85 已包含只读探针、独立私有证据表、店铺模式显示及 10 秒触发冷却；**需要独立批准迁移/部署后才能运行真实 GET 并写入真实店铺证据**。C1 发布前仍必须逐站点核对创建/图片上传权限，不能把店铺级模式当作站点级写入授权。
 
 ## 负责人只读验证
 

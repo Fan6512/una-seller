@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
 const (
@@ -132,40 +134,23 @@ func probe(client *http.Client, base, token string) (accountEvidence, error) {
 // not evidence of API write access. Legacy eligibility cannot be proven
 // solely from an absent User Product tag.
 func inferPublicationMode(e accountEvidence) string {
-	if e.SellAllowed != "enabled" || len(e.Marketplaces) == 0 {
-		return "undetermined"
-	}
-	managed := false
-	unknown := false
-	userProductDisabled := false
-	userProductEnabled := false
+	sites := make([]meli.PublicationSiteEvidence, 0, len(e.Marketplaces))
 	for _, site := range e.Marketplaces {
-		if site.BusinessModel == "CBT CN Fulfillment Managed" {
-			managed = true
-		} else if strings.HasPrefix(site.BusinessModel, "unrecognized") {
-			unknown = true
+		business := site.BusinessModel
+		if strings.HasPrefix(business, "unrecognized") {
+			business = "other"
 		}
-		if site.UserProduct == "disabled" {
-			userProductDisabled = true
-		} else if site.UserProduct == "enabled" {
-			userProductEnabled = true
-		}
+		sites = append(sites, meli.PublicationSiteEvidence{
+			SiteID: site.SiteID, LogisticType: site.LogisticType,
+			BusinessModel: business, PricingModel: site.PricingModel,
+			UserProduct: site.UserProduct,
+		})
 	}
-	// Official Fully Managed guidance identifies the whole CBT seller when
-	// ANY child marketplace has the precise managed business_model.
-	if managed {
-		return "fully_managed"
-	}
-	if unknown {
-		return "undetermined"
-	}
-	if e.UserProductSeller == "present" && !userProductDisabled {
-		return "standard_up"
-	}
-	if e.UserProductSeller == "absent" && !userProductEnabled {
-		return "legacy_candidate"
-	}
-	return "undetermined"
+	return meli.ClassifyPublicationEvidence(meli.PublicationEvidence{
+		SellAllowed: e.SellAllowed,
+		UserProductSeller: e.UserProductSeller,
+		Sites: sites,
+	})
 }
 
 func capabilityStatus(enabled *bool) string {

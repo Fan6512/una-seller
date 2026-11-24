@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -158,7 +159,14 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "OAuth refresh outcome unknown")
 		case errors.Is(err, meli.ErrRefreshBusy):
 			writeError(w, http.StatusServiceUnavailable, "store token refresh in progress")
+		case errors.Is(err, meli.ErrCBTProbeCooldown):
+			writeError(w, http.StatusTooManyRequests, "CBT account probe recently checked; retry later")
+		case errors.Is(err, meli.ErrCBTProbeStale):
+			writeError(w, http.StatusConflict, "CBT account changed during probe; rerun C0")
 		case err != nil:
+			// Errors contain only stage labels and HTTP status, never IDs,
+			// auth headers, response bodies, or credential material.
+			log.Printf("CBT C0 account probe failed: %v", err)
 			writeError(w, http.StatusBadGateway, "CBT account probe unavailable; no mode was changed")
 		default:
 			w.Header().Set("Cache-Control", "no-store")

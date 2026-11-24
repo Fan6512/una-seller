@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
+	"log"
 	"time"
 )
 
@@ -34,6 +34,32 @@ type PublicationSiteEvidence struct {
 
 const publicationUnverified = "undetermined"
 
+var ErrCBTProbeCooldown = errors.New("CBT C0 probe cooldown is active")
+var ErrCBTProbeStale = errors.New("CBT C0 store authorization or identity changed")
+
+// Each authorized store permits at most one manual C0 probe per 10 seconds
+// within this Go process. No Redis or background scheduler is needed.
+func (s *Service) claimC0Probe(storeID string) error {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	if s.probeNext == nil {
+		s.probeNext = make(map[string]time.Time)
+	}
+	now := time.Now()
+	if deadline, ok := s.probeNext[storeID]; ok && now.Before(deadline) {
+		return ErrCBTProbeCooldown
+	}
+	if len(s.probeNext) > 512 {
+		for key, deadline := range s.probeNext {
+			if !now.Before(deadline) {
+				delete(s.probeNext, key)
+			}
+		}
+	}
+	s.probeNext[storeID] = now.Add(10 * time.Second)
+	return nil
+}
+
 // ProbePublicationMode uses the existing owner-scoped OAuth refresh. Its
 // marketplace requests are exclusively GET. The only write is local,
 // owner-scoped storage of the sanitized model evidence.
@@ -44,6 +70,9 @@ func (s *Service) ProbePublicationMode(ctx context.Context, owner, storeID strin
 	}
 	if !auth.Verified || len(auth.Markets) == 0 {
 		return PublicationEvidence{}, ErrSiteNotAuthorized
+	}
+	if err := s.claimC0Probe(storeID); err != nil {
+		return PublicationEvidence{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
@@ -68,7 +97,7 @@ func (s *Service) ProbePublicationMode(ctx context.Context, owner, storeID strin
 		return PublicationEvidence{}, errors.New("could not save CBT account evidence")
 	}
 	if command.RowsAffected() != 1 {
-		return PublicationEvidence{}, ErrStoreNotFound
+		return PublicationEvidence{}, ErrCBTProbeStale
 	}
 	return evidence, nil
 }
@@ -84,10 +113,16 @@ func (s *Service) collectPublicationEvidence(ctx context.Context, auth Authorize
 		} `json:"status"`
 	}
 	if err := s.readC0JSON(ctx, "/users/me", auth.AccessToken, &self); err != nil {
-		return PublicationEvidence{}, err
+		return PublicationEvidence{}, fmt.Errorf("CBT users/me: %w", err)
 	}
-	if self.ID.String() != auth.SellerID || self.SiteID != "CBT" {
-		return PublicationEvidence{}, errors.New("CBT identity mismatch")
+	if self.ID.String() != auth.SellerID {
+		return PublicationEvidence{}, errors.New("CBT users/me: seller id mismatch")
+	}
+	if self.SiteID != "CBT" {
+		return PublicationEvidence{}, errors.New("CBT users/me: site_id is not CBT")
+	}
+	if self.Status.Sell.Allow == nil {
+		log.Print("CBT C0 users/me: status.sell.allow missing; publication remains unverified")
 	}
 
 	var user struct {
@@ -97,10 +132,10 @@ func (s *Service) collectPublicationEvidence(ctx context.Context, auth Authorize
 	}
 	sellerPath := url.PathEscape(auth.SellerID)
 	if err := s.readC0JSON(ctx, "/users/"+sellerPath, auth.AccessToken, &user); err != nil {
-		return PublicationEvidence{}, err
+		return PublicationEvidence{}, fmt.Errorf("CBT seller tags: %w", err)
 	}
 	if (user.ID != "" && user.ID.String() != auth.SellerID) || (user.SiteID != "" && user.SiteID != "CBT") {
-		return PublicationEvidence{}, errors.New("CBT tags identity mismatch")
+		return PublicationEvidence{}, errors.New("CBT seller tags: identity mismatch")
 	}
 
 	var mapping struct {
@@ -116,7 +151,7 @@ func (s *Service) collectPublicationEvidence(ctx context.Context, auth Authorize
 		} `json:"marketplaces"`
 	}
 	if err := s.readC0JSON(ctx, "/marketplace/users/"+sellerPath, auth.AccessToken, &mapping); err != nil {
-		return PublicationEvidence{}, err
+		return PublicationEvidence{}, fmt.Errorf("CBT marketplace mapping: %w", err)
 	}
 	if mapping.UserID.String() != auth.SellerID || mapping.SiteID != "CBT" || mapping.Marketplaces == nil || len(mapping.Marketplaces) != len(auth.Markets) || len(mapping.Marketplaces) > 32 {
 		return PublicationEvidence{}, errors.New("CBT marketplace identity or mapping changed: verify store authorization")
@@ -148,7 +183,7 @@ func (s *Service) collectPublicationEvidence(ctx context.Context, auth Authorize
 			UserProduct:   publicationCapability(m.UserProduct),
 		})
 	}
-	evidence.Mode = classifyPublicationEvidence(evidence)
+	evidence.Mode = ClassifyPublicationEvidence(evidence)
 	return evidence, nil
 }
 
@@ -218,19 +253,20 @@ func publicationPricingModel(v string) string {
 }
 
 // These are routing candidates, not permission to POST.
-// Mercado Libre identifies Fully Managed if ANY child has the exact
-// business_model. Legacy always requires separate explicit confirmation.
-func classifyPublicationEvidence(e PublicationEvidence) string {
+// A store is classified as Fully Managed only when EVERY mapped child
+// explicitly agrees. Mixed/unknown evidence stays undetermined. Legacy
+// eligibility always needs separate write-permission verification.
+func ClassifyPublicationEvidence(e PublicationEvidence) string {
 	if e.SellAllowed != "enabled" || len(e.Sites) == 0 {
 		return publicationUnverified
 	}
-	hasManaged := false
+	managedCount := 0
 	hasUnknown := false
 	hasDisabledUP := false
 	hasEnabledUP := false
 	for _, site := range e.Sites {
 		if site.BusinessModel == "CBT CN Fulfillment Managed" {
-			hasManaged = true
+			managedCount++
 		}
 		if site.BusinessModel == "other" {
 			hasUnknown = true
@@ -242,8 +278,11 @@ func classifyPublicationEvidence(e PublicationEvidence) string {
 			hasEnabledUP = true
 		}
 	}
-	if hasManaged {
-		return "fully_managed"
+	if managedCount > 0 {
+		if managedCount == len(e.Sites) {
+			return "fully_managed"
+		}
+		return publicationUnverified
 	}
 	if hasUnknown {
 		return publicationUnverified
@@ -257,20 +296,3 @@ func classifyPublicationEvidence(e PublicationEvidence) string {
 	return publicationUnverified
 }
 
-// C0 evidence is invalidated when an OAuth connection is replaced.
-func (s *Service) clearC0Evidence(ctx context.Context, owner, storeID string) error {
-	if !validUUID(storeID) {
-		return ErrStoreNotFound
-	}
-	_, err := s.db.Exec(ctx, `DELETE FROM app.meli_cbt_c0_evidence WHERE store_id=$1::uuid AND owner_user_id=$2::uuid`, storeID, owner)
-	return err
-}
-
-// A store may have a previous model recorded. Display it only as a historical
-// C0 probe, never as proof of current write capabilities.
-func publicationModeLabel(mode string) string {
-	if strings.TrimSpace(mode) == "" {
-		return publicationUnverified
-	}
-	return mode
-}

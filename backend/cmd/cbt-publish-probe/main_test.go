@@ -54,7 +54,7 @@ func TestProbeRedactsAccountEvidence(t *testing.T) {
 	}
 	want := accountEvidence{
 		SiteID:            "CBT",
-		PublicationMode:   "fully_managed",
+		PublicationMode:   "undetermined",
 		ModeEvidenceLevel: "c0_read_only_not_publish_approved",
 		UserProductSeller: "present",
 		GlobalSeller:      "present",
@@ -256,7 +256,8 @@ func TestInferenceRequiresExplicitC0Evidence(t *testing.T) {
 		sites   []marketplaceEvidence
 		want    string
 	}{
-		{"managed_any_child", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: unverified}}, "fully_managed"},
+		{"managed_mixed_with_missing", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: unverified}}, "undetermined"},
+		{"managed_all_children", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: "CBT CN Fulfillment Managed"}}, "fully_managed"},
 		{"up_tag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "enabled"}}, "standard_up"},
 		{"up_tag_without_marketplace_flag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: unverified}}, "standard_up"},
 		{"up_conflicting_disabled", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "disabled"}}, "undetermined"},
