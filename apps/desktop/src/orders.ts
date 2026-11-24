@@ -117,7 +117,7 @@ const messages: Record<string, string> = {
 };
 
 // Pure control decisions keep React state and network timing out of error policy tests.
-export function shouldStopSLABatch(status: number, code: string) {
+export function shouldStopLogisticsBatch(status: number, code: string) {
   // Avoid a 20-request storm during network failure, upstream outage or timeout.
   // A per-order missing Shipment (404) may be skipped without aborting the batch.
   return status === 0 || status === 401 || status === 403 || status === 429 ||

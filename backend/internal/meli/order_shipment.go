@@ -110,6 +110,18 @@ func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string,
 		if err != nil {
 			return OrderRecord{}, err
 		}
+		for _, event := range details.History {
+			// A timestamp for a substatus update cannot date the status transition.
+			if event.Substatus != "" {
+				continue
+			}
+			switch {
+			case event.Status == "shipped" && snapshot.ShippedAt == nil:
+				snapshot.ShippedAt = &event.Date
+			case event.Status == "delivered" && snapshot.DeliveredAt == nil:
+				snapshot.DeliveredAt = &event.Date
+			}
+		}
 	}
 	data, err := json.Marshal(snapshot)
 	if err != nil {
@@ -136,7 +148,10 @@ UPDATE app.meli_orders o SET shipment_snapshot=CASE
          AND (o.shipment_snapshot->>'checked_at')::timestamptz > $11)
    )
  THEN o.shipment_snapshot
- ELSE $8::jsonb END
+ ELSE $8::jsonb || jsonb_strip_nulls(jsonb_build_object(
+   'shipped_at', COALESCE($8::jsonb->'shipped_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'shipped_at' END),
+   'delivered_at', COALESCE($8::jsonb->'delivered_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'delivered_at' END)
+ )) END
 FROM authorized c
 WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
  AND o.order_id=$6 AND o.shipment_id=$7`,
@@ -146,6 +161,25 @@ WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
 		return OrderRecord{}, err
 	}
 	if tag.RowsAffected() != 1 {
+		// Only classify a shipment replacement within the same still-authorized
+		// seller mapping. A revoked or changed mapping must remain an auth error.
+		var replaced bool
+		err = s.db.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM app.meli_orders o
+ JOIN app.meli_store_connections c ON c.id=o.store_id
+ WHERE c.id=$1::uuid AND c.owner_user_id=$2::uuid
+   AND c.status='connected' AND c.marketplaces_status='verified' AND c.seller_id=$8
+   AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5 AND o.order_id=$6
+   AND o.shipment_id IS DISTINCT FROM $7::text
+   AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.marketplaces) AS m(value)
+     WHERE m.value->>'site_id'=$3 AND m.value->>'logistic_type'=$4 AND m.value->>'user_id'=$5)
+)`, store, owner, scope.Site, scope.Logistic, childID, orderID, order.ShipmentID, auth.SellerID).Scan(&replaced)
+		if err != nil {
+			return OrderRecord{}, err
+		}
+		if replaced {
+			return OrderRecord{}, ErrOrderShipmentChanged
+		}
 		return OrderRecord{}, ErrOrderAuthorizationChanged
 	}
 	result, err := s.GetOrder(ctx, owner, store, scope, orderID)
@@ -158,18 +192,6 @@ WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
 	}
 	if details != nil {
 		result.Shipment.Details = details
-		for _, event := range details.History {
-			// A timestamp for a substatus update cannot date the status transition.
-			if event.Substatus != "" {
-				continue
-			}
-			switch {
-			case event.Status == "shipped" && result.Shipment.ShippedAt == nil:
-				result.Shipment.ShippedAt = &event.Date
-			case event.Status == "delivered" && result.Shipment.DeliveredAt == nil:
-				result.Shipment.DeliveredAt = &event.Date
-			}
-		}
 	}
 	return result, nil
 }

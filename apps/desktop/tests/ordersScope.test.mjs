@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
-  shouldApplyOrderRefresh, shouldStopSLABatch, shipmentStatusLabel } from "/src/orders.ts";
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -305,11 +305,11 @@ try {
   assert(shouldApplyOrderRefresh("102", "102", false), "same order refresh must apply");
   assert(!shouldApplyOrderRefresh("102", "103", false), "stale A must not replace selected B");
   assert(!shouldApplyOrderRefresh("102", "102", true), "aborted request must not apply");
-  assert(shouldStopSLABatch(502, "order_platform_unavailable"), "upstream 502 must stop");
-  assert(shouldStopSLABatch(504, "order_timeout"), "timeout must stop");
-  assert(shouldStopSLABatch(429, "order_rate_limited"), "429 must stop");
-  assert(shouldStopSLABatch(0, ""), "network loss must stop");
-  assert(!shouldStopSLABatch(404, "order_sla_no_shipment"), "one no-shipment row may be skipped");
+  assert(shouldStopLogisticsBatch(502, "order_platform_unavailable"), "upstream 502 must stop");
+  assert(shouldStopLogisticsBatch(504, "order_timeout"), "timeout must stop");
+  assert(shouldStopLogisticsBatch(429, "order_rate_limited"), "429 must stop");
+  assert(shouldStopLogisticsBatch(0, ""), "network loss must stop");
+  assert(!shouldStopLogisticsBatch(404, "order_sla_no_shipment"), "one no-shipment row may be skipped");
   const now = Date.UTC(2026, 10, 21, 0, 0);
   const sample = (hours, status = "on_time") => ({
     ...order, status: "paid", dispatch_sla_status: status,

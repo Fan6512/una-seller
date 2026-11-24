@@ -185,8 +185,16 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 	}
 	before = calls.Load()
 	cached, err := s.GetOrder(ctx, owner, store, scope, "10001")
-	if err != nil || cached.Shipment == nil || cached.Shipment.Details != nil || cached.Shipment.DeliveredAt != nil || calls.Load() != before {
-		t.Fatalf("detail history leaked into the cached read: %+v, %v", cached.Shipment, err)
+	if err != nil || cached.Shipment == nil || cached.Shipment.Details != nil || cached.Shipment.DeliveredAt == nil ||
+		!cached.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) || calls.Load() != before {
+		t.Fatalf("cached read lost verified dates or exposed detail history: %+v, %v", cached.Shipment, err)
+	}
+	// Summary refreshes must preserve verified dates when the platform omits them.
+	reply.Store(&response{code: http.StatusOK, body: delivered})
+	result, err = s.RefreshOrderShipment(ctx, owner, store, scope, "10001", false)
+	if err != nil || result.Shipment == nil || result.Shipment.Details != nil ||
+		result.Shipment.DeliveredAt == nil || !result.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) {
+		t.Fatalf("summary refresh lost the verified delivery date: %+v, %v", result.Shipment, err)
 	}
 	cached, err = s.GetOrder(ctx, otherOwner, otherStore, scope, "10001")
 	if err != nil || cached.ShipmentID != "987651236" || cached.Shipment != nil {
@@ -197,8 +205,14 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 		carrierBody: `{"url":"javascript:alert(1)"}`})
 	result, err = s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true)
 	if err != nil || result.Shipment == nil || result.Shipment.Details == nil ||
-		result.Shipment.Details.TrackingURL != "" || result.Shipment.Details.History != nil || result.Shipment.DeliveredAt != nil {
+		result.Shipment.Details.TrackingURL != "" || result.Shipment.Details.History != nil ||
+		result.Shipment.DeliveredAt == nil || !result.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) {
 		t.Fatalf("missing history or unsafe tracking URL accepted: %+v, %v", result.Shipment, err)
+	}
+	// With no prior confirmed delivery date, a substatus alone cannot create one.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET shipment_snapshot=shipment_snapshot-'delivered_at'
+ WHERE store_id=$1::uuid AND order_id='10001'`, store); err != nil {
+		t.Fatal(err)
 	}
 	reply.Store(&response{code: http.StatusOK, body: delivered, carrierCode: http.StatusNotFound,
 		historyBody: `[{"status":"delivered","substatus":"updated","date":"2026-11-19T09:30:00-03:00"}]`})
@@ -238,8 +252,28 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 			}
 		}})
 	_, err = s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true)
-	if !errors.Is(err, ErrOrderAuthorizationChanged) {
-		t.Fatalf("replaced shipment accepted late update: %v", err)
+	if !errors.Is(err, ErrOrderShipmentChanged) {
+		t.Fatalf("replaced shipment must return shipment conflict: %v", err)
+	}
+	// A changed authorization must not be misclassified as a shipment conflict.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET shipment_id='987651234' WHERE store_id=$1::uuid AND order_id='10001'`, store); err != nil {
+		t.Fatal(err)
+	}
+	reply.Store(&response{code: http.StatusOK, body: delivered, carrierCode: http.StatusNotFound, historyBody: "[]",
+		beforeHistory: func() {
+			if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces_status='unverified'
+ WHERE id=$1::uuid`, store); err != nil {
+				t.Error(err)
+			}
+		}})
+	if _, err := s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true); !errors.Is(err, ErrOrderAuthorizationChanged) {
+		t.Fatalf("revoked mapping must return authorization conflict: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces_status='verified' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET shipment_id='987651235' WHERE store_id=$1::uuid AND order_id='10001'`, store); err != nil {
+		t.Fatal(err)
 	}
 	got, err := s.GetOrder(ctx, owner, store, scope, "10001")
 	if err != nil || got.ShipmentID != "987651235" || got.Shipment != nil {

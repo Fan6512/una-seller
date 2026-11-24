@@ -3,7 +3,7 @@ import { cachedStores, listStores, watchStoreList, StoreRequestError, type Store
 import {
   getOrder, getOrderSyncState, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderMoney,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderLogistics, resetOrderCursor, skipOrder, syncOrders,
-  shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, hasProcurement, orderVariationText, shipmentStatusLabel,
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, displayOrderStatus, hasProcurement, orderVariationText, shipmentStatusLabel,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
@@ -545,7 +545,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     });
     const label = isSLA ? "官方发货截止时间" : "平台物流";
     if (!snapshot.length) {
-      setNotice("本页暂无可用于查询" + label + "的 Shipment ID。");
+      setNotice(page.items.some(item => orderRecordScope(item, scope)) || scope
+        ? "本页暂无可用于查询" + label + "的 Shipment ID。"
+        : "请先选择已验证的店铺、站点和物流类型，或使用跨店铺订单搜索。");
       return;
     }
     const controller = new AbortController();
@@ -579,7 +581,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           const status = error instanceof StoreRequestError ? error.status : 0;
           const code = error instanceof StoreRequestError ? error.code : "";
           // An upstream 403 may be translated into a sanitized 502 response.
-          if (shouldStopSLABatch(status, code)) {
+          if (shouldStopLogisticsBatch(status, code)) {
             stoppedReason = displayError(error);
             break;
           }
@@ -990,13 +992,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       ? <a href={detail.shipment.details.tracking_url} target="_blank" rel="noopener noreferrer">打开官方查询链接</a>
                       : "平台未提供") : "尚未读取"}</dd>
                   <dt>官方实际发货</dt><dd>{detail.shipment?.shipped_at
-                    ? <time dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
+                    ? <time title="本机时区" dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
                     : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
                   <dt>买家签收时间</dt><dd>{detail.shipment?.delivered_at
-                    ? <time dateTime={detail.shipment.delivered_at}>{orderDate(detail.shipment.delivered_at)}</time>
+                    ? <time title="本机时区" dateTime={detail.shipment.delivered_at}>{orderDate(detail.shipment.delivered_at)}</time>
                     : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
-                  <dt>物流最近核验</dt><dd>{detail.shipment ? orderDate(detail.shipment.checked_at) : "尚未读取"}</dd>
-                  {detail.shipment?.last_updated && <><dt>平台物流更新时间</dt><dd>{orderDate(detail.shipment.last_updated)}</dd></>}
+                  <dt title="本机时区">物流最近核验</dt><dd>{detail.shipment ? orderDate(detail.shipment.checked_at) : "尚未读取"}</dd>
+                  {detail.shipment?.last_updated && <><dt title="本机时区">平台物流更新时间</dt><dd>{orderDate(detail.shipment.last_updated)}</dd></>}
                   <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).date}
                     {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint &&
                       <small> · {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint}</small>}</dd>
@@ -1010,7 +1012,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 {detail.shipment.details.history?.length ? <ol className="orders-fulfillment-steps">
                   {detail.shipment.details.history.map((event, index) => <li key={index}>
                     <b>{shipmentStatusLabel(event)}</b>
-                    <small><time dateTime={event.date}>{orderDate(event.date)}</time> · {event.status}
+                    <small><time title="本机时区" dateTime={event.date}>{orderDate(event.date)}</time> · {event.status}
                       {event.substatus && " / " + event.substatus}</small>
                   </li>)}
                 </ol> : <p className="orders-muted">{detail.shipment.details.history

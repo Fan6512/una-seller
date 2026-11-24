@@ -374,6 +374,53 @@ func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 	}
 }
 
+func TestOrderSyncInvalidatesReplacedShipmentSnapshot(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET access_token_expires_at=now()+interval '1 hour' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,shipment_snapshot)
+ VALUES ($1::uuid,'MLB','remote','987654','101','paid','USD',12.34,'2026-11-01T00:00:00Z','2026-11-01T00:01:00Z','801',
+ '{"shipment_id":"801","status":"delivered","checked_at":"2026-11-01T00:02:00Z"}'),
+ ($1::uuid,'MLB','remote','987654','102','paid','USD',12.34,'2026-11-01T00:00:00Z','2026-11-01T00:01:00Z','801',
+ '{"shipment_id":"801","status":"delivered","checked_at":"2026-11-01T00:02:00Z"}')`, store); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/marketplace/orders/search":
+			fmt.Fprint(w, `{"results":[{"orders":[{"id":101},{"id":102}]}],"paging":{"total":1}}`)
+		case "/marketplace/orders/101":
+			fmt.Fprint(w, strings.TrimSuffix(orderTestDetail("101", "987654", "MLB"), "}")+`,"shipping":{"id":801}}`)
+		case "/marketplace/orders/102":
+			fmt.Fprint(w, strings.TrimSuffix(orderTestDetail("102", "987654", "MLB"), "}")+`,"shipping":{"id":802}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	s.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	if result, err := s.SyncOrders(ctx, owner, store, scope); err != nil || result.Saved != 2 {
+		t.Fatalf("sync=%+v err=%v", result, err)
+	}
+	for _, tc := range []struct {
+		id, shipmentID string
+		cleared        bool
+	}{{"101", "801", false}, {"102", "802", true}} {
+		var shipmentID string
+		var cleared bool
+		err := db.QueryRow(ctx, `SELECT shipment_id,shipment_snapshot IS NULL FROM app.meli_orders
+ WHERE store_id=$1::uuid AND order_id=$2`, store, tc.id).Scan(&shipmentID, &cleared)
+		if err != nil || shipmentID != tc.shipmentID || cleared != tc.cleared {
+			t.Fatalf("order %s shipment=%s cleared=%t err=%v", tc.id, shipmentID, cleared, err)
+		}
+	}
+}
+
 func TestOrderPostgresResetsCursorForNewSeller(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
