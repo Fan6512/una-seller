@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { recordCacheHit } from "./DevelopmentDiagnostics";
-import { cachedStores, checkStoreConnection, disconnectStore, ensureStoreConnection, listStores, startStoreAuthorization, readableStoreError, type StoreConnection } from "./stores";
+import { cachedStores, checkStoreConnection, disconnectStore, ensureStoreConnection, listStores, probeStorePublicationMode, startStoreAuthorization, readableStoreError, type StoreConnection } from "./stores";
 
 const statusText: Record<StoreConnection["status"], string> = {
   connected: "已连接",
@@ -8,6 +8,13 @@ const statusText: Record<StoreConnection["status"], string> = {
   reauth_required: "需要重新授权",
   refresh_unknown: "续签状态待确认",
   disconnected: "已断开",
+};
+
+const publicationModeNames: Record<string, string> = {
+  fully_managed: "Fully Managed 全托管（C0 已识别）",
+  standard_up: "Standard UP（C0 已识别）",
+  legacy_candidate: "Legacy 旧版候选（需继续确认）",
+  undetermined: "尚未确认",
 };
 
 export default function StoresPage({ onConnectionChecked }: { onConnectionChecked?: (storeId: string) => void }) {
@@ -110,6 +117,24 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
     }
   }
 
+  async function probeMode(item: StoreConnection) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await probeStorePublicationMode(item.id);
+      const fresh = await listStores(true);
+      setItems(fresh);
+      setNotice("完成 CBT C0 只读取证："
+        + (publicationModeNames[result.publication_mode] ?? "尚未确认")
+        + "。仅识别账号刊登模型，官方图片上传和真实发布权限仍需单独验收。");
+    } catch (e) {
+      setError(readableStoreError(e, "CBT C0 只读取证失败；店铺模式未改变"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function disconnect(item: StoreConnection) {
     if (!window.confirm("确定断开店铺“" + (item.nickname || item.seller_id) + "”？之后需重新授权才能访问该店铺数据。")) return;
     setBusy(true);
@@ -169,14 +194,21 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
                     : "已核实站点：" + item.marketplaces.map((site) => site.site_id + "（子账号 " + site.user_id + " · " + site.logistic_type + "）").join("、")
                   : "站点映射未验证：不开放站点刊登或订单操作。"}
               </p>
-              <p className="store-note">授权成功不代表商品刊登/订单接口已经实施；站点具体写入权限仍需验证。</p>
+              <p className="store-note">
+                CBT 刊登模式：{publicationModeNames[item.publication_mode ?? "undetermined"] ?? "尚未确认"}
+                {item.publication_mode_checked_at ? " · 最近取证：" + new Date(item.publication_mode_checked_at).toLocaleString() : " · 尚未完成真实 C0 取证"}
+              </p>
+              <p className="store-note">C0 是官方只读账号模式识别，不代表具备商品创建或图片上传权限；软件不会修改官方店铺经营模式。</p>
               <div className="store-actions">
                 {(item.status === "reauth_required" || item.status === "refresh_unknown" || item.status === "disconnected") &&
                   <button type="button" className="refresh-button" disabled={busy} onClick={() => void authorize()}>重新授权</button>}
                 {item.status !== "disconnected" && (
                   <button type="button" className="refresh-button" disabled={busy} onClick={() => void check(item)}>验证连接</button>
                 )}
-                {item.status !== "disconnected" && <button type="button" className="refresh-button" disabled={busy} onClick={() => void disconnect(item)}>断开连接</button>}
+                {item.status !== "disconnected" && (
+                  <button type="button" className="refresh-button" disabled={busy} onClick={() => void probeMode(item)}>核实刊登模式（只读）</button>
+                )}
+                {item.status !== "disconnected" && <button type="button" className="refresh-button" disabled={busy} onClick={() => void disconnect(item)}>断开连接</button>
               </div>
             </article>
           ))}

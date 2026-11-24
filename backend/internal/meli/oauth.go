@@ -63,6 +63,9 @@ type Store struct {
 	UpdatedAt      time.Time     `json:"updated_at"`
 	Marketplaces   []Marketplace `json:"marketplaces"`
 	MarketsStatus  string        `json:"marketplaces_status"`
+	PublicationMode string `json:"publication_mode"`
+	PublicationModeCheckedAt *time.Time `json:"publication_mode_checked_at,omitempty"`
+	PublicationEvidence *PublicationEvidence `json:"publication_evidence,omitempty"`
 }
 
 func NewService(db *pgxpool.Pool, cfg Config) (*Service, error) {
@@ -313,13 +316,20 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 	if err != nil {
 		return Store{}, err
 	}
+	if err := s.clearC0Evidence(ctx, owner, out.ID); err != nil {
+		return Store{}, err
+	}
+	out.PublicationMode = publicationUnverified
 	return out, nil
 }
 
 func (s *Service) List(ctx context.Context, owner string) ([]Store, error) {
-	rows, err := s.db.Query(ctx, `SELECT id::text,seller_id,COALESCE(nickname,''),status,access_token_expires_at,
- updated_at,marketplaces_status,marketplaces
- FROM app.meli_store_connections WHERE owner_user_id=$1::uuid ORDER BY updated_at DESC,id`, owner)
+	rows, err := s.db.Query(ctx, `SELECT c.id::text,c.seller_id,COALESCE(c.nickname,''),c.status,c.access_token_expires_at,
+ c.updated_at,c.marketplaces_status,c.marketplaces,
+ COALESCE(p.publication_mode,'undetermined'),p.checked_at,p.evidence
+ FROM app.meli_store_connections c
+ LEFT JOIN app.meli_cbt_c0_evidence p ON p.store_id=c.id AND p.owner_user_id=c.owner_user_id
+ WHERE c.owner_user_id=$1::uuid ORDER BY c.updated_at DESC,c.id`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -327,13 +337,26 @@ func (s *Service) List(ctx context.Context, owner string) ([]Store, error) {
 	stores := make([]Store, 0)
 	for rows.Next() {
 		var st Store
-		var marketJSON []byte
+		var marketJSON, proofJSON []byte
 		if err = rows.Scan(&st.ID, &st.SellerID, &st.Nickname, &st.Status,
-			&st.TokenExpiresAt, &st.UpdatedAt, &st.MarketsStatus, &marketJSON); err != nil {
+			&st.TokenExpiresAt, &st.UpdatedAt, &st.MarketsStatus, &marketJSON,
+			&st.PublicationMode, &st.PublicationModeCheckedAt, &proofJSON); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(marketJSON, &st.Marketplaces); err != nil {
 			return nil, err
+		}
+		if len(proofJSON) != 0 {
+			var proof PublicationEvidence
+			if err = json.Unmarshal(proofJSON, &proof); err != nil {
+				return nil, err
+			}
+			st.PublicationEvidence = &proof
+		}
+		if st.Status == "disconnected" {
+			st.PublicationMode = publicationUnverified
+			st.PublicationModeCheckedAt = nil
+			st.PublicationEvidence = nil
 		}
 		if st.Status == "connected" && st.TokenExpiresAt != nil && !st.TokenExpiresAt.After(time.Now()) {
 			st.Status = "token_expired"

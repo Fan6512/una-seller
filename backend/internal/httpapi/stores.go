@@ -136,6 +136,34 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if storeID, matched := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/publication-mode/probe"); matched && storeID != "" && !strings.Contains(storeID, "/") {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		owner, ok := a.requireOwner(w, r)
+		if !ok { return }
+		evidence, err := a.service.ProbePublicationMode(r.Context(), owner, storeID)
+		switch {
+		case errors.Is(err, meli.ErrStoreNotFound):
+			writeError(w, http.StatusNotFound, "store not found")
+		case errors.Is(err, meli.ErrSiteNotAuthorized):
+			writeError(w, http.StatusConflict, "CBT sites are not yet verified")
+		case errors.Is(err, meli.ErrReauthorizationRequired):
+			writeError(w, http.StatusForbidden, "store needs reauthorization")
+		case errors.Is(err, meli.ErrRefreshUnknown):
+			writeError(w, http.StatusConflict, "OAuth refresh outcome unknown")
+		case errors.Is(err, meli.ErrRefreshBusy):
+			writeError(w, http.StatusServiceUnavailable, "store token refresh in progress")
+		case err != nil:
+			writeError(w, http.StatusBadGateway, "CBT account probe unavailable; no mode was changed")
+		default:
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, evidence)
+		}
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
