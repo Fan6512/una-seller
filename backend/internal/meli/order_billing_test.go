@@ -85,6 +85,29 @@ func TestBillingGroupsRetainNativeCurrenciesAndDuplicateIdentity(t *testing.T) {
 	}
 }
 
+func TestBillingShipmentCostsFailClosedOnMissingCurrencyOrAmbiguousSeller(t *testing.T) {
+	counterpartyCosts := `{"currency_id":"USD","senders":[{"user_id":111,"cost":3.38},{"user_id":222,"cost":0}],
+		"receiver":{"cost":10,"cost_details":[{"sender_id":222,"amount":2.28},{"sender_id":111,"amount":7.72}]}}`
+	buyer, seller := parseBillingShipping([]byte(counterpartyCosts), "111")
+	if buyer != "7.72" || seller != "3.38" {
+		t.Fatalf("billing shipping selected wrong seller: buyer=%s seller=%s", buyer, seller)
+	}
+	for _, raw := range []string{
+		strings.Replace(counterpartyCosts, "USD", "BRL", 1),
+		strings.Replace(counterpartyCosts, "111", "222", 1),
+		strings.Replace(counterpartyCosts, "222", "111", 1),
+		strings.Replace(counterpartyCosts, `"cost":3.38`, `"different":3.38`, 1),
+	} {
+		if buyer, seller = parseBillingShipping([]byte(raw), "111"); buyer != "" || seller != "" {
+			t.Fatalf("unconfirmed shipping costs escaped: buyer=%s seller=%s", buyer, seller)
+		}
+	}
+	zero := []byte(`{"currency_id":"USD","senders":[{"user_id":111,"cost":0}],"receiver":{"cost":0}}`)
+	if buyer, seller = parseBillingShipping(zero, "111"); buyer != "0" || seller != "0" {
+		t.Fatalf("explicit zero shipping costs lost: buyer=%s seller=%s", buyer, seller)
+	}
+}
+
 func TestOfficialBillingChecksOwnerAndMappingBeforeAndAfterRead(t *testing.T) {
 	service, db, owner, store := setupRefreshTest(t)
 	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
@@ -93,14 +116,27 @@ func TestOfficialBillingChecksOwnerAndMappingBeforeAndAfterRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
- (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,order_items)
- VALUES ($1::uuid,'MLB','remote','987654','10001','paid','USD',20,now(),now(),'[]')`, store); err != nil {
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,order_items)
+ VALUES ($1::uuid,'MLB','remote','987654','10001','paid','USD',20,now(),now(),'80001','[]')`, store); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
 	var revoke atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		if r.Method == http.MethodGet && r.URL.Path == "/marketplace/shipments/80001/costs" {
+			if r.Header.Get("Authorization") != "Bearer synthetic_old_access" {
+				t.Error("shipping query did not use scoped store credential")
+			}
+			if revoke.Load() {
+				if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces_status='unverified' WHERE id=$1::uuid`, store); err != nil {
+					t.Error(err)
+				}
+			}
+			_, _ = w.Write([]byte(`{"currency_id":"USD","gross_amount":11.09,"senders":[{"user_id":987654,"cost":3.38}],
+			 "receiver":{"user_id":998877,"cost":7.72,"cost_details":[{"sender_id":987654,"amount":7.72}]}}`))
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/billing/integration/group/ML/order/details" ||
 			r.URL.Query().Get("seller_id") != "987654" || r.URL.Query().Get("order_ids") != "10001" ||
 			r.Header.Get("Authorization") != "Bearer synthetic_old_access" {
@@ -108,12 +144,12 @@ func TestOfficialBillingChecksOwnerAndMappingBeforeAndAfterRead(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		if revoke.Load() {
-			if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces_status='unverified' WHERE id=$1::uuid`, store); err != nil {
-				t.Error(err)
-			}
-		}
-		_, _ = w.Write([]byte(`{"results":[{"order_id":10001,"payment_info":[{"status":"approved","money_release_status":"released"}]}]}`))
+		_, _ = w.Write([]byte(`{"results":[{"order_id":10001,"payment_info":[{"status":"approved","money_release_status":"pending"}],"details":[
+		  {"charge_info":{"detail_id":91,"detail_amount":11.10,"detail_type":"CHARGE","detail_sub_type":"CCSI","debited_from_operation":"YES"},
+		   "currency_info":{"currency_id":"USD"},"shipping_info":{"shipping_id":80001}},
+		  {"charge_info":{"detail_id":92,"detail_amount":-1.12,"detail_type":"BONUS","detail_sub_type":"CCSI","charge_bonified_id":91},
+		   "currency_info":{"currency_id":"USD"},"shipping_info":{"shipping_id":80001}}
+		]}]}`))
 	}))
 	defer server.Close()
 	service.apiURL = server.URL
@@ -127,8 +163,18 @@ func TestOfficialBillingChecksOwnerAndMappingBeforeAndAfterRead(t *testing.T) {
 		t.Fatalf("foreign order reached platform: %v", err)
 	}
 	page, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
-	if err != nil || len(page.Items) != 1 || page.NetIncomeUSD != nil {
+	if err != nil || len(page.Items) != 1 || page.NetIncomeUSD != nil || calls.Load() != 2 {
 		t.Fatalf("unexpected billing preview: %+v %v", page, err)
+	}
+	item := page.Items[0]
+	if item.Shipping == nil || item.Shipping.BuyerCostUSD != "7.72" || item.Shipping.SellerChargeUSD != "11.10" ||
+		item.Shipping.SellerNetCostUSD != "3.38" || item.Shipping.SellerChargeDetailID != "91" ||
+		len(item.Charges) != 2 || item.Charges[1].ReversalOf != "91" || item.Charges[1].Amount != "-1.12" {
+		t.Fatalf("source amounts or reversal were misclassified: %+v", item)
+	}
+	encoded, _ := json.Marshal(page)
+	if strings.Contains(string(encoded), "998877") {
+		t.Fatal("shipping receiver identity escaped sanitization")
 	}
 	revoke.Store(true)
 	page, err = service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})

@@ -41,7 +41,7 @@ const imageRequests = [];
 let exerciseImages = false;
 const order = { order_id: "102", status: "paid", order_items: [
     { item_id: "MLB101", title: "Original title without translation", quantity: 1, unit_price: "12", currency_id: "USD" },
-  ], total_amount: "12", currency_id: "USD",
+  ], total_amount: "67.23", currency_id: "USD", sales_amount_usd: "12.00",
   shipment_id: "87123456" };
 let slaFetchCount = 0;
 let billingFetches = 0;
@@ -104,9 +104,18 @@ window.fetch = (path, options) => {
     assert(q.get("site") === "MLB" && q.get("logistic_type") === "remote", "billing used the wrong scope");
     assert(JSON.parse(options.body).order_ids.join(",") === "102", "billing requested the wrong order");
     return Promise.resolve(Response.json({ net_income_usd: null, items: [{ order_id: "102", available: true,
-      payments: [{ status: "approved", money_release_status: "released" }], taxes: [],
-      charges: [{ detail_id: "1", type: "CHARGE", amount: "1.25", currency: "BRL" }],
-      charge_groups: [{ type: "CHARGE", currency: "BRL", original_total: "1.25" }],
+      payments: [{ status: "approved", money_release_status: "pending" }], taxes: [],
+      charges: [
+        { detail_id: "91", type: "CHARGE", subtype: "CCSI", amount: "11.10", currency: "USD" },
+        { detail_id: "92", type: "BONUS", subtype: "CCSI", amount: "-1.12", currency: "USD", reversal_of: "91" },
+        { detail_id: "93", type: "CHARGE", amount: "1.25", currency: "BRL" },
+      ],
+      shipping: { buyer_cost_usd: "7.72", seller_charge_usd: "11.10", seller_net_cost_usd: "3.38",
+        seller_charge_detail_id: "91" },
+      charge_groups: [
+        { type: "CHARGE", subtype: "CCSI", currency: "USD", original_total: "11.10" },
+        { type: "CHARGE", currency: "BRL", original_total: "1.25" },
+      ],
     }] }));
   }
   if (pathname.endsWith("/orders/102/refresh")) {
@@ -435,9 +444,18 @@ try {
   const profit = () => document.querySelector('section[aria-label="订单账单与利润"]');
   assert(billingFetches === 0 && profit()?.textContent.includes("待核账"), "billing ran automatically or invented net proceeds");
   flushSync(() => profit().querySelector("button").click());
-  await waitFor(() => billingFetches === 1 && profit()?.textContent.includes("BRL") &&
-    profit()?.textContent.includes("1.25") && profit()?.textContent.includes("待核账"),
-    "billing must show native fiscal amounts and keep net proceeds pending");
+  await waitFor(() => billingFetches === 1 && profit()?.textContent.includes("-USD 3.38") &&
+    profit()?.textContent.includes("+USD 7.72") && profit()?.textContent.includes("-USD 11.10") &&
+    profit()?.textContent.includes("待释放，待核账"), "billing must show scoped shipping amounts and keep net proceeds pending");
+  assert(profit().textContent.includes("USD 12.00") && profit().textContent.includes("-USD 1.12") &&
+    profit().textContent.match(/11\.10/g)?.length === 1 &&
+    !["67.23", "1.25", "7.90"].some(amount => profit().textContent.includes(amount)),
+    "wrong sale, currency, duplicate shipping charge or unverified net was displayed");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => profit()?.textContent.includes("-USD 3.38"),
+    "reopening the same scoped detail did not reuse the recent billing snapshot");
+  assert(billingFetches === 1, "reopening detail made another official Billing request");
 
   // Issue #53: numeric Order ID crosses sites; title searches respect selected site.
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());

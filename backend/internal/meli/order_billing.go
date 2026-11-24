@@ -27,6 +27,7 @@ type BillingCharge struct {
 	Description          string `json:"description,omitempty"`
 	ReversalOf           string `json:"reversal_of,omitempty"`
 	Status               string `json:"status,omitempty"`
+	ShipmentID           string `json:"shipment_id,omitempty"`
 }
 type BillingChargeGroup struct {
 	Currency      string `json:"currency"`
@@ -45,6 +46,13 @@ type BillingTax struct {
 	OriginalUSD string `json:"original_usd,omitempty"`
 	RefundedUSD string `json:"refunded_usd,omitempty"`
 }
+type BillingShipping struct {
+	BuyerCostUSD         string `json:"buyer_cost_usd,omitempty"`
+	SellerChargeUSD      string `json:"seller_charge_usd,omitempty"`
+	SellerNetCostUSD     string `json:"seller_net_cost_usd,omitempty"`
+	SellerChargeDetailID string `json:"seller_charge_detail_id,omitempty"`
+}
+
 type BillingOrderPreview struct {
 	OrderID        string               `json:"order_id"`
 	Available      bool                 `json:"available"`
@@ -53,6 +61,7 @@ type BillingOrderPreview struct {
 	Charges        []BillingCharge      `json:"charges"`
 	Reconciliation string               `json:"reconciliation"`
 	ChargeGroups   []BillingChargeGroup `json:"charge_groups,omitempty"`
+	Shipping       *BillingShipping     `json:"shipping,omitempty"`
 }
 type BillingPreviewPage struct {
 	Items        []BillingOrderPreview `json:"items"`
@@ -118,6 +127,9 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 					ReversalOf           json.Number `json:"charge_bonified_id"`
 					DebitedFromOperation string      `json:"debited_from_operation"`
 				} `json:"charge_info"`
+				ShippingInfo struct {
+					ID json.Number `json:"shipping_id"`
+				} `json:"shipping_info"`
 				CurrencyInfo struct {
 					CurrencyID string `json:"currency_id"`
 				} `json:"currency_info"`
@@ -166,13 +178,14 @@ func parseBillingPreview(raw []byte, requested []string) (BillingPreviewPage, er
 			amount, err := billingAmount(c.DetailAmount)
 			if err != nil || amount == "" || len(c.DetailType) > 80 || len(c.DetailSubtype) > 80 ||
 				len(line.CurrencyInfo.CurrencyID) > 8 || len(c.DetailID) > 30 || len(c.ReversalOf) > 30 ||
-				len(c.Description) > 160 || len(c.Status) > 40 || len(c.DebitedFromOperation) > 10 {
+				len(c.Description) > 160 || len(c.Status) > 40 || len(c.DebitedFromOperation) > 10 ||
+				(line.ShippingInfo.ID != "" && !orderSLAShipmentID.MatchString(line.ShippingInfo.ID.String())) {
 				return BillingPreviewPage{}, ErrOrderBillingInvalid
 			}
 			charge := BillingCharge{DetailID: c.DetailID.String(), Type: c.DetailType,
 				Subtype: c.DetailSubtype, Amount: amount, Currency: line.CurrencyInfo.CurrencyID,
 				DebitedFromOperation: c.DebitedFromOperation, Description: c.Description,
-				ReversalOf: c.ReversalOf.String(), Status: c.Status}
+				ReversalOf: c.ReversalOf.String(), Status: c.Status, ShipmentID: line.ShippingInfo.ID.String()}
 			if charge.DetailID != "" {
 				if previous, exists := chargeIDs[charge.DetailID]; exists {
 					if previous != charge {
@@ -228,6 +241,66 @@ func groupBillingCharges(charges []BillingCharge) []BillingChargeGroup {
 	return entries
 }
 
+// Shipment cost is scoped to a seller within the Shipment. Its net cost is
+// already reported by the platform. Billing's original debit is a separate fact.
+func parseBillingShipping(raw []byte, child string) (buyer, sellerNet string) {
+	var payload struct {
+		Currency string `json:"currency_id"`
+		Senders  []struct {
+			UserID json.Number `json:"user_id"`
+			Cost   json.Number `json:"cost"`
+		} `json:"senders"`
+		Receiver struct {
+			Cost    json.Number `json:"cost"`
+			Details []struct {
+				SenderID json.Number `json:"sender_id"`
+				Amount   json.Number `json:"amount"`
+			} `json:"cost_details"`
+		} `json:"receiver"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || payload.Currency != "USD" ||
+		len(payload.Senders) > 60 || len(payload.Receiver.Details) > 60 {
+		return "", ""
+	}
+	for _, sender := range payload.Senders {
+		if sender.UserID.String() == child {
+			if sellerNet != "" || !orderAmountPattern.MatchString(sender.Cost.String()) {
+				return "", ""
+			}
+			sellerNet = sender.Cost.String()
+		}
+	}
+	if sellerNet == "" {
+		return "", ""
+	}
+	for _, detail := range payload.Receiver.Details {
+		if detail.SenderID.String() == child {
+			if buyer != "" || !orderAmountPattern.MatchString(detail.Amount.String()) {
+				return "", sellerNet
+			}
+			buyer = detail.Amount.String()
+		}
+	}
+	if buyer == "" && len(payload.Senders) == 1 && len(payload.Receiver.Details) == 0 &&
+		orderAmountPattern.MatchString(payload.Receiver.Cost.String()) {
+		buyer = payload.Receiver.Cost.String()
+	}
+	return buyer, sellerNet
+}
+
+func billingShippingDebit(charges []BillingCharge, shipment string) (amount, detailID string) {
+	for _, charge := range charges {
+		if charge.ShipmentID == shipment && charge.Type == "CHARGE" && charge.Subtype == "CCSI" &&
+			charge.Currency == "USD" && charge.DebitedFromOperation == "YES" && charge.ReversalOf == "" {
+			if detailID != "" || charge.DetailID == "" || !orderAmountPattern.MatchString(charge.Amount) {
+				return "", ""
+			}
+			amount, detailID = charge.Amount, charge.DetailID
+		}
+	}
+	return amount, detailID
+}
+
 // PreviewOrderBilling is an explicitly triggered, read-only batch (max 60).
 // Every order must currently belong to the owner's verified marketplace child.
 func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, scope OrderScope,
@@ -244,18 +317,19 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 	if err != nil {
 		return BillingPreviewPage{}, err
 	}
-	checkScope := func() (bool, error) {
+	checkScope := func() (bool, string, error) {
 		var count int
+		var shipment string
 		err := s.db.QueryRow(ctx, `WITH connection AS (`+orderConnection+`)
- SELECT count(*) FROM app.meli_orders o
+ SELECT count(*), COALESCE(max(o.shipment_id), '') FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  JOIN app.meli_store_connections verified ON verified.id=c.id
  WHERE c.status='connected' AND o.site_id=$3 AND o.logistic_type=$4
  AND o.order_id=ANY($5::text[]) AND c.child_id=$6 AND verified.seller_id=$7`,
-			store, owner, scope.Site, scope.Logistic, ids, child, auth.SellerID).Scan(&count)
-		return count == len(ids), err
+			store, owner, scope.Site, scope.Logistic, ids, child, auth.SellerID).Scan(&count, &shipment)
+		return count == len(ids), shipment, err
 	}
-	scoped, err := checkScope()
+	scoped, shipment, err := checkScope()
 	if err != nil {
 		return BillingPreviewPage{}, err
 	}
@@ -273,18 +347,33 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 	if status != http.StatusOK {
 		return BillingPreviewPage{}, ErrOrderInvalidResponse
 	}
-	scoped, err = checkScope()
+	scoped, currentShipment, err := checkScope()
 	if err != nil {
 		return BillingPreviewPage{}, err
 	}
-	if !scoped {
+	if !scoped || (len(ids) == 1 && currentShipment != shipment) {
 		return BillingPreviewPage{}, ErrOrderAuthorizationChanged
 	}
 	page, err := parseBillingPreview(raw, ids)
 	if err != nil {
 		return BillingPreviewPage{}, ErrOrderInvalidResponse
 	}
+	if len(ids) == 1 && page.Items[0].Available && orderSLAShipmentID.MatchString(shipment) {
+		item := &page.Items[0]
+		shipping := &BillingShipping{}
+		shipping.SellerChargeUSD, shipping.SellerChargeDetailID = billingShippingDebit(item.Charges, shipment)
+		var costs json.RawMessage
+		if code, err := s.orderGET(fetchCtx, auth.AccessToken, "/marketplace/shipments/"+shipment+"/costs", &costs); err == nil && code == http.StatusOK {
+			shipping.BuyerCostUSD, shipping.SellerNetCostUSD = parseBillingShipping(costs, child)
+		}
+		scoped, currentShipment, err := checkScope()
+		if err != nil {
+			return BillingPreviewPage{}, err
+		}
+		if !scoped || currentShipment != shipment {
+			return BillingPreviewPage{}, ErrOrderAuthorizationChanged
+		}
+		item.Shipping = shipping
+	}
 	return page, nil
 }
-
-// No billing data is persisted or classified as final in this preview slice.
