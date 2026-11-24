@@ -82,7 +82,9 @@ test("site title preference defaults safely, persists, survives a failed write, 
   };
   const previous=Object.getOwnPropertyDescriptor(globalThis,"window");
   Object.defineProperty(globalThis,"window",{configurable:true,value:browser});
+  let unsubscribe=()=>{};
   t.after(()=>{
+    unsubscribe();
     if(previous)Object.defineProperty(globalThis,"window",previous);
     else delete globalThis.window;
   });
@@ -90,8 +92,7 @@ test("site title preference defaults safely, persists, survives a failed write, 
   values.set(key,"invalid");
   assert.equal(getSiteTitleMode(),"localized");
   const observed=[];
-  const unsubscribe=subscribeSiteTitleMode(()=>observed.push(getSiteTitleMode()));
-  t.after(unsubscribe);
+  unsubscribe=subscribeSiteTitleMode(()=>observed.push(getSiteTitleMode()));
   setSiteTitleMode("platform_auto");
   assert.equal(values.get(key),"platform_auto");
   assert.deepEqual(observed,["platform_auto"]);
