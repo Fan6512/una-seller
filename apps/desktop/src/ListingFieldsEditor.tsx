@@ -235,7 +235,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     <CategoryAttributesForm category={value.category_id} values={value.category_attributes ?? []}
       onChange={fields => set("category_attributes",fields)} disabled={disabled}/>
 
-    <fieldset className="listing-editor-plain"><legend>采购成本（人民币 CNY）</legend>
+    <fieldset className="listing-editor-plain" aria-label="采购成本">
       <label className="listing-field">采购成本（¥）
         <input value={legacyPurchase ? "" : value.purchase_price} disabled={disabled}
           placeholder={legacyPurchase ? "核实后输入人民币金额" : "人民币金额"}
@@ -255,12 +255,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       </div>
     </fieldset>
 
-    <fieldset><legend>卖点与分类属性</legend>
-      <label className="listing-field">商品卖点（每行一条）
-        <textarea rows={4} disabled={disabled} value={(value.bullet_points??[]).join("\n")}
-          onChange={e=>set("bullet_points",e.target.value.split("\n"))}
-          placeholder="产品特点、适用场景等，仅录入真实信息"/>
-      </label>
+    <fieldset><legend>附加属性</legend>
       {(value.attributes??[]).map((a,i)=><div className="listing-attribute-row" key={i}>
         <input disabled={disabled} aria-label={"属性名称 "+(i+1)} value={a.name} placeholder="属性名称"
           onChange={e=>set("attributes",value.attributes.map((x,j)=>i===j?{...x,name:e.target.value}:x))}/>
@@ -398,6 +393,14 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
             }}>添加链接</button>
         </div>
       </section>}
+    </fieldset>
+    <fieldset className="listing-editor-panel">
+      <legend>商品卖点</legend>
+      <label className="listing-field">每行一条
+        <textarea rows={4} disabled={disabled} value={(value.bullet_points??[]).join("\n")}
+          onChange={e=>set("bullet_points",e.target.value.split("\n"))}
+          placeholder="产品特点、适用场景等，仅录入真实信息"/>
+      </label>
     </fieldset>
   </section>;
 }
