@@ -271,6 +271,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const imageAbort = useRef<AbortController | null>(null);
   const loadedImageView = useRef("");
   const autoImageView = useRef("");
+  const autoImageController = useRef<AbortController | null>(null);
   const imageAttempts = useRef(new Map<string, AbortController>());
   const imageView = JSON.stringify([scope?.storeId, scope?.site, scope?.logistic,
     storeFilter, siteFilter, logisticFilter, activeQuery, statusFilter, purchaseLink, offset, nonce]);
@@ -377,6 +378,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         selectScope("all");
         return;
       }
+      // A state change can empty the last filtered page. Return to the preceding page.
+      if (statusFilter && offset > 0 && !value.items.length) {
+        setOffset(Math.max(0, offset - PAGE_SIZE));
+        return;
+      }
       loadedImageView.current = imageView;
       setPage(value);
     }).catch((error: unknown) => {
@@ -465,6 +471,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           orderRecordKey(fresh, target)
           ? { ...record, ...fresh, shipment: fresh.shipment && { ...fresh.shipment, details: undefined } }
           : record) }));
+      // Requery the server rather than locally dropping a row or losing pagination.
+      if (statusFilter) loadRows();
     } catch (error) {
       if (!controller.signal.aborted) setDetailError(displayError(error));
     } finally {
@@ -505,7 +513,14 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const visibleOrders = page.items;
 
   useLayoutEffect(() => {
-    imageAbort.current?.abort();
+    const interrupted = imageAbort.current;
+    if (interrupted && autoImageController.current === interrupted) {
+      // Only an actively interrupted automatic batch may resume this view.
+      // Completed batches and actual upstream errors retain their stop marker.
+      autoImageView.current = "";
+      autoImageController.current = null;
+    }
+    interrupted?.abort();
     imageAbort.current = null;
     setImageBusy(false);
   }, [imageView, running, logisticsAction, refreshingOrder, installingUpdate]);
@@ -531,6 +546,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
     const controller = new AbortController();
     imageAbort.current = controller;
+    if (!manual) autoImageController.current = controller;
     setImageBusy(true);
     let completed = 0;
     try {
@@ -569,6 +585,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         setNotice("本次尝试补全 " + completed + " 笔订单的主图。剩余缺图可再次点击；不存在可信图片时仍显示暂无图片。");
       }
     } finally {
+      if (autoImageController.current === controller) autoImageController.current = null;
       if (imageAbort.current === controller) {
         imageAbort.current = null;
         setImageBusy(false);
@@ -576,10 +593,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }
   }, [scope, imageView, page.items, running, logisticsAction, refreshingOrder, installingUpdate, loading]);
   useEffect(() => {
-    if (loading || autoImageView.current === imageView || loadedImageView.current !== imageView) return;
+    if (loading || imageBusy || running || logisticsAction || refreshingOrder || installingUpdate ||
+        autoImageView.current === imageView || loadedImageView.current !== imageView) return;
     const timer = window.setTimeout(() => void refreshPageImages(false), 400);
     return () => window.clearTimeout(timer);
-  }, [imageView, loading, refreshPageImages]);
+  }, [imageView, loading, imageBusy, running, logisticsAction, refreshingOrder, installingUpdate, refreshPageImages]);
 
   const selectStatus = (value: string) => {
     setStatusFilter(value);

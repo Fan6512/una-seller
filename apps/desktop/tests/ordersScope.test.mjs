@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
-  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate, officialTrackingURL, orderUSD } from "/src/orders.ts";
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate, officialTrackingURL, orderUSD, orderFulfillmentStatus } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -39,6 +39,10 @@ const purchaseFilters = [];
 const searchRequests = [];
 const imageRequests = [];
 let exerciseImages = false;
+let distinctImageItems = false;
+let pauseOrderRefresh = false;
+const pausedRefreshes = [];
+const statusReads = [];
 const order = { order_id: "102", status: "paid", order_items: [
     { item_id: "MLB101", title: "Original title without translation", quantity: 1, unit_price: "12", currency_id: "USD" },
   ], total_amount: "12", currency_id: "USD",
@@ -98,6 +102,7 @@ window.fetch = (path, options) => {
     return Promise.resolve(Response.json(order));
   }
   if (pathname.endsWith("/orders/102/refresh")) {
+    if (pauseOrderRefresh) return new Promise(resolve => pausedRefreshes.push(resolve));
     order.status = "partially_refunded";
     return Promise.resolve(Response.json(order));
   }
@@ -122,9 +127,14 @@ window.fetch = (path, options) => {
   if (pathname.endsWith("/orders")) {
     const filter = new URL(path, location.href).searchParams.get("purchase") ?? "";
     purchaseFilters.push(filter);
+    const status = searchParams.get("status") ?? "";
+    statusReads.push(status);
     const linked = { ...order, order_id: "103", shipment_id: "",
-      purchase_order_id: "12345678", purchase_cost_cny: "16" };
-    const rows = filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked];
+      purchase_order_id: "12345678", purchase_cost_cny: "16",
+      ...(distinctImageItems ? { order_items: [{ ...order.order_items[0], item_id: "MLB702" }] } : {}) };
+    const rows = (filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked])
+      .filter(row => !status || (status.startsWith("fulfillment_") ?
+        "fulfillment_" + orderFulfillmentStatus(row) === status : row.status === status));
     return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: filter }));
   }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
@@ -367,6 +377,11 @@ try {
     document.querySelector(".orders-shipping-refs")?.textContent.includes("运输中") &&
     document.querySelector(".orders-status")?.textContent.includes("运输中"),
     "main order state must follow current shipment");
+  const stateFilter = label => [...document.querySelectorAll(".orders-tabs button")].find(item => item.textContent === label);
+  flushSync(() => stateFilter("运输中").click());
+  await waitFor(() => statusReads.at(-1) === "fulfillment_in_transit" && document.querySelectorAll(".orders-id").length === 1,
+    "server transport filter did not select the expected order");
+  const transportReads = statusReads.length;
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "real order detail modal did not open after purchase modal closed");
@@ -380,6 +395,9 @@ try {
     document.querySelector(".orders-detail-fields time")?.dateTime === shipmentDetails.shipped_at &&
     document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier"),
     "single-order shipment refresh did not show carrier and dispatch time");
+  await waitFor(() => statusReads.length > transportReads && statusReads.at(-1) === "fulfillment_in_transit" &&
+    document.querySelectorAll(".orders-id").length === 0 && document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
+    "single-order delivery must requery the filtered list without closing details");
   const detailsFields = document.querySelector(".orders-detail-fields");
   assert(detailsFields.textContent.includes("OFFICIAL-TRACK-102") &&
     detailsFields.textContent.includes("物流最近核验") &&
@@ -402,12 +420,15 @@ try {
   const timeline = [...document.querySelectorAll(".orders-detail-block h3")]
     .find(item => item.textContent === "官方物流时间轴");
   assert(timeline?.parentElement.querySelectorAll("time").length === 2 &&
-    !document.querySelector(".orders-shipping-refs").textContent.includes("Fixture official carrier"),
+    !document.querySelector(".orders-shipping-refs")?.textContent.includes("Fixture official carrier"),
     "timeline must be rendered inside the selected detail");
   const beforeReopen = shipmentFetchCount;
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   await waitFor(() => !document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "detail did not close");
+  flushSync(() => stateFilter("全部订单").click());
+  await waitFor(() => statusReads.at(-1) === "" && document.querySelector(".orders-id")?.textContent === "102",
+    "all orders were not restored after leaving the transport filter");
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier") &&
     [...document.querySelectorAll(".orders-detail-block h3")].some(item => item.textContent === "官方物流时间轴"),
@@ -540,6 +561,32 @@ try {
     "same-shop orders for one item did not share the image");
   assert([...document.querySelectorAll(".orders-product-preview img")].every(img => img.src === testingThumbnail) &&
     imageRequests.length === 0, "late image update or repeat item request escaped its scope");
+  // A user operation interrupts automatic images without changing the view.
+  distinctImageItems = true;
+  order.order_items[0] = { ...order.order_items[0], item_id: "MLB701" };
+  flushSync(() => [...document.querySelectorAll(".orders-heading-actions button")].find(btn => btn.textContent === "刷新订单").click());
+  await waitFor(() => imageRequests.length === 1, "new automatic image batch missing");
+  const interrupted = imageRequests.shift();
+  pauseOrderRefresh = true;
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-detail-summary") && !document.querySelector(".orders-detail-refresh").disabled,
+    "order detail not ready for image interruption");
+  flushSync(() => document.querySelector(".orders-detail-refresh").click());
+  await waitFor(() => pausedRefreshes.length === 1 && interrupted.signal.aborted, "user refresh did not cancel images");
+  interrupted.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: "https://http2.mlstatic.com/interrupted.jpg" }] }));
+  pausedRefreshes.shift()(Response.json(order));
+  pauseOrderRefresh = false;
+  await waitFor(() => imageRequests.length === 1, "automatic images did not resume on the same view");
+  const resumed = imageRequests.shift();
+  resumed.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: testingThumbnail }] }));
+  await waitFor(() => imageRequests.length === 1, "unattempted image was not processed after interruption");
+  const remaining = imageRequests.shift();
+  assert(remaining.path.includes("/orders/103/image-refresh"), "remaining distinct item was not requested");
+  remaining.resolve(Response.json({ error: "order_rate_limited" }, { status: 429 }));
+  await waitFor(() => [...document.querySelectorAll(".orders-heading-actions button")].some(btn => btn.textContent === "补全本页主图"),
+    "image batch did not stop after rate limit");
+  await new Promise(resolve => setTimeout(resolve, 500));
+  assert(imageRequests.length === 0, "rate-limited automatic batch retried itself");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";
