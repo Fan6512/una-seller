@@ -77,6 +77,23 @@ func (s *Service) ProbePublicationMode(ctx context.Context, owner, storeID strin
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
+	return s.probeAuthorizedPublicationMode(ctx, owner, storeID, auth)
+}
+
+// Called once after each successful OAuth grant, using exactly that grant's
+// credentials and mapping. No background job or read-triggered retry.
+func (s *Service) probeAfterAuthorization(ctx context.Context, owner, storeID string, auth AuthorizedStore) (PublicationEvidence, error) {
+	if !auth.Verified || len(auth.Markets) == 0 {
+		return PublicationEvidence{}, ErrSiteNotAuthorized
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	return s.probeAuthorizedPublicationMode(ctx, owner, storeID, auth)
+}
+
+func (s *Service) probeAuthorizedPublicationMode(ctx context.Context, owner, storeID string, auth AuthorizedStore) (PublicationEvidence, error) {
+	// Lock only at persistence, never during platform calls.
+	startedAt := time.Now().UTC()
 	evidence, err := s.collectPublicationEvidence(ctx, auth)
 	if err != nil {
 		return PublicationEvidence{}, err
@@ -85,15 +102,21 @@ func (s *Service) ProbePublicationMode(ctx context.Context, owner, storeID strin
 	if err != nil {
 		return PublicationEvidence{}, err
 	}
-	command, err := s.db.Exec(ctx, `INSERT INTO app.meli_cbt_c0_evidence
-   (store_id,owner_user_id,publication_mode,evidence,checked_at)
- SELECT id,owner_user_id,$4,$5::jsonb,$6
- FROM app.meli_store_connections
+	command, err := s.db.Exec(ctx, `WITH authorized AS (
+ SELECT id,owner_user_id FROM app.meli_store_connections
  WHERE id=$1::uuid AND owner_user_id=$2::uuid AND seller_id=$3 AND status='connected'
+ AND access_token_ciphertext=$7 AND marketplaces_status='verified' AND marketplaces=$8::jsonb
+ FOR UPDATE
+ )
+ INSERT INTO app.meli_cbt_c0_evidence
+   (store_id,owner_user_id,publication_mode,evidence,checked_at)
+ SELECT id,owner_user_id,$4,$5::jsonb,$6 FROM authorized
  ON CONFLICT (store_id) DO UPDATE SET
  publication_mode=EXCLUDED.publication_mode,evidence=EXCLUDED.evidence,checked_at=EXCLUDED.checked_at
- WHERE app.meli_cbt_c0_evidence.owner_user_id=EXCLUDED.owner_user_id`,
-		storeID, owner, auth.SellerID, evidence.Mode, string(packed), evidence.CheckedAt)
+ WHERE app.meli_cbt_c0_evidence.owner_user_id=EXCLUDED.owner_user_id
+ AND app.meli_cbt_c0_evidence.checked_at<=$9`,
+		storeID, owner, auth.SellerID, evidence.Mode, string(packed), evidence.CheckedAt,
+		auth.accessCipher, string(auth.marketsJSON), startedAt)
 	if err != nil {
 		return PublicationEvidence{}, errors.New("could not save CBT account evidence")
 	}

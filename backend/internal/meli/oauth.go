@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -333,6 +334,22 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 		return Store{}, err
 	}
 	out.PublicationMode = publicationUnverified
+	// The grant is already committed. Optional C0 failure must not make
+	// authorization appear to have failed or cause code replay.
+	if out.MarketsStatus == "verified" && len(out.Marketplaces) > 0 {
+		proof, probeErr := s.probeAfterAuthorization(ctx, owner, out.ID, AuthorizedStore{
+			SellerID: sid, AccessToken: token.AccessToken,
+			Markets: out.Marketplaces, Verified: true,
+			accessCipher: access, marketsJSON: marketplacesJSON,
+		})
+		if probeErr == nil {
+			out.PublicationMode = proof.Mode
+			out.PublicationModeCheckedAt = &proof.CheckedAt
+			out.PublicationEvidence = &proof
+		} else {
+			log.Print("CBT C0 automatic authorization probe did not complete; manual check remains available")
+		}
+	}
 	return out, nil
 }
 
@@ -366,7 +383,7 @@ func (s *Service) List(ctx context.Context, owner string) ([]Store, error) {
 			}
 			st.PublicationEvidence = &proof
 		}
-		if st.Status == "disconnected" {
+		if st.Status != "connected" {
 			st.PublicationMode = publicationUnverified
 			st.PublicationModeCheckedAt = nil
 			st.PublicationEvidence = nil
