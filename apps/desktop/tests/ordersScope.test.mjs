@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
-  shouldApplyOrderRefresh, shouldStopSLABatch } from "/src/orders.ts";
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate, officialTrackingURL, orderUSD } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -37,13 +37,60 @@ const deferred = [];
 const purchaseRequests = [];
 const purchaseFilters = [];
 const searchRequests = [];
-const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD",
+const imageRequests = [];
+let exerciseImages = false;
+const order = { order_id: "102", status: "paid", order_items: [
+    { item_id: "MLB101", title: "Original title without translation", quantity: 1, unit_price: "12", currency_id: "USD" },
+  ], total_amount: "12", currency_id: "USD",
   shipment_id: "87123456" };
 let slaFetchCount = 0;
 let billingFetches = 0;
+let shipmentFetchCount = 0;
+let shipmentDetailsCount = 0;
+let cachedShipmentDetails;
+const pendingShipmentDetails = [];
+const shipmentDetails = {
+  shipment_id: order.shipment_id, status: "delivered", tracking_number: "OFFICIAL-TRACK-102",
+  checked_at: "2026-11-24T04:00:00Z", first_mile_carrier: "Fixture first mile",
+  shipped_at: "2026-11-21T04:00:00Z", delivered_at: "2026-11-24T03:30:00Z",
+  details: { checked_at: "2026-11-24T04:00:00Z", carrier_name: "Fixture official carrier", tracking_url: "https://www.jtexpress.com.br/track/102",
+    history: [{ status: "shipped", date: "2026-11-21T04:00:00Z" },
+      { status: "delivered", date: "2026-11-24T03:30:00Z" }] },
+};
+for (const [status, substatus, label] of [
+  ["ready_to_ship", "printed", "待发货"], ["shipped", "", "已发货"], ["shipped", "in_transit", "运输中"],
+  ["shipped", "out_for_delivery", "派送中"], ["delivered", "", "已签收"],
+  ["cancelled", "", "物流已取消"], ["unknown_new", "", "未知状态"],
+]) assert(shipmentStatusLabel({ status, substatus }) === label, "wrong official shipment label: " + status);
 window.fetch = (path, options) => {
-  const { pathname } = new URL(path, location.href);
+  const { pathname, searchParams } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
+  if (decodeURIComponent(pathname).endsWith("/image-refresh")) {
+    if (exerciseImages) return new Promise(resolve => imageRequests.push({ resolve, path, signal: options.signal }));
+    return Promise.resolve(Response.json({ error: "order_image_unavailable" }, { status: 404 }));
+  }
+  if (pathname.endsWith("/orders/200002/shipment")) {
+    assert(searchParams.get("details") === "1", "selected order must request detail mode");
+    return new Promise((resolve) => pendingShipmentDetails.push({ resolve, path, signal: options.signal }));
+  }
+  if (pathname.endsWith("/orders/102/shipment")) {
+    shipmentFetchCount++;
+    if (searchParams.get("details") === "1") {
+      shipmentDetailsCount++;
+      cachedShipmentDetails = shipmentDetails;
+      order.shipment = { ...shipmentDetails, details: undefined };
+      return Promise.resolve(Response.json({ ...order, shipment: shipmentDetails }));
+    }
+    order.shipment = { shipment_id: order.shipment_id, status: "shipped", substatus: "in_transit",
+      tracking_number: "OFFICIAL-TRACK-102", checked_at: new Date().toISOString() };
+    return Promise.resolve(Response.json(order));
+  }
+  if (pathname === "/api/v1/stores/order-title-translations") {
+    const refs = JSON.parse(options.body);
+    assert(refs.every(ref => Object.keys(ref).sort().join(",") === "logistic_type,order_id,site_id,store_id"),
+      "translation must send scoped IDs only");
+    return Promise.resolve(Response.json(refs.some(ref => ref.order_id === "200002") ? { "Lemon massage tool": "柠檬按摩工具" } : {}));
+  }
   if (pathname.endsWith("/orders/102/sla")) {
     slaFetchCount++;
     order.dispatch_deadline = new Date(Date.now() + 3 * 86_400_000).toISOString();
@@ -93,7 +140,12 @@ window.fetch = (path, options) => {
     return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: filter }));
   }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
-  if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json(order));
+  if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json({ ...order, shipment: cachedShipmentDetails ?? order.shipment }));
+  if (pathname.endsWith("/orders/200002")) return Promise.resolve(Response.json({
+    ...order, order_id: "200002", order_items: [
+      { item_id: "MLM100", title: "Lemon massage tool", quantity: 1, unit_price: "12", currency_id: "USD" },
+    ],
+  }));
   if (pathname.endsWith("/orders/103")) return Promise.resolve(Response.json({
     ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16",
   }));
@@ -261,6 +313,11 @@ try {
   assert(orderStatusLabel("partially_refunded") === "部分退款", "partial refund label missing");
   assert(displayOrderStatus({ ...order, purchase_order_id: "12345678" }) === "已付款",
     "purchase link must not replace the official paid label");
+  assert(displayOrderStatus({ ...order, shipment: shipmentDetails }) === "已签收", "delivered order must display fulfillment state");
+  assert(displayOrderStatus({ ...order, status: "refunded", shipment: shipmentDetails }) === "已退款", "refund must win over delivery");
+  assert(displayOrderStatus({ ...order, shipment: { ...shipmentDetails, shipment_id: "stale" } }) === "已付款", "stale shipment must not change order state");
+  assert(displayOrderStatus({ ...order, shipment: { ...shipmentDetails, status: "ready_to_ship", substatus: "printed" } }) === "标签已打印", "printed label must not imply dispatch");
+  assert(orderDate("2026-11-09T16:14:00-03:00").includes("2026/11/10") && orderDate("2026-11-09T16:14:00-03:00").includes("03:14"), "Beijing timezone must be independent of machine timezone");
   assert(hasProcurement({ ...order, purchase_order_id: "12345678" }), "purchase badge predicate incorrect");
   assert(!hasProcurement(order), "unlinked order must not be marked procured");
   assert(orderVariationText({ item_id: "MLM111", title: "", variation_id: "998" }) ===
@@ -274,16 +331,18 @@ try {
   assert(shouldApplyOrderRefresh("102", "102", false), "same order refresh must apply");
   assert(!shouldApplyOrderRefresh("102", "103", false), "stale A must not replace selected B");
   assert(!shouldApplyOrderRefresh("102", "102", true), "aborted request must not apply");
-  assert(shouldStopSLABatch(502, "order_platform_unavailable"), "upstream 502 must stop");
-  assert(shouldStopSLABatch(504, "order_timeout"), "timeout must stop");
-  assert(shouldStopSLABatch(429, "order_rate_limited"), "429 must stop");
-  assert(shouldStopSLABatch(0, ""), "network loss must stop");
-  assert(!shouldStopSLABatch(404, "order_sla_no_shipment"), "one no-shipment row may be skipped");
+  assert(shouldStopLogisticsBatch(502, "order_platform_unavailable"), "upstream 502 must stop");
+  assert(shouldStopLogisticsBatch(504, "order_timeout"), "timeout must stop");
+  assert(shouldStopLogisticsBatch(429, "order_rate_limited"), "429 must stop");
+  assert(shouldStopLogisticsBatch(0, ""), "network loss must stop");
+  assert(!shouldStopLogisticsBatch(404, "order_sla_no_shipment"), "one no-shipment row may be skipped");
   const now = Date.UTC(2026, 10, 21, 0, 0);
   const sample = (hours, status = "on_time") => ({
     ...order, status: "paid", dispatch_sla_status: status,
     dispatch_deadline: new Date(now + hours * 3600_000).toISOString(),
   });
+  assert(dispatchDeadlineLabel(sample(42), now, "remote").countdown === "剩余1天18小时", "show remaining days and hours");
+  assert(dispatchDeadlineLabel({ ...sample(-2), shipment: shipmentDetails }, now, "remote").countdown === "已签收", "delivered orders must not show expired countdown");
   assert(dispatchDeadlineLabel(sample(24), now, "remote").state === "neutral",
     "24h must not be red");
   assert(dispatchDeadlineLabel(sample(23.9), now, "remote").state === "late",
@@ -295,6 +354,8 @@ try {
   assert(dispatchDeadlineLabel(sample(72), now, "fulfillment").countdown === "不适用",
     "fulfillment incorrectly displays SLA");
   assert(slaFetchCount === 0, "SLA must not run automatically");
+  assert(document.querySelector(".orders-product-title")?.textContent === "Original title without translation",
+    "an untranslated title did not fall back to the original");
   assert([...document.querySelectorAll("th")].filter((h) => h.textContent.trim()).length === 8,
     "table columns must be 8 after moving purchase action");
   assert([...document.querySelectorAll("td.orders-table-empty")].every((cell) => cell.colSpan === 8),
@@ -309,9 +370,62 @@ try {
   await waitFor(() => slaFetchCount === 1 &&
     document.querySelector(".orders-dispatch")?.textContent.includes("剩余"),
     "manual SLA refresh did not update list");
+  assert(shipmentFetchCount === 0, "logistics refresh must be manual");
+  const batchShipment = [...document.querySelectorAll(".orders-tabs button")]
+    .find((item) => item.textContent === "更新本页物流");
+  flushSync(() => batchShipment.click());
+  await waitFor(() => shipmentFetchCount === 1 &&
+    document.querySelector(".orders-shipping-refs")?.textContent.includes("OFFICIAL-TRACK-102") &&
+    document.querySelector(".orders-shipping-refs")?.textContent.includes("运输中") &&
+    document.querySelector(".orders-status")?.textContent.includes("运输中"),
+    "main order state must follow current shipment");
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "real order detail modal did not open after purchase modal closed");
+  const shipmentButton = () => [...document.querySelectorAll(".orders-detail-block button")]
+    .find((item) => item.textContent === "更新平台物流");
+  await waitFor(() => shipmentButton() && !shipmentButton().disabled, "order shipment button unavailable");
+  assert(shipmentDetailsCount === 0 && shipmentFetchCount === 1,
+    "batch/automatic order opening must not load tracking details");
+  flushSync(() => shipmentButton().click());
+  await waitFor(() => shipmentDetailsCount === 1 &&
+    document.querySelector(".orders-detail-fields time")?.dateTime === shipmentDetails.shipped_at &&
+    document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier"),
+    "single-order shipment refresh did not show carrier and dispatch time");
+  const detailsFields = document.querySelector(".orders-detail-fields");
+  assert(detailsFields.textContent.includes("OFFICIAL-TRACK-102") &&
+    detailsFields.textContent.includes("物流最近核验") &&
+    detailsFields.textContent.includes("首程承运商Fixture first mile") &&
+    [...detailsFields.querySelectorAll("time")].some(time => time.dateTime === shipmentDetails.delivered_at),
+    "tracking, first-mile carrier and exact receipt time must stay distinct");
+  const trackingActions = [...detailsFields.querySelectorAll("button")];
+  const browserTracking = trackingActions.find(button => button.textContent === "在浏览器中打开");
+  const opened = [];
+  window.open = (...args) => opened.push(args);
+  browserTracking?.click();
+  assert(trackingActions.some(button => button.textContent === "官方物流查询") &&
+    trackingActions.some(button => button.textContent === "复制地址") &&
+    opened[0]?.[0] === shipmentDetails.details.tracking_url && opened[0]?.[2] === "noopener,noreferrer",
+    "carrier actions must offer popup, clipboard and safe browser fallback");
+  assert(officialTrackingURL("file:///tmp/example") === "" &&
+    officialTrackingURL("https://10.0.0.1/track") === "" &&
+    officialTrackingURL("https://u@jtexpress.com.br/track") === "", "unsafe tracking address accepted");
+  assert(orderUSD("11.28") === "USD 11.28" && orderUSD() === "待核实", "USD display must fail closed");
+  const timeline = [...document.querySelectorAll(".orders-detail-block h3")]
+    .find(item => item.textContent === "官方物流时间轴");
+  assert(timeline?.parentElement.querySelectorAll("time").length === 2 &&
+    !document.querySelector(".orders-shipping-refs").textContent.includes("Fixture official carrier"),
+    "timeline must be rendered inside the selected detail");
+  const beforeReopen = shipmentFetchCount;
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  await waitFor(() => !document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
+    "detail did not close");
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier") &&
+    [...document.querySelectorAll(".orders-detail-block h3")].some(item => item.textContent === "官方物流时间轴"),
+    "reopening detail did not display cached carrier and history");
+  assert(shipmentFetchCount === beforeReopen && shipmentDetailsCount === 1,
+    "reopening cached detail must not request official shipment");
   flushSync(() => [...document.querySelectorAll(".orders-detail-refresh")][0].click());
   await waitFor(() => document.querySelector(".orders-detail-summary")?.textContent.includes("部分退款"),
     "manual order refresh did not display refunded state");
@@ -345,6 +459,15 @@ try {
     document.querySelector(".orders-id")?.textContent === "200002",
     "cross-site Order ID must change to all sites and show exactly the matching order");
   assert(document.querySelectorAll(".orders-id").length === 1, "numeric search returned extra orders");
+  await waitFor(() => document.querySelector(".orders-product-title")?.textContent === "柠檬按摩工具",
+    "Chinese translation was not the visible title");
+  assert(document.querySelector(".orders-product-title")?.title === "Lemon massage tool",
+    "official title is missing from the tooltip");
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-line-content strong")?.textContent === "柠檬按摩工具" &&
+    document.querySelector(".orders-line-content")?.textContent.includes("原标题：Lemon massage tool"),
+    "order details must show the translation and the complete original title");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   flushSync(() => document.querySelector(".orders-row-purchase").click());
   const crossSitePurchase = await takePurchase("GET");
   assert(new URL(crossSitePurchase.path, location.href).searchParams.get("site") === "MLM" &&
@@ -382,6 +505,59 @@ try {
     document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("巴西"),
     "purchase modal must identify second-store MLB target");
   secondStorePurchase.resolve(Response.json({ purchase: null }));
+  await waitFor(() => document.querySelector('button[aria-label="关闭采购关联"]:enabled'),
+    "second store purchase did not settle");
+  flushSync(() => document.querySelector('button[aria-label="关闭采购关联"]').click());
+  const openShipping = async (index) => {
+    flushSync(() => [...document.querySelectorAll(".orders-id")][index].click());
+    await waitFor(() => shipmentButton() && !shipmentButton().disabled, "scoped shipment button unavailable");
+    flushSync(() => shipmentButton().click());
+    await waitFor(() => pendingShipmentDetails.length === 1, "scoped shipment request missing");
+    return pendingShipmentDetails.shift();
+  };
+  const oldShipment = await openShipping(0);
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  const newShipment = await openShipping(1);
+  assert(oldShipment.signal.aborted && oldShipment.path.includes("/stores/one/") && newShipment.path.includes("/stores/two/"),
+    "same order ID across stores reused the wrong request or did not abort the old response");
+  // Chromium can deliver the previous dialog's close event after reopening.
+  flushSync(() => document.querySelector('dialog[aria-labelledby="orders-detail-title"]').dispatchEvent(new Event("close")));
+  newShipment.resolve(Response.json({ ...order, order_id: "200002", shipment: shipmentDetails }));
+  await waitFor(() => document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier"),
+    "new scoped shipment did not render");
+  oldShipment.resolve(Response.json({ ...order, order_id: "200002", shipment: {
+    ...shipmentDetails, details: { ...shipmentDetails.details, carrier_name: "Stale carrier" },
+  } }));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert(!document.querySelector(".orders-detail-fields")?.textContent.includes("Stale carrier"),
+    "delayed result escaped the store selection guard");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  exerciseImages = true;
+  const testingThumbnail = "https://http2.mlstatic.com/D_700-I.jpg";
+  select("订单店铺", "one");
+  select("站点和物流模式", "MLB|remote");
+  const imageField = searchInput();
+  flushSync(() => {
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    nativeSetter.call(imageField, "");
+    imageField.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  order.order_items[0] = { ...order.order_items[0], item_id: "MLB700" };
+  flushSync(() => submitSearch().click());
+  await waitFor(() => imageRequests.length === 1, "new order did not start non-blocking image backfill");
+  assert(document.querySelectorAll(".orders-id").length === 2, "image read blocked order rows");
+  const staleImage = imageRequests.shift();
+  select("订单店铺", "two");
+  await waitFor(() => imageRequests.length === 1, "next store did not start independent image backfill");
+  const matchingImage = imageRequests.shift();
+  assert(staleImage.signal.aborted && staleImage.path.includes("/stores/one/") &&
+    matchingImage.path.includes("/stores/two/"), "image work did not follow the store scope");
+  staleImage.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: "https://http2.mlstatic.com/stale.jpg" }] }));
+  matchingImage.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: testingThumbnail }] }));
+  await waitFor(() => document.querySelectorAll(".orders-product-preview img").length === 2,
+    "same-shop orders for one item did not share the image");
+  assert([...document.querySelectorAll(".orders-product-preview img")].every(img => img.src === testingThumbnail) &&
+    imageRequests.length === 0, "late image update or repeat item request escaped its scope");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";

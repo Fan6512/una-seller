@@ -133,7 +133,7 @@ func TestWorkingDraftOwnerAndRecaptureIsolation(t *testing.T) {
 			t.Fatalf("large draft readback failed: %v", err)
 		}
 	}
-	// 415, trailing JSON, unknown keys, >256KiB, and unsupported methods must fail.
+	// 415, trailing JSON, unknown keys, >512 KiB, and unsupported methods must fail.
 	untrusted := HandlerWithCollections(store, stubVerifier{id: owner})
 	request := func(method, payload, mime, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(payload))
@@ -157,7 +157,7 @@ func TestWorkingDraftOwnerAndRecaptureIsolation(t *testing.T) {
 	if w := request(http.MethodPut, `{"title":"hello","unknown":1}`, "application/json", ""); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown key should be 400: %d", w.Code)
 	}
-	if w := request(http.MethodPut, `{"title":"A","description":"`+strings.Repeat("x", (256<<10)+1)+`","notes":"","expected_revision":3}`, "application/json", ""); w.Code != http.StatusRequestEntityTooLarge {
+	if w := request(http.MethodPut, `{"title":"A","description":"`+strings.Repeat("x", (512<<10)+1)+`","notes":"","expected_revision":3}`, "application/json", ""); w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized body should be 413: %d", w.Code)
 	}
 	if w := request(http.MethodPost, "", "", ""); w.Code != http.StatusMethodNotAllowed ||

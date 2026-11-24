@@ -86,10 +86,10 @@ const globalOrderSearchSQL = `SELECT ` + orderColumns + `,
   WHERE ($2::uuid IS NULL OR o.store_id=$2::uuid)
     AND ($3='*' OR o.site_id=$3)
     AND ($4='*' OR o.logistic_type=$4)
-    AND ($5='' OR o.status=$5)
+    AND ` + orderStatusFilterSQL + `
     AND ($6='' OR ($6='linked' AND p.purchase_order_id IS NOT NULL)
       OR ($6='unlinked' AND p.purchase_order_id IS NULL))
-    AND ($7='' OR ($8='id' AND o.order_id=$7)
+    AND ($7='' OR ($8='id' AND (o.order_id=$7 OR o.pack_id=$7))
       OR ($8='title' AND EXISTS (
         SELECT 1 FROM jsonb_array_elements(o.order_items) AS item
         WHERE strpos(lower(item->>'title'),lower($7))>0

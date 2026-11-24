@@ -55,7 +55,7 @@ type OwnProductEdit struct {
 }
 
 func (in OwnProductEdit) Validate() error {
-	if strings.TrimSpace(in.Title) == "" || utf8.RuneCountInString(in.Title) > 500 ||
+	if strings.TrimSpace(in.Title) == "" || !validListingTitle(in.Title) ||
 		utf8.RuneCountInString(in.Description) > 20000 || utf8.RuneCountInString(in.Notes) > 5000 ||
 		in.ExpectedRevision < 1 {
 		return errors.New("invalid product fields")
@@ -253,10 +253,25 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	}
 	var listingValue any
 	if in.ListingFields != nil {
-		if text := in.ListingFields.Titles.Preferred(); text != "" {
+		var previous ListingFields
+		if in.ListingFields.needsPrevious() {
+			current, err := s.GetOwnProduct(ctx, owner, id)
+			if err != nil {
+				return OwnProduct{}, err
+			}
+			if current.Revision != in.ExpectedRevision {
+				return OwnProduct{}, ErrDraftConflict
+			}
+			previous = current.ListingFields
+		}
+		next, err := in.ListingFields.prepareForSave(previous)
+		if err != nil {
+			return OwnProduct{}, err
+		}
+		if text := next.Titles.Preferred(); text != "" {
 			in.Title = text
 		}
-		raw, err := json.Marshal(in.ListingFields)
+		raw, err := json.Marshal(next)
 		if err != nil {
 			return OwnProduct{}, err
 		}
@@ -265,7 +280,12 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	var revision int64
 	err := s.DB.QueryRow(ctx, `UPDATE app.own_products
     SET title=$3,description=$4,notes=$5,
-      listing_fields=COALESCE($7::jsonb,listing_fields),
+      listing_fields=COALESCE(
+        jsonb_strip_nulls(jsonb_build_object(
+          'category_attributes',listing_fields->'category_attributes',
+          'descriptions',listing_fields->'descriptions',
+          'description_translation',listing_fields->'description_translation')) || $7::jsonb,
+        listing_fields),
       revision=revision+1,updated_at=now()
     WHERE id=$1::uuid AND owner_user_id=$2::uuid AND revision=$6 RETURNING revision`,
 		id, owner, in.Title, in.Description, in.Notes, in.ExpectedRevision, listingValue).Scan(&revision)

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,17 +53,22 @@ type Service struct {
 	orderNextRequest time.Time
 	orderNextSearch  time.Time
 	orderRetryUntil  time.Time
+	probeMu          sync.Mutex
+	probeNext        map[string]time.Time
 }
 
 type Store struct {
-	ID             string        `json:"id"`
-	SellerID       string        `json:"seller_id"`
-	Nickname       string        `json:"nickname"`
-	Status         string        `json:"status"`
-	TokenExpiresAt *time.Time    `json:"token_expires_at,omitempty"`
-	UpdatedAt      time.Time     `json:"updated_at"`
-	Marketplaces   []Marketplace `json:"marketplaces"`
-	MarketsStatus  string        `json:"marketplaces_status"`
+	ID                       string               `json:"id"`
+	SellerID                 string               `json:"seller_id"`
+	Nickname                 string               `json:"nickname"`
+	Status                   string               `json:"status"`
+	TokenExpiresAt           *time.Time           `json:"token_expires_at,omitempty"`
+	UpdatedAt                time.Time            `json:"updated_at"`
+	Marketplaces             []Marketplace        `json:"marketplaces"`
+	MarketsStatus            string               `json:"marketplaces_status"`
+	PublicationMode          string               `json:"publication_mode"`
+	PublicationModeCheckedAt *time.Time           `json:"publication_mode_checked_at,omitempty"`
+	PublicationEvidence      *PublicationEvidence `json:"publication_evidence,omitempty"`
 }
 
 func NewService(db *pgxpool.Pool, cfg Config) (*Service, error) {
@@ -285,9 +291,17 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 	if err != nil {
 		return Store{}, err
 	}
+	// Keep updated authorization credentials and invalidated C0 evidence
+	// in one transaction. A failed cleanup must never leave an apparently
+	// valid new authorization carrying old mode evidence.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Store{}, err
+	}
+	defer tx.Rollback(ctx)
 	// seller_id is globally unique: one seller cannot silently migrate to a second owner.
 	var out Store
-	err = s.db.QueryRow(ctx, `INSERT INTO app.meli_store_connections
+	err = tx.QueryRow(ctx, `INSERT INTO app.meli_store_connections
  (owner_user_id,seller_id,nickname,status,access_token_ciphertext,refresh_token_ciphertext,
  access_token_expires_at,last_checked_at,marketplaces,marketplaces_status,marketplaces_checked_at)
  VALUES($1::uuid,$2,$3,'connected',$4,$5,now()+($6::bigint*interval '1 second'),now(),$7::jsonb,$8,
@@ -313,13 +327,39 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 	if err != nil {
 		return Store{}, err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM app.meli_cbt_c0_evidence WHERE store_id=$1::uuid AND owner_user_id=$2::uuid`, out.ID, owner); err != nil {
+		return Store{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Store{}, err
+	}
+	out.PublicationMode = publicationUnverified
+	// The grant is already committed. Optional C0 failure must not make
+	// authorization appear to have failed or cause code replay.
+	if out.MarketsStatus == "verified" && len(out.Marketplaces) > 0 {
+		proof, probeErr := s.probeAfterAuthorization(ctx, owner, out.ID, AuthorizedStore{
+			SellerID: sid, AccessToken: token.AccessToken,
+			Markets: out.Marketplaces, Verified: true,
+			accessCipher: access, marketsJSON: marketplacesJSON,
+		})
+		if probeErr == nil {
+			out.PublicationMode = proof.Mode
+			out.PublicationModeCheckedAt = &proof.CheckedAt
+			out.PublicationEvidence = &proof
+		} else {
+			log.Printf("CBT C0 automatic authorization probe failed: %v; manual check remains available", probeErr)
+		}
+	}
 	return out, nil
 }
 
 func (s *Service) List(ctx context.Context, owner string) ([]Store, error) {
-	rows, err := s.db.Query(ctx, `SELECT id::text,seller_id,COALESCE(nickname,''),status,access_token_expires_at,
- updated_at,marketplaces_status,marketplaces
- FROM app.meli_store_connections WHERE owner_user_id=$1::uuid ORDER BY updated_at DESC,id`, owner)
+	rows, err := s.db.Query(ctx, `SELECT c.id::text,c.seller_id,COALESCE(c.nickname,''),c.status,c.access_token_expires_at,
+ c.updated_at,c.marketplaces_status,c.marketplaces,
+ COALESCE(p.publication_mode,'undetermined'),p.checked_at,p.evidence
+ FROM app.meli_store_connections c
+ LEFT JOIN app.meli_cbt_c0_evidence p ON p.store_id=c.id AND p.owner_user_id=c.owner_user_id
+ WHERE c.owner_user_id=$1::uuid ORDER BY c.updated_at DESC,c.id`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -327,13 +367,26 @@ func (s *Service) List(ctx context.Context, owner string) ([]Store, error) {
 	stores := make([]Store, 0)
 	for rows.Next() {
 		var st Store
-		var marketJSON []byte
+		var marketJSON, proofJSON []byte
 		if err = rows.Scan(&st.ID, &st.SellerID, &st.Nickname, &st.Status,
-			&st.TokenExpiresAt, &st.UpdatedAt, &st.MarketsStatus, &marketJSON); err != nil {
+			&st.TokenExpiresAt, &st.UpdatedAt, &st.MarketsStatus, &marketJSON,
+			&st.PublicationMode, &st.PublicationModeCheckedAt, &proofJSON); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(marketJSON, &st.Marketplaces); err != nil {
 			return nil, err
+		}
+		if len(proofJSON) != 0 {
+			var proof PublicationEvidence
+			if err = json.Unmarshal(proofJSON, &proof); err != nil {
+				return nil, err
+			}
+			st.PublicationEvidence = &proof
+		}
+		if st.Status != "connected" {
+			st.PublicationMode = publicationUnverified
+			st.PublicationModeCheckedAt = nil
+			st.PublicationEvidence = nil
 		}
 		if st.Status == "connected" && st.TokenExpiresAt != nil && !st.TokenExpiresAt.After(time.Now()) {
 			st.Status = "token_expired"

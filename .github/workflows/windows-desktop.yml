@@ -13,6 +13,10 @@ on:
       - 'backend/**'
   workflow_dispatch:
     inputs:
+      check_only:
+        description: Compile and test the native desktop without packaging
+        type: boolean
+        default: false
       desktop_only:
         description: Build only the desktop installer
         type: boolean
@@ -21,15 +25,20 @@ on:
         description: Build with an ephemeral key and loopback updater for testing
         type: boolean
         default: false
+      loopback_api:
+        description: Point the QA desktop at the isolated local API on port 8787
+        type: boolean
+        default: false
   push:
     tags:
       - 'desktop-v*'
+      - 'desktop-test-v*'
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}-${{ inputs.signed_smoke && 'signed-smoke' || 'default' }}
+  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}-${{ inputs.signed_smoke && 'signed-smoke' || 'default' }}${{ inputs.loopback_api && '-loopback-api' || '' }}${{ inputs.check_only && '-compile' || '' }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
@@ -52,8 +61,10 @@ jobs:
       !cancelled() &&
       (github.event_name != 'push' || needs.production-environment.result == 'success') &&
       (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    name: Windows Tauri x64 (NSIS)
+    name: ${{ inputs.check_only && 'Windows Tauri x64 compile and tests' || 'Windows Tauri x64 (NSIS)' }}
     environment: ${{ github.event_name == 'push' && 'desktop-production' || 'desktop-ci' }}
+    env:
+      VITE_API_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.loopback_api && 'http://127.0.0.1:8787' || '' }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -69,14 +80,16 @@ jobs:
       - name: Check release tag and versions
         if: github.event_name == 'push'
         run: |
-          if ($env:RUNNER_ARCH -cne 'X64' -or $env:GITHUB_REF_NAME -cnotmatch '^desktop-v[1-9][0-9]*\.(0|[1-9][0-9]*)\.0$') {
-            throw 'Stable release requires desktop-vMAJOR.MINOR.0 (MAJOR >= 1) tag and an x64 runner.'
+          $stableTag = $env:GITHUB_REF_NAME -cmatch '^desktop-v[1-9][0-9]*\.(0|[1-9][0-9]*)\.0$'
+          $testTag = $env:GITHUB_REF_NAME -cmatch '^desktop-test-v0\.(0|[1-9][0-9]*)\.0$'
+          if ($env:RUNNER_ARCH -cne 'X64' -or !($stableTag -or $testTag)) {
+            throw 'Expected desktop-vMAJOR.MINOR.0 (stable >= 1) or desktop-test-v0.MINOR.0 (test) on x64.'
           }
           git fetch origin +refs/heads/main:refs/remotes/origin/main
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE -ne 0) { throw 'The release commit must be on main.' }
-          $version = $env:GITHUB_REF_NAME.Substring(9)
+          $version = $env:GITHUB_REF_NAME -creplace '^desktop(-test)?-v', ''
           $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $npm = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $lock = Get-Content package-lock.json -Raw | ConvertFrom-Json -AsHashtable
@@ -99,14 +112,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Compile and test native desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.check_only
+        run: |
+          npm run icons
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
       - name: Build test NSIS installer
-        if: github.event_name != 'push' && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.signed_smoke && !inputs.check_only
         env:
           VITE_UNA_SELLER_DEV_DIAGNOSTICS: '1'
         run: npm run tauri:build -- --bundles nsis -- --locked
 
       - name: Build signed NSIS installer
-        if: github.event_name == 'push' || inputs.signed_smoke
+        if: github.event_name == 'push' || (inputs.signed_smoke && !inputs.check_only)
         env:
           SIGNED_SMOKE: ${{ inputs.signed_smoke }}
           UPDATER_PUBLIC_KEY: ${{ github.event_name == 'push' && vars.TAURI_UPDATER_PUBLIC_KEY || '' }}
@@ -114,7 +136,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name == 'push' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
           $smoke = $env:SIGNED_SMOKE -eq 'true'
-          $endpoint = "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/latest.json"
+          # Stable and test releases share one authenticated-by-signature update feed.
+          $endpoint = "https://mkd.186512.xyz/api/v1/desktop/updates"
           $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $key = Join-Path $env:RUNNER_TEMP 'desktop-smoke.key'
           $config = Join-Path $env:RUNNER_TEMP 'desktop-release.json'
@@ -164,7 +187,7 @@ jobs:
           }
 
       - name: Upload isolated signed smoke artifacts
-        if: inputs.signed_smoke
+        if: inputs.signed_smoke && !inputs.check_only
         uses: actions/upload-artifact@v4
         with:
           name: una-seller-updater-smoke
@@ -182,19 +205,19 @@ jobs:
           retention-days: 1
 
       - name: Set up Go for local API
-        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke && !inputs.check_only
         uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache: false
 
       - name: Build local API for Windows
-        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke && !inputs.check_only
         working-directory: backend
         run: go build -o ../apps/desktop/src-tauri/target/release/una-seller-api.exe ./cmd/api
 
       - name: Upload Windows app, installer and local API
-        if: github.event_name != 'push' && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.signed_smoke && !inputs.check_only
         uses: actions/upload-artifact@v4
         with:
           name: una-seller-windows-x64
@@ -234,10 +257,11 @@ jobs:
           minisign -Vm "$installer" -p updater.pub -x installer.minisig
 
           previous_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
+            --jq '.[] | select(.draft == false) | .tag_name')
           gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f "tag_name=$GITHUB_REF_NAME" --jq .body > release-notes.md
           version="${GITHUB_REF_NAME#desktop-v}"
+          if [[ "$GITHUB_REF_NAME" == desktop-test-v* ]]; then version="${GITHUB_REF_NAME#desktop-test-v}"; fi
           python - "$version" "$previous_tags" "$installer" <<'PY'
           import json
           import os
@@ -258,10 +282,16 @@ jobs:
           if signed_versions != [version]:
               sys.exit("Updater signature does not bind the release version")
           current = tuple(map(int, version.split(".")))
+          test_release = os.environ["GITHUB_REF_NAME"].startswith("desktop-test-v")
           for tag in previous_tags.splitlines():
-              previous = re.fullmatch(r"desktop-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag)
-              if previous and current <= tuple(map(int, previous.groups())):
-                  sys.exit(f"Desktop version must exceed published {tag}")
+              if test_release:
+                  previous = re.fullmatch(r"desktop-test-v0\.(0|[1-9][0-9]*)\.0", tag)
+              else:
+                  previous = re.fullmatch(r"desktop-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.0", tag)
+              if previous:
+                  prior = (0, int(previous.group(1)), 0) if test_release else (int(previous.group(1)), int(previous.group(2)), 0)
+                  if current <= prior:
+                      sys.exit(f"Desktop version must exceed published {tag}")
           repository = os.environ["GITHUB_REPOSITORY"]
           tag = os.environ["GITHUB_REF_NAME"]
           Path("latest.json").write_text(json.dumps({
@@ -279,6 +309,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "Una Seller ${GITHUB_REF_NAME#desktop-v}" --notes-file release-notes.md \
+          flags=()
+          title="Una Seller ${GITHUB_REF_NAME#desktop-v}"
+          if [[ "$GITHUB_REF_NAME" == desktop-test-v* ]]; then
+            flags+=(--prerelease)
+            title="Una Seller ${GITHUB_REF_NAME#desktop-test-v} Test"
+          fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft "${flags[@]}" \
+            --title "$title" --notes-file release-notes.md \
             *_x64-setup.exe *_x64-setup.exe.sig latest.json

@@ -26,6 +26,7 @@ type SupabaseVerifier struct {
 	userURL string
 	apiKey  string
 	client  *http.Client
+	fast    *fastAuth
 }
 
 // Supabase Auth validates bearer tokens server-side; no JWT signing secret is needed.
@@ -43,7 +44,9 @@ func NewSupabaseVerifier(rawURL, publishableKey string) (*SupabaseVerifier, erro
 	if strings.TrimSpace(publishableKey) == "" {
 		return nil, errors.New("SUPABASE_PUBLISHABLE_KEY is required")
 	}
-	return &SupabaseVerifier{userURL: u.String() + "/auth/v1/user", apiKey: publishableKey, client: &http.Client{Timeout: 6 * time.Second}}, nil
+	v := &SupabaseVerifier{userURL: u.String() + "/auth/v1/user", apiKey: publishableKey, client: &http.Client{Timeout: 6 * time.Second}}
+	v.fast = newFastAuth(u.String(), v.client)
+	return v, nil
 }
 
 func isLoopback(host string) bool {
@@ -82,4 +85,16 @@ func (v *SupabaseVerifier) Verify(ctx context.Context, accessToken string) (stri
 		return "", ErrInvalidSession
 	}
 	return user.ID, nil
+}
+
+// VerifyFast is available only to the explicitly allowlisted read-only routes.
+// Writes and sensitive routes continue using Verify() against Supabase Auth.
+func (v *SupabaseVerifier) VerifyFast(ctx context.Context, accessToken string) (string, error) {
+	if v == nil {
+		return "", ErrInvalidSession
+	}
+	if v.fast == nil {
+		return v.Verify(ctx, accessToken)
+	}
+	return v.fast.verify(ctx, accessToken, v.Verify)
 }

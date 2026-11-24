@@ -1,0 +1,104 @@
+.account-settings {
+  max-width: 1060px;
+  margin: 0 auto;
+}
+
+.account-card {
+  margin: 0 0 18px;
+  padding: 22px 24px;
+  background: var(--ui-surface, #fff);
+  border: 1px solid var(--ui-outline, #e3e7ef);
+  border-radius: 13px;
+  box-shadow: 0 2px 9px rgba(25, 32, 50, .025);
+}
+
+.account-card h2 {
+  margin: 0 0 9px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.account-help {
+  color: var(--ui-muted, #687586);
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 0 0 14px;
+}
+
+.account-help strong {
+  color: var(--ui-text, #1e293b);
+  font-weight: 600;
+}
+
+.account-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px 18px;
+}
+
+.account-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ui-text, #283348);
+  min-width: 0;
+}
+
+.account-form input,
+.account-form select {
+  min-width: 0;
+  width: 100%;
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-outline, #dbe1e8);
+  border-radius: 8px;
+  color: var(--ui-text, #202a39);
+  background: #fff;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.account-form input:focus,
+.account-form select:focus {
+  outline: 2px solid rgba(39, 93, 180, .2);
+  border-color: var(--ui-accent, #275db4);
+}
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  grid-column: 1 / -1;
+}
+
+.account-connection {
+  display: inline-flex;
+  padding: 5px 10px;
+  margin: 0 0 16px;
+  border-radius: 7px;
+  background: var(--ui-elevated, #f2f5f9);
+  color: var(--ui-muted, #5c6b7c);
+  font-size: 12px;
+}
+
+.account-message {
+  padding: 11px 14px;
+  border-radius: 9px;
+  color: #276043;
+  background: #ecf7f0;
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+.account-message.error {
+  color: #9c3d35;
+  background: #fff0ef;
+}
+
+@media (max-width: 720px) {
+  .account-card { padding: 18px; }
+  .account-form { grid-template-columns: minmax(0, 1fr); }
+}

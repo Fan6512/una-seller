@@ -7,6 +7,9 @@
   ],
   "permissions": [
     "core:default",
+    "allow-desktop-app-version",
+    "allow-desktop-update-version",
+    "allow-official-tracking",
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install"

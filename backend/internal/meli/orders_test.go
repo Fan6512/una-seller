@@ -79,6 +79,31 @@ func containsBytes(data, fragment []byte) bool {
 	return false
 }
 
+func TestOrderSalesAmountUsesScopedMerchandiseLines(t *testing.T) {
+	raw := []byte(`{
+	  "id":101,"pack_id":920,"status":"paid","site_id":"MLB","seller":{"id":777},
+	  "currency_id":"USD","total_amount":67.23,"date_created":"2026-11-01T11:00:00Z",
+	  "last_updated":"2026-11-01T11:00:00Z","order_items":[
+	    {"element_id":1,"item":{"id":"MLB101"},"quantity":2,"unit_price":11.28,"currency_id":"USD"},
+	    {"element_id":1,"item":{"id":"MLB101"},"quantity":2,"unit_price":11.28,"currency_id":"USD"},
+	    {"element_id":2,"item":{"id":"MLB101"},"quantity":3,"unit_price":0.01000001,"currency_id":"USD"}
+	  ]}`)
+	order, err := parseOrderDetail(raw, "101", "777", "MLB")
+	if err != nil || order.TotalAmount != "67.23" || order.PackID != "920" || len(order.Items) != 2 {
+		t.Fatalf("merchant detail was not preserved and deduplicated: %+v, %v", order, err)
+	}
+	if got := orderSalesAmountUSD(order.Items); got != "22.59000003" {
+		t.Fatalf("USD sales per Order = %q", got)
+	}
+	order.Items[1].CurrencyID = "BRL"
+	if got := orderSalesAmountUSD(order.Items); got != "" {
+		t.Fatalf("mixed currency displayed as USD: %q", got)
+	}
+	if got := orderSalesAmountUSD([]OrderLine{{CurrencyID: "USD", UnitPrice: "0.00", Quantity: 1}}); got != "0.00" {
+		t.Fatalf("explicit zero USD sale missing: %q", got)
+	}
+}
+
 func TestOrderScopeAndStatusValidation(t *testing.T) {
 	for _, scope := range []OrderScope{{"CBT", ""}, {"MLB", ""}, {"mlb", "remote"}, {"MLB", "remote/sub"}, {"ML1", "remote"},
 		{"ML A", "remote"}, {"M!A", "remote"}, {"MÉX", "remote"}, {"AA", "remote"}, {"ABCDEFGHI", "remote"}} {
@@ -371,6 +396,53 @@ func TestOrderPostgresPackResumeAndLocalRead(t *testing.T) {
 	}
 	if _, err = s.GetOrder(ctx, owner, store, scope, "105"); !errors.Is(err, ErrReauthorizationRequired) {
 		t.Fatalf("disconnected store detail should be denied, got %v", err)
+	}
+}
+
+func TestOrderSyncInvalidatesReplacedShipmentSnapshot(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET access_token_expires_at=now()+interval '1 hour' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,shipment_snapshot)
+ VALUES ($1::uuid,'MLB','remote','987654','101','paid','USD',12.34,'2026-11-01T00:00:00Z','2026-11-01T00:01:00Z','801',
+ '{"shipment_id":"801","status":"delivered","checked_at":"2026-11-01T00:02:00Z"}'),
+ ($1::uuid,'MLB','remote','987654','102','paid','USD',12.34,'2026-11-01T00:00:00Z','2026-11-01T00:01:00Z','801',
+ '{"shipment_id":"801","status":"delivered","checked_at":"2026-11-01T00:02:00Z"}')`, store); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/marketplace/orders/search":
+			fmt.Fprint(w, `{"results":[{"orders":[{"id":101},{"id":102}]}],"paging":{"total":1}}`)
+		case "/marketplace/orders/101":
+			fmt.Fprint(w, strings.TrimSuffix(orderTestDetail("101", "987654", "MLB"), "}")+`,"shipping":{"id":801}}`)
+		case "/marketplace/orders/102":
+			fmt.Fprint(w, strings.TrimSuffix(orderTestDetail("102", "987654", "MLB"), "}")+`,"shipping":{"id":802}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	s.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	if result, err := s.SyncOrders(ctx, owner, store, scope); err != nil || result.Saved != 2 {
+		t.Fatalf("sync=%+v err=%v", result, err)
+	}
+	for _, tc := range []struct {
+		id, shipmentID string
+		cleared        bool
+	}{{"101", "801", false}, {"102", "802", true}} {
+		var shipmentID string
+		var cleared bool
+		err := db.QueryRow(ctx, `SELECT shipment_id,shipment_snapshot IS NULL FROM app.meli_orders
+ WHERE store_id=$1::uuid AND order_id=$2`, store, tc.id).Scan(&shipmentID, &cleared)
+		if err != nil || shipmentID != tc.shipmentID || cleared != tc.cleared {
+			t.Fatalf("order %s shipment=%s cleared=%t err=%v", tc.id, shipmentID, cleared, err)
+		}
 	}
 }
 

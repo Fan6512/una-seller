@@ -76,6 +76,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	draftPath := "/api/v1/collections/" + source.ID + "/working-draft"
 	draftBody := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":0,
 "listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT123","category_path":"Beleza / Cuidados",
+"category_attributes":[{"category_id":"CBT123","id":"COLOR","value_id":"100","value":"Blue"},{"category_id":"CBT123","id":"CAPACITY","value":"1.5","unit_id":"l"}],
 "brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY",
 "weight_g":"850","length_cm":"20.5","width_cm":"15","height_cm":"5",
 "images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],
@@ -86,9 +87,16 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if w := call(owner, "POST", approvePath, `{"expected_revision":0}`); w.Code != 409 {
 		t.Fatalf("stale approval %d", w.Code)
 	}
-	first := call(owner, "POST", approvePath, `{"expected_revision":1}`)
-	if first.Code != 201 {
-		t.Fatalf("approval %d %s", first.Code, first.Body.String())
+	approvals := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { approvals <- call(owner, "POST", approvePath, `{"expected_revision":1}`) }()
+	}
+	first, repeated := <-approvals, <-approvals
+	if repeated.Code == 201 {
+		first, repeated = repeated, first
+	}
+	if first.Code != 201 || repeated.Code != 200 {
+		t.Fatalf("concurrent approvals returned %d and %d", first.Code, repeated.Code)
 	}
 	var response struct {
 		Result  string                 `json:"result"`
@@ -98,6 +106,9 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := response.Product.ID
+	if err = json.Unmarshal(repeated.Body.Bytes(), &response); err != nil || response.Result != "already_approved" || response.Product.ID != id {
+		t.Fatalf("concurrent approval did not return the same product: %s", repeated.Body.String())
+	}
 	if !collections.ValidUserID(id) || response.Product.Title != "Curated English Title" ||
 		response.Product.SourceTitle != "Captured original" ||
 		response.Product.Notes != "Internal supplier" ||
@@ -106,7 +117,10 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		response.Product.ListingFields.SellerSKU != "P-001" ||
 		response.Product.ListingFields.CategoryID != "CBT123" || response.Product.ListingFields.Titles.Spanish != "Título en español" ||
 		response.Product.ListingFields.Images == nil ||
-		len(*response.Product.ListingFields.Images) != 1 {
+		len(*response.Product.ListingFields.Images) != 1 ||
+		response.Product.ListingFields.CategoryAttributes == nil ||
+		(*response.Product.ListingFields.CategoryAttributes)[0].ValueID != "100" ||
+		(*response.Product.ListingFields.CategoryAttributes)[1].UnitID != "l" {
 		t.Fatalf("wrong snapshot or listing fields: %#v", response.Product)
 	}
 	again := call(owner, "POST", approvePath, `{"expected_revision":1}`)
@@ -205,6 +219,11 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		"images":[]}}`)
 	if emptyImageEdit.Code != 200 {
 		t.Fatalf("empty image override save %d %s", emptyImageEdit.Code, emptyImageEdit.Body.String())
+	}
+	readback := call(owner, "GET", "/api/v1/products/"+id, "")
+	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"value_id":"100"`) ||
+		!strings.Contains(readback.Body.String(), `"unit_id":"l"`) {
+		t.Fatalf("old editor or product readback lost official IDs: %d %s", readback.Code, readback.Body.String())
 	}
 	list = call(owner, "GET", "/api/v1/products", "")
 	if list.Code != 200 {

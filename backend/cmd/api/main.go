@@ -8,13 +8,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/httpapi"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 	"github.com/Fan6512/una-seller/backend/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
+	translator := configuredTranslator()
+	dictionaryDir := os.Getenv("CBT_CATEGORY_DICTIONARY_DIR")
+	if len(os.Args) > 1 && os.Args[1] == "cbt-categories" {
+		if err := updateCBTCategories(os.Args[2:], dictionaryDir, translator); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	// Bind to loopback in both local and cloud mode; public HTTPS is served by Nginx.
 	const addr = "127.0.0.1:8787"
 	local, err := loadLocalAPIConfig()
@@ -42,7 +52,7 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 {
-		log.Fatal("usage: api [migrate]")
+		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N]]")
 	}
 	if os.Getenv("UNA_SELLER_CLOUD") == "1" && (dsn == "" || supabaseURL == "" || publishableKey == "") {
 		log.Fatal("cloud API requires DATABASE_URL, SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY")
@@ -81,6 +91,24 @@ func main() {
 		}
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithCollections(store, verifier, meliService), ReadHeaderTimeout: 5 * time.Second}
+	dictionary := cbtcategory.NewReader(dictionaryDir)
+	status := dictionary.Status()
+	log.Printf("CBT category dictionary: state=%s translated=%d version=%s (paths use official English if untranslated)", status.State, status.Translated, status.Version)
+	aiCopy, err := httpapi.NewAICopyService(os.Getenv("AI_BASE_URL"), os.Getenv("AI_API_KEY"), os.Getenv("AI_MODEL"))
+	if err != nil {
+		log.Printf("AI listing copy disabled: %v", err)
+	}
+	var db *pgxpool.Pool
+	if store != nil {
+		db = store.DB
+	}
+	accounts, err := httpapi.NewAccountServices(db, os.Getenv("UNA_SELLER_SERVICE_CREDENTIALS_KEY"), os.Getenv("UNA_SELLER_SERVICE_CREDENTIALS_KEY_ID"), os.Getenv("AI_ALLOWED_BASE_URLS"))
+	if err != nil {
+		log.Fatalf("account credentials config: %v", err)
+	}
+	if accounts == nil && os.Getenv("UNA_SELLER_CLOUD") == "1" {
+		log.Print("WARNING: account AI/translation key management is disabled: UNA_SELLER_SERVICE_CREDENTIALS_KEY is not configured")
+	}
+	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithAccountServices(store, verifier, meliService, translator, dictionary, aiCopy, accounts), ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }

@@ -1,0 +1,38 @@
+import { setSiteTitleMode, useSiteTitleMode } from "./titleModePreference";
+import "./accountSettings.css";
+import "./titleModeSettings.css";
+
+export default function TitleModeSettingsPage() {
+  const mode = useSiteTitleMode();
+  return <section className="account-settings" aria-label="刊登与标题偏好">
+    <div className="page-heading">
+      <div><h1>刊登与标题偏好</h1><p>选择商品编辑器的标题展示方式，不改变 Mercado Libre 店铺的官方刊登模型。</p></div>
+    </div>
+    <article className="account-card">
+      <h2>站点标题处理方式</h2>
+      <fieldset className="title-mode-options">
+        <legend>选择编辑样式</legend>
+        <label className={"title-mode-option"+(mode === "platform_auto" ? " is-selected" : "")}>
+          <input type="radio" name="site-title-mode" value="platform_auto"
+            checked={mode === "platform_auto"} onChange={() => setSiteTitleMode("platform_auto")} />
+          <span>UP 平台自动生成站点标题（仅英文标题与详情）</span>
+        </label>
+        <p className="title-mode-option-note">商品编辑器仅显示英文 Family Name / 主标题和英文商品详情，隐藏西语、葡语文案及语言标签。</p>
+        <label className={"title-mode-option"+(mode === "localized" ? " is-selected" : "")}>
+          <input type="radio" name="site-title-mode" value="localized"
+            checked={mode === "localized"} onChange={() => setSiteTitleMode("localized")} />
+          <span>自定义站点标题（英语 EN / 墨西哥西语 MX / 巴西葡语 BR）</span>
+        </label>
+        <p className="title-mode-option-note">商品编辑器显示三语标题与详情切换、字符统计与复制功能，保留每个站点的 SEO 文案。</p>
+      </fieldset>
+      <p className="account-help" role="status">
+        当前选择：{mode === "platform_auto" ? "平台自动生成（英文标题与详情模式）" : "自定义站点标题（三语模式）"}。
+        设置仅对当前客户端的编辑界面生效，切换不会覆盖或删除任何已保存的标题、描述及变体。
+      </p>
+      <p className="account-help">
+        注意：CBT C1 发布接口尚未接通。UP 账号具体能否提交自定义站点标题，需要按官方当前接口及账号能力验证；
+        本设置不是 Legacy / UP 刊登模式开关，也不会自动执行创建或改标题操作。
+      </p>
+    </article>
+  </section>;
+}

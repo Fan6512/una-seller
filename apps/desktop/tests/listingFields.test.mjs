@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {detectTitleLanguage,initialListingFields,preferredTitle,validateListingFields} from "../src/listingFields.ts";
+import {detectTitleLanguage,initialListingFields,listingTextCount,preferredTitle,validateListingFields} from "../src/listingFields.ts";
 
 test("inbox fields begin with captured images and variants, without assigning a fake purchase cost",()=>{
   const source={
@@ -93,4 +93,63 @@ test("currency and attribute validation matches server contract before saving",(
   f.attributes=[];
   f.variants[0].image_urls=["http://not-https.example/bad.jpg"];
   assert.match(validateListingFields(f),/URL/);
+});
+
+
+test("a variant needs at least one complete attribute before saving",()=>{
+  const f=initialListingFields(null,undefined,"Waterproof Winter Plant Cleaning Spray");
+  f.variants=[{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[]}];
+  assert.match(validateListingFields(f),/变体.*属性/);
+  f.variants[0].attributes={"属性1":""};
+  assert.match(validateListingFields(f),/变体.*属性/);
+  f.variants[0].attributes={颜色:"黑色"};
+  assert.equal(validateListingFields(f),"");
+});
+
+test("purchase drafts default to CNY without relabeling historical non-CNY costs",()=>{
+  const fresh=initialListingFields(null,undefined,"Example product title");
+  assert.equal(fresh.purchase_currency,"CNY");
+  assert.equal(fresh.purchase_price,"");
+  const oldUSD=initialListingFields({purchase_price:"12.00",purchase_currency:"USD"},undefined,"Example product title");
+  assert.equal(oldUSD.purchase_currency,"USD");
+  assert.equal(oldUSD.purchase_price,"12.00");
+  const missingCurrency=initialListingFields({purchase_price:"12.00",purchase_currency:""},undefined,"Example product title");
+  assert.equal(missingCurrency.purchase_currency,"");
+  assert.equal(missingCurrency.purchase_price,"12.00");
+});
+
+test("regional titles count NFC Unicode characters and preserve unchanged saved titles", () => {
+  const fields = initialListingFields(null, undefined, "Glass jar");
+  fields.titles.es = "e\u0301".repeat(59) + "!";
+  fields.titles.pt = "🫗".repeat(59) + " ";
+  assert.equal(listingTextCount(fields.titles.es), 60);
+  assert.equal(listingTextCount(fields.titles.pt), 60);
+  assert.equal(validateListingFields(fields), "");
+  fields.titles.pt += ".";
+  const previous = { ...fields.titles };
+  assert.match(validateListingFields(fields), /60/);
+  assert.equal(validateListingFields(fields, previous), "");
+  fields.titles.pt = fields.titles.pt.replace(".", ",");
+  assert.match(validateListingFields(fields, previous), /60/);
+});
+
+test("optional localized descriptions round-trip independently as multiline plain text", () => {
+  const legacy = initialListingFields(null, undefined, "Glass jar");
+  assert.equal(Object.hasOwn(legacy, "descriptions"), false);
+  const stored = { en: "A glass jar.\n\nFor indoor use.", es: "Para guardar.", pt: "🧪".repeat(20000) };
+  const fields = initialListingFields({ ...legacy, descriptions: stored });
+  assert.deepEqual(fields.descriptions, stored);
+  assert.equal(validateListingFields(fields), "");
+  for (const invalid of ["<p>Hola</p>", "**Hola**", "# Hola", "[Hola](https://example.com)", "\x00"]) {
+    fields.descriptions.es = invalid;
+    assert.match(validateListingFields(fields), /纯文本/);
+  }
+  for (const normal of ["- Hola", "1. Package includes two pieces", "10 * 20 * 30 cm"]) {
+    fields.descriptions.es = normal;
+    assert.equal(validateListingFields(fields), "");
+  }
+  fields.descriptions.es = "Para guardar.";
+  fields.descriptions.pt += "🧪";
+  assert.match(validateListingFields(fields), /20000/);
+  assert.equal(stored.pt.length, 40000);
 });

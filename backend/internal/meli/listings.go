@@ -63,12 +63,13 @@ type listingCursor struct {
 }
 
 type ListingPage struct {
-	Review       *ListingReview    `json:"review,omitempty"`
-	Items        []json.RawMessage `json:"items"`
-	HasMore      bool              `json:"has_more"`
-	SyncedAt     *time.Time        `json:"synced_at"`
-	NextOffset   *int              `json:"next_offset"`
-	ScanRequired bool              `json:"scan_required"`
+	Review         *ListingReview    `json:"review,omitempty"`
+	Items          []json.RawMessage `json:"items"`
+	CBTCategoryIDs []string          `json:"-"`
+	HasMore        bool              `json:"has_more"`
+	SyncedAt       *time.Time        `json:"synced_at"`
+	NextOffset     *int              `json:"next_offset"`
+	ScanRequired   bool              `json:"scan_required"`
 }
 
 type ListingSync struct {
@@ -118,7 +119,8 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
 	}
 	page := ListingPage{Items: []json.RawMessage{}}
 	// Recheck the connection in the same SQL statement that reads its private rows.
-	rows, err := s.db.Query(ctx, `SELECT sync.synced_at, CASE WHEN sync.store_id IS NULL THEN 0 ELSE sync.next_offset END, COALESCE(sync.scan_required,false), sync.review, item.details
+	rows, err := s.db.Query(ctx, `SELECT sync.synced_at, CASE WHEN sync.store_id IS NULL THEN 0 ELSE sync.next_offset END, COALESCE(sync.scan_required,false), sync.review, item.details,
+        CASE WHEN $3='CBT' THEN item.details->>'category_id' ELSE parent.details->>'category_id' END
       FROM app.meli_store_connections c
       LEFT JOIN app.meli_listing_syncs sync ON (sync.store_id,sync.site_id,sync.logistic_type,sync.seller_id)=(c.id,$3,$4,$9)
       LEFT JOIN LATERAL (
@@ -128,6 +130,13 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
           AND details->>'seller_id'=$9
         ORDER BY listing_id OFFSET $5 LIMIT $6
       ) item ON true
+      LEFT JOIN app.meli_published_listings parent
+        ON $3<>'CBT' AND item.details->>'detail_unavailable_at' IS NULL
+        AND (parent.store_id,parent.site_id,parent.logistic_type)=(c.id,'CBT','')
+        AND parent.details->>'seller_id'=c.seller_id AND parent.detail_unavailable_at IS NULL
+        AND parent.listing_id=COALESCE(
+          CASE WHEN item.details->>'cbt_item_id' ~ '^CBT[0-9]{1,30}$' THEN item.details->>'cbt_item_id' END,
+          CASE WHEN item.details->>'parent_item_id' ~ '^CBT[0-9]{1,30}$' THEN item.details->>'parent_item_id' END)
       WHERE c.id=$1::uuid AND c.owner_user_id=$2::uuid AND c.status='connected'
         AND c.marketplaces=$7::jsonb AND c.marketplaces_status=$8
       ORDER BY item.listing_id`, store, owner, scope.Site, scope.Logistic, offset, ListingPageSize+1, row.marketsJSON, row.marketsStatus, seller)
@@ -138,12 +147,18 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
 	found := false
 	for rows.Next() {
 		var detail json.RawMessage
-		if err = rows.Scan(&page.SyncedAt, &page.NextOffset, &page.ScanRequired, &page.Review, &detail); err != nil {
+		var cbtCategoryID *string
+		if err = rows.Scan(&page.SyncedAt, &page.NextOffset, &page.ScanRequired, &page.Review, &detail, &cbtCategoryID); err != nil {
 			return ListingPage{}, err
 		}
 		found = true
 		if detail != nil {
 			page.Items = append(page.Items, detail)
+			categoryID := ""
+			if cbtCategoryID != nil {
+				categoryID = *cbtCategoryID
+			}
+			page.CBTCategoryIDs = append(page.CBTCategoryIDs, categoryID)
 		}
 	}
 	if err = rows.Err(); err != nil {
@@ -155,6 +170,7 @@ func (s *Service) ListPublished(ctx context.Context, owner, store string, scope 
 	if len(page.Items) > ListingPageSize {
 		page.HasMore = true
 		page.Items = page.Items[:ListingPageSize]
+		page.CBTCategoryIDs = page.CBTCategoryIDs[:ListingPageSize]
 	}
 	return page, nil
 }
@@ -827,7 +843,7 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	if strings.HasPrefix(path, "/marketplace/shipments/") && strings.HasSuffix(path, "/sla") {
+	if strings.HasPrefix(path, "/marketplace/shipments/") {
 		req.Header.Set("x-format-new", "true")
 	}
 	var written atomic.Bool

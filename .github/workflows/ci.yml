@@ -153,11 +153,17 @@ jobs:
       - name: Verify order workbench scope switching
         run: node --test tests/ordersScope.test.mjs
 
+      - name: Verify CBT category form
+        run: node --test tests/categoryAttributes.test.mjs
+
       - name: Verify product-box workflow decisions
         run: node --experimental-strip-types --test tests/workbenchRules.test.mjs
 
       - name: Verify editable listing field defaults and validation
         run: node --experimental-strip-types --test tests/listingFields.test.mjs
+
+      - name: Verify working-draft gallery and variant editor invariants
+        run: node --experimental-strip-types --test tests/editorUx.test.mjs
 
       - name: Verify desktop version files agree
         run: node ../../scripts/desktop-version.mjs --check

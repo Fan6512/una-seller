@@ -18,17 +18,38 @@ export type StoreConnection = {
   updated_at: string;
   marketplaces_status: "verified" | "unverified";
   marketplaces: StoreMarketplace[];
+  publication_mode?: "fully_managed" | "standard_up" | "legacy_candidate" | "undetermined";
+  publication_mode_checked_at?: string | null;
+  publication_evidence?: PublicationEvidence | null;
+};
+
+export type PublicationEvidence = {
+  publication_mode: "fully_managed" | "standard_up" | "legacy_candidate" | "undetermined";
+  mode_evidence_level: "c0_read_only_not_publish_approved";
+  sell_allowed: "enabled" | "disabled" | "unverified";
+  user_product_seller: "present" | "absent" | "unverified";
+  warehouse_management: "present" | "absent" | "unverified";
+  sites: {
+    site_id: string;
+    logistic_type: string;
+    business_model: string;
+    pricing_model: string;
+    user_product: string;
+  }[];
+  checked_at: string;
 };
 
 export type Review = { listing_id?: string; offset: number; reason: string; skippable: boolean };
 export type ListingPage = { items: Listing[]; has_more: boolean; synced_at: string | null; next_offset: number | null; scan_required: boolean; review?: Review };
 
-class StoreRequestError extends Error {
+export class StoreRequestError extends Error {
   readonly status: number;
+  readonly code: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code = "") {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -181,7 +202,8 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
       const detail = await response.json().catch(() => null) as { error?: string } | null;
       assertActive();
       diagnostic?.("failed", response, detail?.error);
-      throw new StoreRequestError(errorLabel(detail?.error || "order_unavailable", response.status), response.status);
+      const code = detail?.error || "order_unavailable";
+      throw new StoreRequestError(errorLabel(code, response.status), response.status, code);
     }
     diagnostic?.("failed", response);
     const reason = ({
@@ -258,6 +280,17 @@ export async function startStoreAuthorization() {
     throw new Error("服务器返回的授权地址无效");
   }
   return response.authorization_url;
+}
+
+// Explicit C0-only probe. The backend uses the store's owner-scoped encrypted
+// OAuth connection and only makes official GET requests (plus token refresh).
+// No implicit retry after an uncertain local status write.
+export async function probeStorePublicationMode(id: string): Promise<PublicationEvidence> {
+  const lifetime = authLifetime();
+  return storeRequest<PublicationEvidence>(
+    "/api/v1/stores/" + encodeURIComponent(id) + "/publication-mode/probe",
+    "POST", AbortSignal.any([lifetime, AbortSignal.timeout(55_000)]),
+  );
 }
 
 export async function disconnectStore(id: string) {
