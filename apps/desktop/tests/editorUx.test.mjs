@@ -159,6 +159,9 @@ test("workbench keeps one editable selling-points area at the bottom and preserv
   assert.match(source,/set\("bullet_points",points\)/);
   const own=readFileSync(new URL("../src/OwnProductsPage.tsx",import.meta.url),"utf8");
   assert.doesNotMatch(own,/旧版商品描述（历史参考，非默认刊登）/);
+  assert.match(own,/legacyDescriptionOversize&&<details/);
+  assert.match(own,/清空超长历史描述/);
+  assert.match(own,/window\.confirm\("确认清空超长历史描述/);
   assert.match(own,/description:p\.description/);
   assert.match(own,/updateOwnProduct\(product\.id,\{\.\.\.fields,revision:product\.revision\}/);
   const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");

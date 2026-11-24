@@ -13,6 +13,12 @@ export const enumOnly = (rule: CBTAttributeRule) => rule.value_type === "list" |
 export const requiredAttribute = (rule: CBTAttributeRule, technical?: readonly string[]) =>
   Boolean(rule.tags?.required || rule.tags?.new_required || technical?.includes(rule.id));
 
+export const variantRuleEditable = (rule: CBTAttributeRule) =>
+  !["read_only","hidden","fixed","multivalued","conditional_required","size_grid_required"].some(t=>rule.tags?.[t]) &&
+  (enumOnly(rule) ? choicesFor(rule).length > 0 :
+    rule.value_type === "number_unit" ? unitsFor(rule).length > 0 :
+      rule.value_type === "string" || rule.value_type === "number");
+
 function validation(rule: CBTAttributeRule, field: CategoryAttributeValue | undefined, mandatory: boolean) {
   if (!field?.value.trim()) return mandatory ? "待填写必填值" : "";
   if (Array.from(field.value).length > Math.min(rule.value_max_length || 500, 500)) return "超出官方长度上限";
@@ -75,9 +81,14 @@ export default function CategoryAttributesForm({ category, values, onChange, dis
     .map(value => [value.id, value]));
   const retained = current ? values.filter(value => (value.value || value.unit_id) &&
     (value.category_id !== category || !editable.some(rule => rule.id === value.id))) : values;
+  const covered = new Set([...editable.map(rule => rule.id),
+    ...(hasVariants ? rules.filter(rule => rule.hierarchy === "CHILD_PK" && variantRuleEditable(rule)).map(rule => rule.id) : [])]);
+  const deferredRequired = [...new Set([...(current?.technical_requirements ?? []),
+    ...rules.filter(rule => requiredAttribute(rule)).map(rule => rule.id)])].filter(id => !covered.has(id));
+  const platformManaged = (rule?: CBTAttributeRule) => Boolean(rule &&
+    (rule.hierarchy === "CHILD_DEPENDENT" || rule.tags?.read_only || rule.tags?.fixed || rule.tags?.hidden));
   const special = current && (!current.technical_specs_verified || current.special_requirements ||
-    editable.length !== commonRules.length);
-  const deferredRequired = current?.technical_requirements?.filter(id => !rules.some(rule => rule.id === id)) ?? [];
+    deferredRequired.length > 0 || commonRules.some(rule => !covered.has(rule.id) && !platformManaged(rule)));
   const recordKey = (value: CategoryAttributeValue) => value.category_id + ":" + value.id;
 
   function setField(id: string, value: string, valueID?: string, unitID?: string) {
@@ -103,8 +114,10 @@ export default function CategoryAttributesForm({ category, values, onChange, dis
         {!current.technical_specs_verified && " 补充技术规范尚未核实。"}</p>}
       {deferredRequired.length > 0 && <p className="listing-validation">补充技术规范必填项，刊登前核实：{deferredRequired.map(id => {
         const names = current.technical_requirement_names;
-        return names && Object.hasOwn(names, id) ? display(names[id]) : id;
-      }).join("、")}</p>}
+        const rule = rules.find(r => r.id === id);
+        const name = names && Object.hasOwn(names, id) ? names[id] : rule?.name || id;
+        return display(name) + (platformManaged(rule) ? "（平台依赖／只读，需核实平台填充）" : "（暂无可编辑控件，需人工核实）");
+      }).join("、")}。可保存工作稿，刊登前核实。</p>}
       {rules.length === 0 && <p className="listing-fields-note">官方未返回可用属性。仍需在刊登前校验。</p>}
       {editable.length > 0 && <div className="listing-field-grid">
         {editable.map(rule => {

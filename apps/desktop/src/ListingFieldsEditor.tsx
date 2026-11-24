@@ -1,4 +1,4 @@
-import CategoryAttributesForm, { choicesFor, enumOnly, requiredAttribute, unitsFor } from "./CategoryAttributesForm";
+import CategoryAttributesForm, { choicesFor, enumOnly, requiredAttribute, unitsFor, variantRuleEditable } from "./CategoryAttributesForm";
 import AICopyPanel from "./AICopyPanel";
 import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTitle } from "./listingFields";
@@ -99,9 +99,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const [specSearch,setSpecSearch]=useState<Record<string,string>>({});
   useEffect(()=>setSpecSearch({}),[value.category_id]);
   const bilingual=(name:string)=>Object.hasOwn(translations,name)&&translations[name]!==name?name+"（"+translations[name]+"）":name;
-  const supported=(rule:CBTAttributeRule)=>!["read_only","hidden","fixed","multivalued","conditional_required","size_grid_required"].some(t=>rule.tags?.[t])&&
-    (enumOnly(rule)?choicesFor(rule).length>0:
-      rule.value_type==="number_unit"?unitsFor(rule).length>0:rule.value_type==="string"||rule.value_type==="number");
+  const supported=variantRuleEditable;
   const hasChoices=(rule:CBTAttributeRule)=>supported(rule)&&rule.value_type!=="number_unit"&&choicesFor(rule).length>0;
   const duplicateCount=images.length-removeDuplicateGalleryLinks(images).length;
   const languages=[
@@ -134,10 +132,14 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     const specs=(v.category_attributes??[]).filter(a=>a.category_id===value.category_id&&a.value.trim()&&
       (!activeRules||childRules.some(rule=>rule.id===a.id)));
     const ordered=activeRules?childRules.flatMap(rule=>specs.filter(a=>a.id===rule.id)):specs;
-    const official=ordered.map(a=>bilingual(a.value.trim())+(a.unit_id?" "+a.unit_id:"")).join(" / ");
-    const raw=Object.values(v.attributes).map(s=>s.trim()).filter(Boolean).map(bilingual).join(" / ");
+    const official=ordered.map(a=>{
+      const rule=childRules.find(r=>r.id===a.id);
+      const unit=rule&&a.unit_id?unitsFor(rule).find(u=>u.id===a.unit_id)?.name:undefined;
+      return bilingual(a.value.trim())+(a.unit_id?" "+bilingual(unit||a.unit_id):"");
+    }).join(" / ");
+    const raw=Object.values(v.attributes??{}).filter(s=>typeof s==="string").map(s=>s.trim()).filter(Boolean).map(bilingual).join(" / ");
     const spec=official||raw;
-    return "变体 "+(i+1)+" · "+([spec,v.seller_sku.trim()].filter(Boolean).join(" · ")||"未命名");
+    return "变体 "+(i+1)+" · "+([spec,(v.seller_sku??"").trim()].filter(Boolean).join(" · ")||"未命名");
   };
   const beginReuse=(mode:"bulk"|"single",target?:number)=>{
     const index=variants.findIndex((v,i)=>i!==target&&v.image_urls.length>1);
@@ -449,6 +451,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       </div>
       {activeRules&&variants.length>0&&<p className="listing-fields-note">家族共用属性请在 CBT 官方属性中填写。刊登前核对家族名称、类目和商品状态一致。</p>}
       <p className="listing-fields-note">{!activeRules?"选择 CBT 类目并加载官方规则后可填写 UP 规格。":childRules.length===0?"当前规则未返回 CHILD_PK，保留原始规格，需在刊登前核实。":"官方规格使用英文及官方 ID，中文仅辅助阅读。原始规格不自动提交。"}</p>
+      {variants.length>0&&<p className="listing-fields-note">规格警告不阻止保存工作稿；有未核实项或重复组合时，不代表已通过正式刊登校验，刊登前必须修正。</p>}
       <div className="listing-variant-table-scroll" role="region" aria-label="可横向滚动的变体表格" tabIndex={0}>
         <table className="listing-variant-table">
           <thead><tr>{childRules.map(rule=><th className="listing-variant-official" key={rule.id} scope="col">
@@ -487,11 +490,11 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
                 </>:<small>特殊属性，保留历史值：{f?.value??"—"}</small>}
                 {candidate&&<button type="button" disabled={disabled}
                   onClick={()=>setOfficialSpec(i,rule,candidate.name,String(candidate.id))}>匹配 {bilingual(candidate.name)}</button>}
-                {issue&&<small className="listing-validation">{issue}</small>}
+                {issue&&<small className="listing-validation">{issue} · 可保存工作稿，刊登前修正</small>}
               </td>;
             })}
             <td className="listing-variant-spec">
-              {completeKeys[i]&&completeKeys.filter(k=>k===completeKeys[i]).length>1&&<small className="listing-validation">重复官方规格组合 · 刊登前修正</small>}
+              {completeKeys[i]&&completeKeys.filter(k=>k===completeKeys[i]).length>1&&<small className="listing-validation">重复官方规格组合 · 可保存工作稿，刊登前修正</small>}
               {(v.category_attributes??[]).filter(a=>a.category_id!==value.category_id||!childRules.some(r=>r.id===a.id)).map(a=><div key={a.category_id+":"+a.id}>
                 <small>历史规格：{a.category_id} · {a.id} · {a.value}</small>
                 <button type="button" disabled={disabled} onClick={()=>updateVariant(i,{category_attributes:(v.category_attributes??[]).filter(x=>x.category_id!==a.category_id||x.id!==a.id)})}>删除历史规格</button>

@@ -63,13 +63,15 @@ window.fetch = (path, options) => {
     category_id: id, technical_specs_verified: true,
     translations_zh: id === "CBT2" ? { Brand: "品牌", Plastic: "塑料", Style: "款式" } : undefined,
     path_zh: id === "CBT2" ? ["家居", "Other"] : undefined,
-    technical_requirements: id === "CBT2" ? ["STYLE"] : id === "CBT1055" ? ["INTERNAL_MEMORY"] : undefined,
+    technical_requirements: id === "CBT2" ? ["STYLE","READONLY_CODE","SPECIAL_GRID"] : id === "CBT1055" ? ["INTERNAL_MEMORY"] : undefined,
     technical_requirement_names: id === "CBT2" ? { STYLE: "Style" } : undefined,
     path: [{ id: "CBT1", name: "Home" }, { id, name: id === "CBT1" ? "Jugs" : "Other" }],
     attributes: id === "CBT1" ? fields : id === "CBT2" ? [
       fields[0],
       { ...fields[2], allowed_units: [{ id: "ml", name: "mL" }] },
       { ...fields[3], values: [{ id: 300, name: "Plastic" }] },
+      {id:"READONLY_CODE",name:"Read-only code",value_type:"string",tags:{read_only:true}},
+      {id:"SPECIAL_GRID",name:"Special grid",value_type:"string",tags:{size_grid_required:true}},
     ] : id === "CBT1055" ? [
       {id:"IS_DUAL_SIM",name:"Is Dual SIM",hierarchy:"PARENT_PK",value_type:"boolean",tags:{required:true},
         values:[{id:"242084",name:"No"},{id:"242085",name:"Yes"}]},
@@ -166,7 +168,9 @@ try {
   const newBrand = (await loaded("label", "品牌 · Brand")).querySelector("input");
   await loaded("p", "家居 / Other");
   await loaded("p", "Home / Other");
-  await loaded("p", "款式 · Style");
+  const deferredTechnical = await loaded("p", "款式 · Style");
+  assert(deferredTechnical.textContent.includes("Read-only code（平台依赖／只读")&&
+    deferredTechnical.textContent.includes("Special grid（暂无可编辑控件"),"required technical fields without editable controls were omitted");
   await loaded("option", "塑料 · Plastic");
   assert(newBrand.value === "" && working.length === 4 && working.every(field => field.category_id === "CBT1"),
     "changing category accepted or lost historical values");
@@ -333,6 +337,7 @@ try {
   assert(commonColor.options.length>1,"single-product official string suggestions missing");
   input((await loaded("label","Is Dual SIM · 必填 · 家族共用")).querySelector("select"),"242085");
   await loaded("th", "Color（颜色）");
+  assert(![...document.querySelectorAll("p")].some(p=>p.textContent.includes("存在特殊官方要求")),"optional dependent field alone produced a warning");
   await click("button", "+ 添加变体");
   await click("button", "+ 添加变体");
   const color1=await loaded("th","Color（颜色）");
@@ -348,7 +353,7 @@ try {
   const secondColor=document.querySelector('select[aria-label="变体 2 Color"]');
   const secondCustom=document.querySelector('input[aria-label="变体 2 Color 自定义值"]');
   input(secondCustom,"黑色");
-  await loaded("small","请填写英文规格");
+  await loaded("small","请填写英文规格 · 可保存工作稿，刊登前修正");
   input(secondColor,"52055");
   assert(editor.variants[0].category_attributes[0].value==="Black"&&
     editor.variants[0].category_attributes[0].value_id==="52049"&&

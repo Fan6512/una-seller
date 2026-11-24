@@ -17,7 +17,7 @@ test("batch approval distinguishes actual transfers, existing products and failu
 });
 
 test("deterministic write rejection does not lock the product editor", () => {
-  for (const code of [400,404,409,415]) {
+  for (const code of [400,404,409,415,422]) {
     assert.equal(productSaveNeedsReadback(code), false, String(code));
   }
   for (const code of [undefined,202,401,500,504]) {
