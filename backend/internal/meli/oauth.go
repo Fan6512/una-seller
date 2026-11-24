@@ -55,17 +55,17 @@ type Service struct {
 }
 
 type Store struct {
-	ID             string        `json:"id"`
-	SellerID       string        `json:"seller_id"`
-	Nickname       string        `json:"nickname"`
-	Status         string        `json:"status"`
-	TokenExpiresAt *time.Time    `json:"token_expires_at,omitempty"`
-	UpdatedAt      time.Time     `json:"updated_at"`
-	Marketplaces   []Marketplace `json:"marketplaces"`
-	MarketsStatus  string        `json:"marketplaces_status"`
-	PublicationMode string `json:"publication_mode"`
-	PublicationModeCheckedAt *time.Time `json:"publication_mode_checked_at,omitempty"`
-	PublicationEvidence *PublicationEvidence `json:"publication_evidence,omitempty"`
+	ID                       string               `json:"id"`
+	SellerID                 string               `json:"seller_id"`
+	Nickname                 string               `json:"nickname"`
+	Status                   string               `json:"status"`
+	TokenExpiresAt           *time.Time           `json:"token_expires_at,omitempty"`
+	UpdatedAt                time.Time            `json:"updated_at"`
+	Marketplaces             []Marketplace        `json:"marketplaces"`
+	MarketsStatus            string               `json:"marketplaces_status"`
+	PublicationMode          string               `json:"publication_mode"`
+	PublicationModeCheckedAt *time.Time           `json:"publication_mode_checked_at,omitempty"`
+	PublicationEvidence      *PublicationEvidence `json:"publication_evidence,omitempty"`
 }
 
 func NewService(db *pgxpool.Pool, cfg Config) (*Service, error) {

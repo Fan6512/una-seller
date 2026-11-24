@@ -143,7 +143,9 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		owner, ok := a.requireOwner(w, r)
-		if !ok { return }
+		if !ok {
+			return
+		}
 		evidence, err := a.service.ProbePublicationMode(r.Context(), owner, storeID)
 		switch {
 		case errors.Is(err, meli.ErrStoreNotFound):

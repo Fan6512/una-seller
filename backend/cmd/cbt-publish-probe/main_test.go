@@ -250,11 +250,11 @@ func TestProbeDoesNotLeakFailedResponseOrFollowRedirect(t *testing.T) {
 
 func TestInferenceRequiresExplicitC0Evidence(t *testing.T) {
 	cases := []struct {
-		name string
-		tags string
+		name    string
+		tags    string
 		allowed string
-		sites []marketplaceEvidence
-		want string
+		sites   []marketplaceEvidence
+		want    string
 	}{
 		{"managed_any_child", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: unverified}}, "fully_managed"},
 		{"up_tag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "enabled"}}, "standard_up"},
