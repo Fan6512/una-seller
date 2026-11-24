@@ -77,10 +77,10 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	draftBody := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":0,
 "listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT123","category_path":"Beleza / Cuidados",
 "category_attributes":[{"category_id":"CBT123","id":"COLOR","value_id":"100","value":"Blue"},{"category_id":"CBT123","id":"CAPACITY","value":"1.5","unit_id":"l"}],
-"brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY",
+"brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY","target_net_proceeds_usd":"10.25",
 "weight_g":"850","length_cm":"20.5","width_cm":"15","height_cm":"5",
 "images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],
-"variants":[{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","image_urls":[]}]}}`
+"variants":[{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","purchase_cost_cny":"24.50","target_net_proceeds_usd":"11.25","category_attributes":[{"category_id":"CBT123","id":"COLOR","value_id":"101","value":"Black"}],"image_urls":["https://example.com/black.jpg","https://example.com/shared.jpg"]}]}}`
 	if w := call(owner, "PUT", draftPath, draftBody); w.Code != 200 {
 		t.Fatalf("draft %d %s", w.Code, w.Body.String())
 	}
@@ -120,7 +120,15 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		len(*response.Product.ListingFields.Images) != 1 ||
 		response.Product.ListingFields.CategoryAttributes == nil ||
 		(*response.Product.ListingFields.CategoryAttributes)[0].ValueID != "100" ||
-		(*response.Product.ListingFields.CategoryAttributes)[1].UnitID != "l" {
+		(*response.Product.ListingFields.CategoryAttributes)[1].UnitID != "l" ||
+		response.Product.ListingFields.TargetNetProceedsUSD == nil || *response.Product.ListingFields.TargetNetProceedsUSD != "10.25" ||
+		response.Product.ListingFields.Variants == nil || len(*response.Product.ListingFields.Variants) != 1 ||
+		(*response.Product.ListingFields.Variants)[0].PurchaseCostCNY != "24.50" ||
+		(*response.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" ||
+		(*response.Product.ListingFields.Variants)[0].Price != "89.90" ||
+		len((*response.Product.ListingFields.Variants)[0].CategoryAttributes) != 1 ||
+		(*response.Product.ListingFields.Variants)[0].CategoryAttributes[0].ValueID != "101" ||
+		len((*response.Product.ListingFields.Variants)[0].ImageURLs) != 2 {
 		t.Fatalf("wrong snapshot or listing fields: %#v", response.Product)
 	}
 	again := call(owner, "POST", approvePath, `{"expected_revision":1}`)
@@ -183,7 +191,10 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	}
 	if editedResponse.Product.ListingFields.WeightG != "1200" ||
 		editedResponse.Product.ListingFields.SellerSKU != "P-002" ||
-		editedResponse.Product.ListingFields.CategoryID != "CBT999" || editedResponse.Product.ListingFields.Titles.Portuguese != "Outro título em português" {
+		editedResponse.Product.ListingFields.CategoryID != "CBT999" || editedResponse.Product.ListingFields.Titles.Portuguese != "Outro título em português" ||
+		editedResponse.Product.ListingFields.TargetNetProceedsUSD == nil || *editedResponse.Product.ListingFields.TargetNetProceedsUSD != "10.25" ||
+		editedResponse.Product.ListingFields.Variants == nil || len(*editedResponse.Product.ListingFields.Variants) != 1 ||
+		(*editedResponse.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" {
 		t.Fatalf("merchant listing edit not persisted: %#v", editedResponse.Product.ListingFields)
 	}
 	if w := call(owner, "PUT", "/api/v1/products/"+id,
