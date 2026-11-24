@@ -1,11 +1,14 @@
+import CategoryAttributesForm from "./CategoryAttributesForm";
+import AICopyPanel from "./AICopyPanel";
 import type { ListingFields, ListingVariant } from "./listingFields";
-import { detectTitleLanguage, preferredTitle } from "./listingFields";
-import { getCBTCategorySuggestions, type CBTCategorySuggestion } from "./collections";
+import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTitle } from "./listingFields";
+import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion } from "./collections";
 import { useEffect, useRef, useState } from "react";
 import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute } from "./editorUx";
+import { useSiteTitleMode } from "./titleModePreference";
 
-type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean};
-export default function ListingFieldsEditor({value,onChange,disabled=false}:Props) {
+type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean;aiProduct?:AICopyProduct;aiSaved?:Partial<ListingFields>};
+export default function ListingFieldsEditor({value,onChange,disabled=false,aiProduct,aiSaved}:Props) {
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
   const [predicting,setPredicting]=useState(false);
@@ -13,6 +16,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
   const predictionRequest = useRef<AbortController|null>(null);
   const [copyMessage,setCopyMessage]=useState("");
   const [activeLanguage,setActiveLanguage]=useState<"en"|"es"|"pt">("en");
+  const siteTitleMode=useSiteTitleMode();
+  const platformAuto=siteTitleMode==="platform_auto";
   const [imagePreview,setImagePreview]=useState<number|null>(null);
   const [editingImage,setEditingImage]=useState<number|null>(null);
   const [variantImageIndex,setVariantImageIndex]=useState<number|null>(null);
@@ -25,9 +30,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
     setPredicting(false);
     setSuggestions([]);
     const titles={...value.titles,[lang]:title};
-    // CBT predictions depend on the English title, not the country languages.
-    // Never leave a category that was chosen for a different English title.
-    if(lang==="en" && title!==value.titles.en && value.category_id) {
+    // Invalidate the category selected for the old English title, keeping its attribute history.
+    if(lang==="en" && title.normalize("NFC")!==value.titles.en.normalize("NFC") && value.category_id) {
       onChange({...value,titles,category_id:"",category_path:""});
       setPredictMessage("英文标题已修改，请重新选择或手动填写 CBT 类目。");
     } else {
@@ -35,15 +39,24 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       setPredictMessage("");
     }
   };
-  const copyTitle=async(lang:"en"|"es"|"pt")=>{
-    const title=value.titles[lang];
-    if(!title)return;
+  const setLocalizedDescription=(lang:"en"|"es"|"pt", text:string, sourceDigest?:string)=>{
+    const descriptions={en:"",es:"",pt:"",...value.descriptions,[lang]:text};
+    if(lang!=="en") {
+      onChange({...value,descriptions,description_translation:{
+        ...value.description_translation,[`${lang}_source_digest`]:sourceDigest??"",
+      }});
+    } else {
+      set("descriptions",descriptions);
+    }
+  };
+  const copyListingText=async(text:string,label:string)=>{
+    if(!text)return;
     try {
       if(!navigator.clipboard?.writeText)throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(title);
-      setCopyMessage(lang+" 已复制");
+      await navigator.clipboard.writeText(text);
+      setCopyMessage("已复制"+label);
     }catch{
-      setCopyMessage("复制未完成，请手动选择标题文本");
+      setCopyMessage("复制未完成，请手动选择文本");
     }
   };
   const predict=async()=>{
@@ -96,33 +109,85 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
   const updateVariant=(index:number,patch:Partial<ListingVariant>)=>{
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
   };
-  return <section className="listing-fields">
-    <fieldset className="listing-editor-panel">
-      <legend>多语言标题</legend>
-      <div className="listing-language-tabs" role="group" aria-label="标题语言">
-        {languages.map(item=><button key={item.key} type="button"
-          aria-pressed={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
-          {item.label} <small>{Array.from(value.titles[item.key]).length}</small>
-        </button>)}
-      </div>
+  // These controls have separate identities across modes and languages so an
+  // already focused Spanish/Portuguese textarea cannot become the English input.
+  const renderTitle=(lang:"en"|"es"|"pt",label:string)=>{
+    const language=languages.find(item=>item.key===lang)!;
+    const count=listingTextCount(value.titles[lang]);
+    return <>
       <label className="listing-field listing-active-title">
-        <span>{selectedLanguage.full}</span>
-        <textarea rows={3} disabled={disabled} maxLength={500}
-          value={value.titles[activeLanguage]}
-          onChange={e=>setLocalizedTitle(activeLanguage,e.target.value)}
-          placeholder="可人工填写或后续 AI 生成；不编造产品属性"/>
+        <span>{label}</span>
+        <textarea key={siteTitleMode+":"+lang} rows={3} disabled={disabled}
+          value={value.titles[lang]}
+          onChange={e=>setLocalizedTitle(lang,e.target.value)}
+          placeholder="填写商品标题"/>
       </label>
       <div className="localized-title-actions">
-        <small className={"localized-title-count "+(activeLanguage!=="en"&&Array.from(value.titles[activeLanguage]).length>60?"title-over-limit":"")}>
-          {Array.from(value.titles[activeLanguage]).length} 字符（含空格及符号） · {selectedLanguage.target}
+        <small className={"localized-title-count "+(count>localizedTitleLimit?"title-over-limit":"")}>
+          {count} 字符（含空格及符号） · {language.target}
+          {lang==="en"&&count>localizedTitleLimit?" · 已超过 60 字符":""}
         </small>
-        <button type="button" disabled={!value.titles[activeLanguage]} onClick={()=>void copyTitle(activeLanguage)}>
-          复制{activeLanguage==="en"?"英文":activeLanguage==="es"?"西语":"葡语"}标题
+        <button type="button" disabled={!value.titles[lang]} onClick={()=>void copyListingText(value.titles[lang],"标题")}>
+          复制{lang==="en"?"英文":lang==="es"?"西语":"葡语"}标题
         </button>
       </div>
-      {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
-      {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
-    </fieldset>
+    </>;
+  };
+  const languageTabs=<div className="listing-language-tabs" role="group"
+    aria-label="标题与详情语言">
+    {languages.map(item=><button key={item.key} type="button"
+      aria-pressed={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
+      {item.label} <small>{listingTextCount(value.titles[item.key])}</small>
+    </button>)}
+  </div>;
+  const renderDescription=(lang:"en"|"es"|"pt")=><>
+    <label className="listing-field">{languages.find(item=>item.key===lang)!.label}商品描述
+      <textarea key={siteTitleMode+":description:"+lang} rows={5} disabled={disabled} value={value.descriptions?.[lang]??""}
+        onChange={e=>setLocalizedDescription(lang,e.target.value)} placeholder="填写纯文本商品描述"/>
+      <small>{listingTextCount(value.descriptions?.[lang]??"")} / 20000 字符</small>
+    </label>
+    <div className="localized-title-actions">
+      <button type="button" disabled={!value.descriptions?.[lang]}
+        onClick={()=>void copyListingText(value.descriptions?.[lang]??"","详情")}>复制详情</button>
+    </div>
+  </>;
+  return <section className="listing-fields">
+    {platformAuto ? <>
+      <fieldset key="platform-auto-title" className="listing-editor-panel">
+        <legend>UP 英文主标题</legend>
+        <p className="listing-fields-note">平台自动生成模式：仅编辑英文标题和详情。已保存的西语、葡语标题与详情会原样保留。</p>
+        {renderTitle("en","英文主标题（UP Family Name 参考）")}
+        {!value.titles.en.trim()&&<p className="listing-fields-note">尚未填写英文主标题。未来使用 UP 自动生成模式刊登前须填写英文标题；现有工作稿仍可按原规则保存。</p>}
+      </fieldset>
+      <fieldset key="platform-auto-description" className="listing-editor-panel">
+        <legend>英文商品详情</legend>
+        {renderDescription("en")}
+      </fieldset>
+    </> : <fieldset key="localized-title-description" className="listing-editor-panel">
+      <legend>多语言标题与描述</legend>
+      <p className="listing-fields-note">自定义站点标题：分别编辑英文、西语和葡语；最终能否提交站点级标题取决于 CBT 账号与官方接口。</p>
+      {languageTabs}
+      {renderTitle(activeLanguage,selectedLanguage.full)}
+      {renderDescription(activeLanguage)}
+    </fieldset>}
+    {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
+    {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
+    {aiProduct&&<AICopyPanel product={aiProduct} value={value} saved={aiSaved} disabled={disabled} englishOnly={platformAuto} onAdoptPoints={points=>{
+      if(value.bullet_points.some(text=>text.trim()) &&
+        JSON.stringify(value.bullet_points)!==JSON.stringify(points) &&
+        !window.confirm("采纳 AI 卖点会替换当前全部商品卖点，是否继续？"))return;
+      set("bullet_points",points);
+    }} onAdopt={(field,lang,text,sourceDigest)=>{
+      if(platformAuto&&lang!=="en")return;
+      if(field==="descriptions"){
+        setLocalizedDescription(lang,text,sourceDigest);
+        return;
+      }
+      if(lang==="en"&&value.category_id&&text!==value.titles.en.normalize("NFC")&&!window.confirm(
+        "采纳新的英文标题会清空当前 CBT 类目及路径，但已填写属性会保留为历史参考。"
+      ))return;
+      setLocalizedTitle(lang,text);
+    }}/>}
     <h4 className="listing-editor-section-title">基础信息</h4>
     <fieldset><legend>分类建议与基本属性</legend>
       <div className="category-predict-row">
@@ -132,24 +197,43 @@ export default function ListingFieldsEditor({value,onChange,disabled=false}:Prop
       </div>
       {predictMessage&&<p className="listing-fields-note" role="status">{predictMessage}</p>}
       {suggestions.length>0&&<div className="category-suggestion-list">
-        {suggestions.map(item=><button key={item.category_id} type="button" disabled={disabled}
-          onClick={()=>{
-            onChange({...value,category_id:item.category_id,category_path:item.category_name});
-            setSuggestions([]);
-            setPredictMessage("");
-          }}>
-          <strong>{item.category_name}</strong><small>{item.category_id} · {item.domain_name}</small>
-        </button>)}
+        {suggestions.map(item => {
+          const names = item.path?.length ? item.path.map(node => node.name) : [item.category_name];
+          const official = names.join(" / ");
+          const translated = item.path_zh?.length === names.length ? item.path_zh.join(" / ") : official;
+          return <button key={item.category_id} type="button" disabled={disabled}
+            onClick={() => {
+              onChange({...value, category_id: item.category_id,
+                category_path: official.length <= 400 ? official : item.category_name});
+              setSuggestions([]);
+              setPredictMessage("");
+            }}>
+            <strong>{translated}</strong>{translated !== official && <span>{official}</span>}
+            {item.domain_name && <small>{item.domain_name}</small>}
+          </button>;
+        })}
       </div>}
       <div className="listing-field-grid">
         {field("CBT 分类名称 / 路径（可手动修改）","category_path","整理完标题后再填写或选择官方推荐",400)}
-        {field("CBT 通用分类 ID（非 MLB/MLM）","category_id","例如 CBT12345；可手动填写",60)}
+        <label className="listing-field">CBT 通用分类 ID
+          <input value={value.category_id} maxLength={60} disabled={disabled} placeholder="例如 CBT12345"
+            onChange={event => {
+              predictionRequest.current?.abort();
+              setPredicting(false);
+              setSuggestions([]);
+              setPredictMessage("");
+              onChange({...value,category_id:event.target.value.trim().toUpperCase(),category_path:""});
+            }}/>
+        </label>
         {field("品牌","brand","无品牌请留空")}
         {field("型号","model")}
         {field("主商品 SKU（内部编码）","seller_sku","例如：FLOOR-001")}
         {field("条码 GTIN / EAN（有则填）","gtin","不编造条码",50)}
       </div>
     </fieldset>
+
+    <CategoryAttributesForm category={value.category_id} values={value.category_attributes ?? []}
+      onChange={fields => set("category_attributes",fields)} disabled={disabled}/>
 
     <fieldset className="listing-editor-plain"><legend>采购成本（人民币 CNY）</legend>
       <label className="listing-field">采购成本（¥）

@@ -37,7 +37,9 @@ const deferred = [];
 const purchaseRequests = [];
 const purchaseFilters = [];
 const searchRequests = [];
-const order = { order_id: "102", status: "paid", order_items: [], total_amount: "12", currency_id: "USD",
+const order = { order_id: "102", status: "paid", order_items: [
+    { item_id: "MLB101", title: "Original title without translation", quantity: 1, unit_price: "12", currency_id: "USD" },
+  ], total_amount: "12", currency_id: "USD",
   shipment_id: "87123456" };
 let slaFetchCount = 0;
 let shipmentFetchCount = 0;
@@ -54,6 +56,12 @@ window.fetch = (path, options) => {
     order.shipment = { shipment_id: order.shipment_id, status: "shipped", substatus: "in_transit",
       tracking_number: "OFFICIAL-TRACK-102", checked_at: new Date().toISOString() };
     return Promise.resolve(Response.json(order));
+  }
+  if (pathname === "/api/v1/stores/order-title-translations") {
+    const refs = JSON.parse(options.body);
+    assert(refs.every(ref => Object.keys(ref).sort().join(",") === "logistic_type,order_id,site_id,store_id"),
+      "translation must send scoped IDs only");
+    return Promise.resolve(Response.json(refs.some(ref => ref.order_id === "200002") ? { "Lemon massage tool": "柠檬按摩工具" } : {}));
   }
   if (pathname.endsWith("/orders/102/sla")) {
     slaFetchCount++;
@@ -94,6 +102,11 @@ window.fetch = (path, options) => {
   }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
   if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json(order));
+  if (pathname.endsWith("/orders/200002")) return Promise.resolve(Response.json({
+    ...order, order_id: "200002", order_items: [
+      { item_id: "MLM100", title: "Lemon massage tool", quantity: 1, unit_price: "12", currency_id: "USD" },
+    ],
+  }));
   if (pathname.endsWith("/orders/103")) return Promise.resolve(Response.json({
     ...order, order_id: "103", purchase_order_id: "12345678", purchase_cost_cny: "16",
   }));
@@ -295,6 +308,8 @@ try {
   assert(dispatchDeadlineLabel(sample(72), now, "fulfillment").countdown === "不适用",
     "fulfillment incorrectly displays SLA");
   assert(slaFetchCount === 0, "SLA must not run automatically");
+  assert(document.querySelector(".orders-product-title")?.textContent === "Original title without translation",
+    "an untranslated title did not fall back to the original");
   assert([...document.querySelectorAll("th")].filter((h) => h.textContent.trim()).length === 8,
     "table columns must be 8 after moving purchase action");
   assert([...document.querySelectorAll("td.orders-table-empty")].every((cell) => cell.colSpan === 8),
@@ -356,6 +371,15 @@ try {
     document.querySelector(".orders-id")?.textContent === "200002",
     "cross-site Order ID must change to all sites and show exactly the matching order");
   assert(document.querySelectorAll(".orders-id").length === 1, "numeric search returned extra orders");
+  await waitFor(() => document.querySelector(".orders-product-title")?.textContent === "柠檬按摩工具",
+    "Chinese translation was not the visible title");
+  assert(document.querySelector(".orders-product-title")?.title === "Lemon massage tool",
+    "official title is missing from the tooltip");
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-line-content strong")?.textContent === "柠檬按摩工具" &&
+    document.querySelector(".orders-line-content")?.textContent.includes("原标题：Lemon massage tool"),
+    "order details must show the translation and the complete original title");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   flushSync(() => document.querySelector(".orders-row-purchase").click());
   const crossSitePurchase = await takePurchase("GET");
   assert(new URL(crossSitePurchase.path, location.href).searchParams.get("site") === "MLM" &&

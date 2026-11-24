@@ -21,11 +21,15 @@ var ErrSiteNotAuthorized = errors.New("marketplace site not verified for this se
 const refreshAhead = 60 * time.Second
 
 // AuthorizedStore is server-only. Do not JSON-encode it or send its token to clients.
+// AuthorizedStore contains plaintext access credentials and encrypted snapshots.
+// Never log or serialize the complete structure.
 type AuthorizedStore struct {
-	SellerID    string
-	AccessToken string
-	Markets     []Marketplace
-	Verified    bool
+	SellerID     string
+	AccessToken  string
+	Markets      []Marketplace
+	Verified     bool
+	accessCipher []byte
+	marketsJSON  []byte
 }
 
 type tokenSnapshot struct {
@@ -87,6 +91,7 @@ func (s *Service) accessFromSnapshot(owner string, row tokenSnapshot) (Authorize
 	return AuthorizedStore{
 		SellerID: row.sellerID, AccessToken: token,
 		Markets: markets, Verified: row.marketsStatus == "verified",
+		accessCipher: row.accessCipher, marketsJSON: row.marketsJSON,
 	}, nil
 }
 
@@ -325,6 +330,7 @@ func (s *Service) rotate(ctx context.Context, owner, storeID string, force bool)
 	return AuthorizedStore{
 		SellerID: row.sellerID, AccessToken: token.AccessToken,
 		Markets: markets, Verified: row.marketsStatus == "verified",
+		accessCipher: access, marketsJSON: row.marketsJSON,
 	}, nil
 }
 

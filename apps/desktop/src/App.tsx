@@ -3,6 +3,8 @@ import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
 import StoresPage from "./StoresPage";
+import AccountSettingsPage from "./AccountSettingsPage";
+import TitleModeSettingsPage from "./TitleModeSettingsPage";
 import { cachedStores, checkStoreConnection, listStores, watchStoreList } from "./stores";
 import { checkStoresOnLogin, resolveManualStoreCheck, storeHealthFromList, type StoreHealth } from "./storeLoginCheck";
 import PublishedListingsPage from "./PublishedListingsPage";
@@ -244,7 +246,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   const [draftDirty,setDraftDirty] = useState(false);
   const [ownDirty,setOwnDirty] = useState(false);
   const [settings, setSettings] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"updates" | "stores">("updates");
+  const [settingsSection, setSettingsSection] = useState<"updates" | "stores" | "account" | "titles">("updates");
   const [storeHealth, setStoreHealth] = useState<StoreHealth>({
     status: "checking", message: "正在核实店铺连接状态",
   });
@@ -495,11 +497,17 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
               onClick={() => setSettingsSection("updates")}>客户端与更新</button>
             <button type="button" aria-pressed={settingsSection === "stores"}
               onClick={() => setSettingsSection("stores")}>店铺管理</button>
+            <button type="button" aria-pressed={settingsSection === "account"}
+              onClick={() => setSettingsSection("account")}>账号管理</button>
+            <button type="button" aria-pressed={settingsSection === "titles"}
+              onClick={() => setSettingsSection("titles")}>刊登与标题</button>
           </nav>
           {settingsSection === "updates" && <>
             <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />
             {diagnosticsEnabled && <DevelopmentDiagnostics />}
           </>}
+          {settingsSection === "account" && <AccountSettingsPage email={email} />}
+          {settingsSection === "titles" && <TitleModeSettingsPage />}
           {settingsSection === "stores" && <StoresPage onConnectionChecked={(id) => {
             const latest = cachedStores();
             if (latest) {

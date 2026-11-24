@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 	"github.com/Fan6512/una-seller/backend/migrations"
@@ -71,6 +74,27 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 		}
 		var body string
 		switch r.URL.Path {
+		case "/marketplace/domain_discovery/search":
+			body = `[{"category_id":"CBT771","category_name":"Jugs"},{"category_id":"CBT772","category_name":"Other"}]`
+		case "/categories/CBT771/attributes":
+			body = `[{"id":"BRAND","name":"Brand","value_type":"string","tags":{"required":true}},
+ {"id":"CAPACITY","name":"Capacity","value_type":"number_unit","tags":{"new_required":true},"allowed_units":[{"id":"l","name":"L"}]},
+ {"id":"MATERIAL","name":"Material","value_type":"list","values":[{"id":"200","name":"Glass"}]},
+ {"id":"COUNT","name":"Count","value_type":"number","tags":{"required":true}}]`
+		case "/categories/CBT771":
+			body = `{"id":"CBT771","path_from_root":[{"id":"CBT1","name":"Home"},{"id":"CBT771","name":"Jugs"}]}`
+		case "/categories/CBT771/technical_specs/input":
+			body = `{"groups":[{"components":[{"component":"TEXT_INPUT","attributes":[
+ {"id":"BRAND","tags":["required"]},{"id":"SIZE","tags":["conditional_required"]},
+ {"id":"STYLE","name":"Style","tags":["required"]}]}]}]}`
+		case "/categories/CBT772/attributes":
+			body = `[]`
+		case "/categories/CBT772":
+			body = `{"id":"CBT772"}`
+		case "/categories/CBT772/technical_specs/input":
+			body = `{"groups":[]}`
+		case "/categories/CBT773/attributes":
+			body = `{"not":"an attribute array"}`
 		case "/categories/MLB9891/attributes":
 			body = `[{"id":"BRAND","name":"Marca","value_type":"string","tags":{"required":true}},
 				{"id":"COLOR","name":"Color","value_type":"list","tags":{"conditional_required":true},
@@ -128,7 +152,137 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 	if _, ok := valid["path"].([]any); !ok {
 		t.Fatalf("missing category breadcrumb: %#v", valid)
 	}
-	if strings.Contains(fmt.Sprint(valid), access) {
+	cbt := "/api/v1/stores/cbt-category-attributes?category_id="
+	check("GET", cbt+"CBT771", "", 401, "")
+	check("GET", cbt+"MLB9891", "session", 400, "")
+	check("GET", cbt+"CBT773", "session", 502, "")
+	global := check("GET", cbt+"CBT771", "session", 200, "")
+	if global["category_id"] != "CBT771" || global["technical_specs_verified"] != true ||
+		global["special_requirements"] != true || len(global["technical_requirements"].([]any)) != 2 ||
+		len(global["path"].([]any)) != 2 || len(global["attributes"].([]any)) != 4 {
+		t.Fatalf("incomplete CBT rule response: %#v", global)
+	}
+	empty := check("GET", cbt+"CBT772", "session", 200, "")
+	if len(empty["attributes"].([]any)) != 0 || empty["technical_specs_verified"] != true {
+		t.Fatalf("empty category misinterpreted: %#v", empty)
+	}
+	if _, ok := global["translations_zh"]; ok {
+		t.Fatal("unconfigured translator supplied translations")
+	}
+
+	dictionaryDir := t.TempDir()
+	const dictionaryJSON = `{"version":{"md5":"c370aeb2af31f17b3eb45f701d422605","created":"2026-10-14T21:12:35Z"},"categories":{
+	 "CBT1":{"id":"CBT1","name":"Home","path":[{"id":"CBT1","name":"Home"}],"depth":1,"has_children":true,"status":"enabled","zh":"家居"},
+	 "CBT771":{"id":"CBT771","name":"Jugs","parent_id":"CBT1","path":[{"id":"CBT1","name":"Home"},{"id":"CBT771","name":"Jugs"}],"depth":2,"listing_allowed":true,"status":"enabled","zh":"水壶"},
+	 "CBT772":{"id":"CBT772","name":"Other","path":[{"id":"CBT772","name":"Other"}],"depth":1,"listing_allowed":true,"status":"disabled"}}}`
+	if err := os.WriteFile(filepath.Join(dictionaryDir, "active.json"), []byte(dictionaryJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dictionary := cbtcategory.NewReader(dictionaryDir)
+	handler = HandlerWithCategoryDictionary(cs, stubVerifier{id: owner}, svc, nil, dictionary, nil)
+	offline := check("GET", cbt+"CBT771", "session", 200, "")
+	if !reflect.DeepEqual(offline["path_zh"], []any{"家居", "水壶"}) || offline["translations_zh"] != nil {
+		t.Fatalf("offline dictionary failed without provider: %#v", offline)
+	}
+
+	providerCalls := 0
+	translator := NewAzureTranslationService("fixture-key", "")
+	translator.provider.(*azureTranslationProvider).client.Transport = listingTestTransport(func(r *http.Request) (*http.Response, error) {
+		providerCalls++
+		var texts []struct{ Text string }
+		if err := json.NewDecoder(r.Body).Decode(&texts); err != nil {
+			t.Fatal(err)
+		}
+		source := r.URL.Query().Get("from")
+		if r.URL.Query().Get("to") != "zh-Hans" || r.Header.Get("Authorization") != "" || source != "en" && source != "pt" {
+			t.Fatal("invalid translation request")
+		}
+		labels := map[string]string{"Brand": "品牌", "Glass": "玻璃", "Style": "风格", "Marca": "品牌"}
+		results := make([]map[string][]map[string]string, 0, len(texts))
+		for _, item := range texts {
+			switch item.Text {
+			case "Home", "Jugs", "Acessórios", "Filtros":
+				t.Fatal("category path reached the live translation provider")
+			case "Marca":
+				if source != "pt" {
+					t.Fatal("attribute reached wrong language bucket")
+				}
+			}
+			label := labels[item.Text]
+			if label == "" {
+				label = item.Text
+			}
+			results = append(results, map[string][]map[string]string{
+				"translations": {{"text": label, "to": "zh-Hans"}},
+			})
+		}
+		data, err := json.Marshal(results)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+	})
+	handler = HandlerWithCategoryDictionary(cs, stubVerifier{id: owner}, svc, translator, dictionary, nil)
+	localized := check("GET", cbt+"CBT771", "session", 200, "")
+	labels, ok := localized["translations_zh"].(map[string]any)
+	if !ok || labels["Brand"] != "品牌" || labels["Glass"] != "玻璃" || labels["Style"] != "风格" {
+		t.Fatalf("missing CBT translations: %#v", localized["translations_zh"])
+	}
+	published := check("GET", path+scope, "session", 200, "")
+	publishedLabels, ok := published["translations_zh"].(map[string]any)
+	if !ok || publishedLabels["Marca"] != "品牌" || published["path_zh"] != nil {
+		t.Fatalf("site-only category should retain its official path and localize attributes: %#v", published)
+	}
+	if names, ok := localized["technical_requirement_names"].(map[string]any); !ok || names["STYLE"] != "Style" {
+		t.Fatalf("missing official technical requirement name: %#v", localized)
+	}
+	for _, key := range []string{"category_id", "attributes", "path", "technical_requirements", "technical_requirement_names"} {
+		if !reflect.DeepEqual(global[key], localized[key]) {
+			t.Fatalf("translation changed official %s", key)
+		}
+	}
+	for _, key := range []string{"category_id", "attributes", "path"} {
+		if !reflect.DeepEqual(valid[key], published[key]) {
+			t.Fatalf("translation changed published category %s", key)
+		}
+	}
+	beforeRead := providerCalls
+	predicted := check("GET", "/api/v1/categories/predict?q=Glass+jar", "session", 200, "")
+	candidates, ok := predicted["items"].([]any)
+	if !ok || len(candidates) != 1 {
+		t.Fatalf("unavailable category should not appear in new suggestions: %#v", predicted)
+	}
+	candidate := candidates[0].(map[string]any)
+	if candidate["category_id"] != "CBT771" || candidate["category_name"] != "Jugs" ||
+		!reflect.DeepEqual(candidate["path_zh"], []any{"家居", "水壶"}) {
+		t.Fatalf("prediction changed official identity or lost offline path: %#v", candidate)
+	}
+	if _, err := cs.DB.Exec(ctx, `INSERT INTO app.meli_published_listings(store_id,site_id,logistic_type,listing_id,details) VALUES
+	  ($1::uuid,'CBT','','CBT1000', '{"id":"CBT1000","seller_id":678921,"category_id":"CBT771"}'),
+	  ($1::uuid,'CBT','','CBT1001', '{"id":"CBT1001","seller_id":666666,"category_id":"CBT771"}'),
+	  ($1::uuid,'MLB','remote','MLB201', '{"id":"MLB201","seller_id":987654,"category_id":"MLB9891","cbt_item_id":"CBT1000"}'),
+	  ($1::uuid,'MLB','remote','MLB202', '{"id":"MLB202","seller_id":987654,"category_id":"MLB9891","cbt_item_id":"CBT1001"}'),
+	  ($1::uuid,'MLB','remote','MLB203', '{"id":"MLB203","seller_id":987654,"category_id":"MLB771"}'),
+	  ($1::uuid,'MLB','remote','MLB204', '{"id":"MLB204","seller_id":987654,"category_id":"MLB9891","parent_item_id":"CBT1000"}'),
+	  ($1::uuid,'MLB','remote','MLB205', '{"id":"MLB205","seller_id":666666,"category_id":"MLB9891","cbt_item_id":"CBT1000"}')`, store); err != nil {
+		t.Fatal(err)
+	}
+	list := check("GET", "/api/v1/stores/"+store+"/published-listings?site=MLB&logistic_type=remote", "session", 200, "")
+	items := list["items"].([]any)
+	if len(items) != 4 {
+		t.Fatalf("wrong seller or subset returned: %#v", list)
+	}
+	for i, raw := range items {
+		item := raw.(map[string]any)
+		breadcrumb, matched := item["cbt_category_path"].(map[string]any)
+		if matched != (i == 0 || i == 3) || matched && (item["category_id"] != "MLB9891" || !reflect.DeepEqual(breadcrumb["zh"], []any{"家居", "水壶"})) {
+			t.Fatalf("wrong storefront/global linkage on listing: %#v", item)
+		}
+	}
+	if providerCalls != beforeRead {
+		t.Fatal("prediction or listing view called the live translator")
+	}
+	if strings.Contains(fmt.Sprint(valid, global, localized, published, predicted, list), access) {
 		t.Fatal("platform token leaked to client")
 	}
 }

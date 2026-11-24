@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
@@ -16,30 +18,53 @@ import (
 type collectionAPI struct {
 	store    *collections.Store
 	verifier IdentityVerifier
+	accounts *AccountServices
 }
 
 func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier, stores ...*meli.Service) http.Handler {
+	var service *meli.Service
+	if len(stores) != 0 {
+		service = stores[0]
+	}
+	return HandlerWithServices(store, verifier, service, nil, nil)
+}
+
+func HandlerWithServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, aiCopy *AICopyService) http.Handler {
+	return HandlerWithCategoryDictionary(store, verifier, storeService, translator, nil, aiCopy)
+}
+
+func HandlerWithCategoryDictionary(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, dictionary *cbtcategory.Reader, aiCopy *AICopyService) http.Handler {
+	return HandlerWithAccountServices(store, verifier, storeService, translator, dictionary, aiCopy, nil)
+}
+
+func HandlerWithAccountServices(store *collections.Store, verifier IdentityVerifier, storeService *meli.Service, translator *TranslationService, dictionary *cbtcategory.Reader, aiCopy *AICopyService, accounts *AccountServices) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", Handler())
 	// Public, read-only signed updater manifest. No account or store tokens involved.
 	mux.HandleFunc("/api/v1/desktop/updates", desktopUpdaterHandler(nil, desktopReleasesURL))
-	api := collectionAPI{store: store, verifier: verifier}
+	api := collectionAPI{store: store, verifier: verifier, accounts: accounts}
 	mux.HandleFunc("/api/v1/collections", api.collections)
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	mux.HandleFunc("/api/v1/products", api.ownProducts)
 	mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
-	var storeService *meli.Service
-	if len(stores) != 0 {
-		storeService = stores[0]
+	mux.HandleFunc("/api/v1/products/ai-copy", api.aiCopyHandler(aiCopy))
+	mux.HandleFunc("/api/v1/account/service-configs", api.accountServiceConfigs(accounts))
+	mux.HandleFunc("/api/v1/account/service-configs/", api.accountServiceConfigAction(accounts))
+	s := storeAPI{auth: api, service: storeService, translator: translator, categoryDictionary: dictionary, accounts: accounts}
+	if translator != nil {
+		s.localizeCategoryAttributes = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
+			return translator.translate(ctx, categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules))
+		}
 	}
-	s := storeAPI{auth: api, service: storeService}
+	mux.HandleFunc("/api/v1/stores/order-title-translations", s.orderTitleTranslations)
 	mux.HandleFunc("/api/v1/categories/predict", s.predictCBTCategory)
+	mux.HandleFunc("/api/v1/stores/cbt-category-attributes", s.cbtCategoryRules)
 	mux.HandleFunc("/api/v1/stores", s.stores)
 	mux.HandleFunc("/api/v1/stores/oauth/start", s.start)
 	mux.HandleFunc("/api/v1/stores/", s.storeAction)
 	mux.HandleFunc(meli.CallbackPath, s.callback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") || strings.HasPrefix(r.URL.Path, "/api/v1/products") || r.URL.Path == "/api/v1/categories/predict" {
+		if r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/api/v1/account/") || strings.HasPrefix(r.URL.Path, "/api/v1/collections") || strings.HasPrefix(r.URL.Path, "/api/v1/stores") || strings.HasPrefix(r.URL.Path, "/api/v1/products") || r.URL.Path == "/api/v1/categories/predict" {
 			// Chrome MV3 IDs are per-install; only accept syntactically valid
 			// extension origins, and only for the collection API. Store and OAuth
 			// routes stay Tauri-only. API access still requires a Bearer token.
@@ -56,7 +81,7 @@ func HandlerWithCollections(store *collections.Store, verifier IdentityVerifier,
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				if (strings.HasPrefix(r.URL.Path, "/api/v1/collections") && allowedAppOrigin(origin)) ||
-					strings.HasPrefix(r.URL.Path, "/api/v1/products") {
+					strings.HasPrefix(r.URL.Path, "/api/v1/products") || strings.HasPrefix(r.URL.Path, "/api/v1/account/") {
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				} else {
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -159,6 +184,25 @@ func (a collectionAPI) ready(w http.ResponseWriter) bool {
 	return true
 }
 
+// authFastReadRoute explicitly names read-only product endpoints. New routes
+// default to remote verification: GET alone does not imply safe caching.
+func authFastReadRoute(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	switch r.URL.Path {
+	case "/api/v1/collections", "/api/v1/products":
+		return true
+	}
+	if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/collections/"); ok {
+		return collections.ValidUserID(id)
+	}
+	if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/products/"); ok {
+		return collections.ValidUserID(id)
+	}
+	return false
+}
+
 // Owner identity comes exclusively from a verified Supabase access token.
 func (a collectionAPI) owner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if !a.ready(w) {
@@ -169,7 +213,21 @@ func (a collectionAPI) owner(w http.ResponseWriter, r *http.Request) (string, bo
 		writeUnauthorized(w, "authentication required")
 		return "", false
 	}
-	id, err := a.verifier.Verify(r.Context(), fields[1])
+	// Fail closed to remote verification on every route not in the allowlist.
+	// IdentityVerifier mocks and custom verifiers remain compatible.
+	var id string
+	var err error
+	if authFastReadRoute(r) {
+		if fast, ok := a.verifier.(interface {
+			VerifyFast(context.Context, string) (string, error)
+		}); ok {
+			id, err = fast.VerifyFast(r.Context(), fields[1])
+		} else {
+			id, err = a.verifier.Verify(r.Context(), fields[1])
+		}
+	} else {
+		id, err = a.verifier.Verify(r.Context(), fields[1])
+	}
 	if err != nil {
 		if errors.Is(err, ErrAuthUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "authentication temporarily unavailable")

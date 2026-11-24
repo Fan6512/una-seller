@@ -6,17 +6,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
 type storeAPI struct {
-	auth    collectionAPI
-	service *meli.Service
+	localizeCategoryAttributes func(context.Context, meli.CategoryRules) map[string]string
+	categoryDictionary         *cbtcategory.Reader
+	auth                       collectionAPI
+	service                    *meli.Service
+	translator                 *TranslationService
+	accounts                   *AccountServices
 }
 
 func (a storeAPI) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -131,6 +137,44 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if storeID, matched := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/publication-mode/probe"); matched && storeID != "" && !strings.Contains(storeID, "/") {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		owner, ok := a.requireOwner(w, r)
+		if !ok {
+			return
+		}
+		evidence, err := a.service.ProbePublicationMode(r.Context(), owner, storeID)
+		switch {
+		case errors.Is(err, meli.ErrStoreNotFound):
+			writeError(w, http.StatusNotFound, "store not found")
+		case errors.Is(err, meli.ErrSiteNotAuthorized):
+			writeError(w, http.StatusConflict, "CBT sites are not yet verified")
+		case errors.Is(err, meli.ErrReauthorizationRequired):
+			writeError(w, http.StatusForbidden, "store needs reauthorization")
+		case errors.Is(err, meli.ErrRefreshUnknown):
+			writeError(w, http.StatusConflict, "OAuth refresh outcome unknown")
+		case errors.Is(err, meli.ErrRefreshBusy):
+			writeError(w, http.StatusServiceUnavailable, "store token refresh in progress")
+		case errors.Is(err, meli.ErrCBTProbeCooldown):
+			w.Header().Set("Retry-After", "10")
+			writeError(w, http.StatusTooManyRequests, "CBT account probe recently checked; retry later")
+		case errors.Is(err, meli.ErrCBTProbeStale):
+			writeError(w, http.StatusConflict, "CBT probe superseded by changed authorization or newer evidence; refresh the store list")
+		case err != nil:
+			// Errors contain only stage labels and HTTP status, never IDs,
+			// auth headers, response bodies, or credential material.
+			log.Printf("CBT C0 account probe failed: %v", err)
+			writeError(w, http.StatusBadGateway, "CBT account probe unavailable; no mode was changed")
+		default:
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, evidence)
+		}
+		return
+	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -220,7 +264,7 @@ func (a storeAPI) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("<!doctype html><html lang='zh'><meta charset='utf-8'><title>授权成功</title><h2>美客多店铺授权成功</h2><p>可以关闭此页面，返回 Una Seller 点击刷新店铺。</p></html>"))
+	_, _ = w.Write([]byte("<!doctype html><html lang='zh'><meta charset='utf-8'><title>授权成功</title><h2>美客多店铺授权成功</h2><p>系统已尝试自动识别刊登类型。可以关闭此页面，返回 Una Seller 刷新店铺；如尚未确认，可手动核实。</p></html>"))
 }
 
 func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owner, store string, authStart time.Time) {
@@ -273,6 +317,7 @@ func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owne
 		var page meli.ListingPage
 		page, err = a.service.ListPublished(r.Context(), owner, store, scope, offset)
 		if err == nil {
+			a.attachPublishedCategoryBreadcrumbs(&page)
 			setStoreReadTiming(w, authStart, readStart)
 			writeJSON(w, http.StatusOK, page)
 			return

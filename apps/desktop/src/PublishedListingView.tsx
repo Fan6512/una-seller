@@ -19,6 +19,7 @@ export type Listing = {
   detail_unavailable_at?: string; partial?: boolean;
   price?: number | null; currency_id?: string | null; available_quantity?: number | null;
   cbt_item_id?: string; user_product_id?: string; siteless_user_product_id?: string;
+  cbt_category_path?: { original: string[]; zh?: string[] };
   secure_thumbnail?: string; pictures?: Picture[];
   seller_custom_field?: string | null; attributes?: Attribute[]; variations?: Variation[];
   description?: string;

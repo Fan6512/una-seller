@@ -113,26 +113,8 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 				return Product{}, false, err
 			}
 		}
-		for i, image := range in.Images.Value {
-			if partial {
-				var exists bool
-				err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app.source_product_images WHERE source_product_id=$1 AND variant_id IS NULL AND image_url=$2)`, id, image.URL).Scan(&exists)
-				if err != nil {
-					return Product{}, false, err
-				}
-				if exists {
-					continue
-				}
-			}
-			order := i
-			if partial {
-				if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(image_order),-1)+1 FROM app.source_product_images WHERE source_product_id=$1 AND variant_id IS NULL`, id).Scan(&order); err != nil {
-					return Product{}, false, err
-				}
-			}
-			if _, err = tx.Exec(ctx, `INSERT INTO app.source_product_images(source_product_id,image_url,image_type,image_order) VALUES($1,$2,$3,$4)`, id, image.URL, image.Type, order); err != nil {
-				return Product{}, false, err
-			}
+		if err = insertCollectionImages(ctx, tx, id, in.Images.Value, partial); err != nil {
+			return Product{}, false, err
 		}
 	}
 	if in.Variants.Present && (!partial || (!in.Variants.Null && len(in.Variants.Value) > 0)) {
@@ -141,6 +123,8 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 				return Product{}, false, err
 			}
 		}
+		variantImageIDs := []string{}
+		variantImageURLs := []string{}
 		for i, v := range in.Variants.Value {
 			key, _ := json.Marshal(v.Attributes)
 			var variantID string
@@ -168,32 +152,14 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 				return Product{}, false, err
 			}
 			if v.ImageURLs.Present && (!partial || (!v.ImageURLs.Null && len(v.ImageURLs.Value) > 0)) {
-				if !partial {
-					if _, err = tx.Exec(ctx, `DELETE FROM app.source_product_images WHERE variant_id=$1`, variantID); err != nil {
-						return Product{}, false, err
-					}
-				}
-				for j, imageURL := range v.ImageURLs.Value {
-					if partial {
-						var exists bool
-						if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app.source_product_images WHERE variant_id=$1 AND image_url=$2)`, variantID, imageURL).Scan(&exists); err != nil {
-							return Product{}, false, err
-						}
-						if exists {
-							continue
-						}
-					}
-					order := j
-					if partial {
-						if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(image_order),-1)+1 FROM app.source_product_images WHERE variant_id=$1`, variantID).Scan(&order); err != nil {
-							return Product{}, false, err
-						}
-					}
-					if _, err = tx.Exec(ctx, `INSERT INTO app.source_product_images(source_product_id,variant_id,image_url,image_type,image_order) VALUES($1,$2,$3,'variant',$4)`, id, variantID, imageURL, order); err != nil {
-						return Product{}, false, err
-					}
+				for _, imageURL := range v.ImageURLs.Value {
+					variantImageIDs = append(variantImageIDs, variantID)
+					variantImageURLs = append(variantImageURLs, imageURL)
 				}
 			}
+		}
+		if err = insertVariantImages(ctx, tx, id, variantImageIDs, variantImageURLs, partial); err != nil {
+			return Product{}, false, err
 		}
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -229,40 +195,26 @@ func (s *Store) Get(ctx context.Context, owner, id string) (Product, error) {
 	if err = json.Unmarshal(rawWarnings, &p.Warnings); err != nil {
 		return Product{}, err
 	}
-	rows, err := s.DB.Query(ctx, `SELECT image_url,image_type FROM app.source_product_images WHERE source_product_id=$1 AND variant_id IS NULL ORDER BY image_order,id`, id)
-	if err != nil {
-		return Product{}, err
-	}
-	for rows.Next() {
-		var im Image
-		if err = rows.Scan(&im.URL, &im.Type); err != nil {
-			break
-		}
-		p.Images = append(p.Images, im)
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return Product{}, err
-	}
+
+	// Read every variant before the images; indexing by ID eliminates one
+	// network round trip per variant while preserving sort_order/id order.
 	variants, err := s.DB.Query(ctx, `SELECT id::text,attributes,price::text,currency FROM app.source_product_variants WHERE source_product_id=$1 ORDER BY sort_order,id`, id)
 	if err != nil {
 		return Product{}, err
 	}
-	type variantRow struct {
-		id              string
-		attrs           []byte
-		price, currency *string
-	}
-	var buffer []variantRow
+	variantIndex := make(map[string]int)
 	for variants.Next() {
-		var v variantRow
-		if err = variants.Scan(&v.id, &v.attrs, &v.price, &v.currency); err != nil {
+		var variantID string
+		var attrs []byte
+		item := Variant{ImageURLs: []string{}}
+		if err = variants.Scan(&variantID, &attrs, &item.Price, &item.Currency); err != nil {
 			break
 		}
-		buffer = append(buffer, v)
+		if err = json.Unmarshal(attrs, &item.Attributes); err != nil {
+			break
+		}
+		variantIndex[variantID] = len(p.Variants)
+		p.Variants = append(p.Variants, item)
 	}
 	if err == nil {
 		err = variants.Err()
@@ -271,30 +223,31 @@ func (s *Store) Get(ctx context.Context, owner, id string) (Product, error) {
 	if err != nil {
 		return Product{}, err
 	}
-	for _, v := range buffer {
-		item := Variant{Price: v.price, Currency: v.currency, ImageURLs: []string{}}
-		if err = json.Unmarshal(v.attrs, &item.Attributes); err != nil {
-			return Product{}, err
+
+	// One image query covers main, additional and variant images. The global
+	// order also preserves image_order/id within each separate image group.
+	images, err := s.DB.Query(ctx, `SELECT variant_id::text,image_url,image_type FROM app.source_product_images WHERE source_product_id=$1 ORDER BY image_order,id`, id)
+	if err != nil {
+		return Product{}, err
+	}
+	for images.Next() {
+		var variantID *string
+		var im Image
+		if err = images.Scan(&variantID, &im.URL, &im.Type); err != nil {
+			break
 		}
-		irows, e := s.DB.Query(ctx, `SELECT image_url FROM app.source_product_images WHERE variant_id=$1 ORDER BY image_order,id`, v.id)
-		if e != nil {
-			return Product{}, e
+		if variantID == nil {
+			p.Images = append(p.Images, im)
+		} else if index, ok := variantIndex[*variantID]; ok {
+			p.Variants[index].ImageURLs = append(p.Variants[index].ImageURLs, im.URL)
 		}
-		for irows.Next() {
-			var u string
-			if e = irows.Scan(&u); e != nil {
-				break
-			}
-			item.ImageURLs = append(item.ImageURLs, u)
-		}
-		if e == nil {
-			e = irows.Err()
-		}
-		irows.Close()
-		if e != nil {
-			return Product{}, e
-		}
-		p.Variants = append(p.Variants, item)
+	}
+	if err == nil {
+		err = images.Err()
+	}
+	images.Close()
+	if err != nil {
+		return Product{}, err
 	}
 	return p, nil
 }

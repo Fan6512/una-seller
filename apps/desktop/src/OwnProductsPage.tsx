@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import ListingFieldsEditor from "./ListingFieldsEditor";
-import { initialListingFields,preferredTitle,validateListingFields,type ListingFields } from "./listingFields";
+import { initialListingFields,listingTextCount,preferredTitle,validateListingFields,type ListingFields } from "./listingFields";
 import { formatMoney } from "./collections";
 import { getOwnProduct, getOwnProductPage, updateOwnProduct, OWN_PRODUCT_PAGE_SIZE, ProductRequestError, type OwnProduct, type OwnProductSummary } from "./ownProducts";
 import { emptyProductPageFallback, productSaveNeedsReadback } from "./workbenchRules";
@@ -100,8 +100,8 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
   };
   const validation = count(fields.description) > 20000 ? "商品描述不能超过 20000 字符"
     : count(fields.notes) > 5000 ? "整理备注不能超过 5000 字符"
-    : count(fields.title) > 500 ? "商品标题不能超过 500 字符"
-    : validateListingFields(fields.listing_fields);
+    : listingTextCount(fields.title) > 500 ? "商品标题不能超过 500 字符"
+    : validateListingFields(fields.listing_fields, product?.listing_fields.titles);
   const valid = !validation && fields.title.trim().length > 0;
   return <div className="workspace">
     <section className="list-pane" aria-label="产品箱商品卡片">
@@ -149,8 +149,9 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
           </div>
           <div className="working-draft">
             <ListingFieldsEditor key={product.id} value={fields.listing_fields} disabled={saving||unknown}
+              aiProduct={{own_product_id:product.id,expected_revision:product.revision}} aiSaved={product.listing_fields}
               onChange={listing_fields=>setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}))}/>
-            <label>商品描述<textarea rows={8} value={fields.description} onChange={e=>setFields(v=>({...v,description:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.description)} / 20000</small></label>
+            <label>旧版商品描述（历史参考，非默认刊登）<textarea rows={8} value={fields.description} onChange={e=>setFields(v=>({...v,description:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.description)} / 20000</small></label>
             <label>内部整理备注<textarea rows={4} value={fields.notes} onChange={e=>setFields(v=>({...v,notes:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.notes)} / 5000</small></label>
             {validation && <p className="working-draft-error" role="alert">{validation}</p>}
             <div className="own-editor-actions">
