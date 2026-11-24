@@ -42,13 +42,13 @@ func insertCollectionImages(ctx context.Context, tx pgx.Tx, productID string, im
     )
   )
 ), numbered AS (
-  SELECT image_url,image_type,ord,ROW_NUMBER() OVER (ORDER BY ord)-1 AS offset
+  SELECT image_url,image_type,ord,ROW_NUMBER() OVER (ORDER BY ord)-1 AS image_offset
   FROM selected
 )
 INSERT INTO app.source_product_images(source_product_id,image_url,image_type,image_order)
 SELECT $1::uuid,n.image_url,n.image_type,
        (COALESCE((SELECT MAX(image_order) FROM app.source_product_images
-                  WHERE source_product_id=$1::uuid AND variant_id IS NULL),-1)+n.offset+1)::integer
+                  WHERE source_product_id=$1::uuid AND variant_id IS NULL),-1)+n.image_offset+1)::integer
 FROM numbered n
 ORDER BY n.ord`, productID, urls, types, partial)
 	return err
@@ -81,7 +81,7 @@ func insertVariantImages(ctx context.Context, tx pgx.Tx, productID string, varia
   )
 ), numbered AS (
   SELECT variant_id,image_url,ord,
-         ROW_NUMBER() OVER (PARTITION BY variant_id ORDER BY ord)-1 AS offset
+         ROW_NUMBER() OVER (PARTITION BY variant_id ORDER BY ord)-1 AS image_offset
   FROM selected
 ), max_orders AS (
   SELECT existing.variant_id,MAX(existing.image_order) AS max_order
@@ -92,7 +92,7 @@ func insertVariantImages(ctx context.Context, tx pgx.Tx, productID string, varia
 )
 INSERT INTO app.source_product_images(source_product_id,variant_id,image_url,image_type,image_order)
 SELECT $1::uuid,n.variant_id,n.image_url,'variant',
-       (COALESCE(m.max_order,-1)+n.offset+1)::integer
+       (COALESCE(m.max_order,-1)+n.image_offset+1)::integer
 FROM numbered n
 LEFT JOIN max_orders m ON m.variant_id=n.variant_id
 ORDER BY n.ord`, productID, variantIDs, urls, partial)
