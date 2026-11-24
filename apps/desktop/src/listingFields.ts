@@ -6,6 +6,9 @@ export type ListingVariant = {
   price: string;
   currency: string;
   image_urls: string[];
+  purchase_cost_cny?: string;
+  target_net_proceeds_usd?: string;
+  category_attributes?: CategoryAttributeValue[];
 };
 export type LocalizedTitles = { en: string; es: string; pt: string };
 export type LocalizedDescriptions = LocalizedTitles;
@@ -42,6 +45,7 @@ export type ListingFields = {
   gtin: string;
   purchase_price: string;
   purchase_currency: string;
+  target_net_proceeds_usd?: string;
   weight_g: string;
   length_cm: string;
   width_cm: string;
@@ -62,7 +66,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   const defaults: ListingFields = {
     titles: titlesFromSource(capturedTitle),
     category_id:"",category_path:"",brand:"",model:"",
-    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"CNY",
+    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"CNY",target_net_proceeds_usd:"",
     weight_g:"",length_cm:"",width_cm:"",height_cm:"",
     bullet_points:source?.bullet_points.slice()??[],
     attributes:[],
@@ -86,7 +90,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
   if (saved.category_attributes) result.category_attributes = saved.category_attributes.map(field => ({ ...field }));
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
-  if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,attributes:{...v.attributes},image_urls:v.image_urls.slice()}));
+  if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,attributes:{...v.attributes},image_urls:v.image_urls.slice(),category_attributes:v.category_attributes?.map(a=>({...a}))}));
   return result;
 }
 export function detectTitleLanguage(title:string): TitleLanguage | "uncertain" {
@@ -130,6 +134,7 @@ export function validateListingFields(v:ListingFields, previousTitles?: Localize
   if(v.category_id && !/^CBT[0-9]{1,15}$/.test(v.category_id))return "请填写 CBT 通用类目 ID，站点类目应在上传时选择";
   if(v.category_path.length>400||v.category_id.length>60||v.brand.length>120||
     v.model.length>120||v.seller_sku.length>120||v.gtin.length>50) return "类目或基础属性过长";
+  if(!isMoney(v.target_net_proceeds_usd??""))return "美元目标净收益格式不正确，最多保留四位小数";
   if(!isMoney(v.purchase_price))return "采购成本格式不正确，最多保留四位小数";
   if(v.purchase_currency && !/^[A-Z]{3}$/.test(v.purchase_currency))return "采购币种必须是 3 位大写字母（例如 CNY、USD）";
   if(!isDecimal(v.weight_g,1000000,true))return "重量请输入正整数，单位为克";
@@ -139,7 +144,7 @@ export function validateListingFields(v:ListingFields, previousTitles?: Localize
   if(v.images&&v.images.some(i=>!/^https:\/\/[^\s]+$/i.test(i.url)||i.url.length>2000))return "图片 URL 必须为有效 HTTPS 地址";
   if(v.images&&v.images.length>60)return "图片不能超过 60 张";
   if(v.variants&&v.variants.length>100)return "规格不能超过 100 项";
-  if(v.variants?.some(x=>!isMoney(x.price)||Array.from(x.seller_sku).length>120||
+  if(v.variants?.some(x=>!isMoney(x.price)||!isMoney(x.purchase_cost_cny??"")||!isMoney(x.target_net_proceeds_usd??"")||Array.from(x.seller_sku).length>120||
     (x.currency!==""&&!/^[A-Z]{3}$/.test(x.currency))||
     Object.keys(x.attributes).length===0||
     Object.entries(x.attributes).some(([k,val])=>!k||!val||Array.from(k).length>80||Array.from(val).length>200)||
