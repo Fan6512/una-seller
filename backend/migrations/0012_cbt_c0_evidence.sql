@@ -1,5 +1,8 @@
 -- CBT C0: owner-scoped, sanitized publication model evidence; not publishing authorization.
 -- 0010 is reserved for Draft #66. This is additive, applied only after approval.
+-- Disconnect may retain historical evidence. Every consumer must join the owner
+-- and store identity to app.meli_store_connections and require status = 'connected'
+-- before treating evidence as current; even then it is not write authorization.
 CREATE TABLE IF NOT EXISTS app.meli_cbt_c0_evidence (
     store_id uuid PRIMARY KEY REFERENCES app.meli_store_connections(id) ON DELETE CASCADE,
     owner_user_id uuid NOT NULL REFERENCES app.users(id),

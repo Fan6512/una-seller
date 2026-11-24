@@ -37,6 +37,7 @@ func TestCBTC0PublicationModeOwnerUpsertReauthAndDisconnectPG(t *testing.T) {
 	}
 
 	var managed atomic.Bool
+	var disconnectDuringProbe atomic.Bool
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.RawQuery != "" {
@@ -66,6 +67,13 @@ func TestCBTC0PublicationModeOwnerUpsertReauthAndDisconnectPG(t *testing.T) {
 			business := ""
 			if managed.Load() {
 				business = "CBT CN Fulfillment Managed"
+			}
+			if disconnectDuringProbe.Load() {
+				if err := s.Disconnect(ctx, owner, storeID); err != nil {
+					t.Errorf("disconnect during probe: %v", err)
+					http.Error(w, "fixture failed", http.StatusInternalServerError)
+					return
+				}
 			}
 			fmt.Fprintf(w, `{"user_id":%s,"site_id":"CBT","marketplaces":[{"user_id":987654,"site_id":"MLB","logistic_type":"remote","business_model":%q,"pricing_model":"net_proceeds","user_product":true}]}`, seller, business)
 		default:
@@ -109,14 +117,17 @@ func TestCBTC0PublicationModeOwnerUpsertReauthAndDisconnectPG(t *testing.T) {
 	if _, err := s.ProbePublicationMode(ctx, owner, storeID); !errors.Is(err, ErrCBTProbeCooldown) {
 		t.Fatalf("repeated C0 did not respect 10s cooldown: %v", err)
 	}
+	if _, err := s.ProbePublicationMode(ctx, owner, strings.ToUpper(storeID)); !errors.Is(err, ErrCBTProbeCooldown) {
+		t.Fatalf("uppercase UUID bypassed the seller cooldown: %v", err)
+	}
 	if calls.Load() != 3 {
 		t.Fatal("denied requests still called Mercado Libre")
 	}
 
-	// Clear only the synthetic in-memory throttle so we can test an upsert
-	// without a slow 10-second sleep; production still enforces the cooldown.
+	// Expire the synthetic deadline without waiting ten seconds. The next
+	// request must pass the real cooldown logic and update the same row.
 	s.probeMu.Lock()
-	delete(s.probeNext, storeID)
+	s.probeNext[seller] = time.Now().Add(-time.Second)
 	s.probeMu.Unlock()
 	managed.Store(true)
 	second, err := s.ProbePublicationMode(ctx, owner, storeID)
@@ -160,14 +171,26 @@ func TestCBTC0PublicationModeOwnerUpsertReauthAndDisconnectPG(t *testing.T) {
 	}
 
 	s.probeMu.Lock()
-	delete(s.probeNext, storeID)
+	delete(s.probeNext, seller)
 	s.probeMu.Unlock()
 	managed.Store(false)
-	if _, err := s.ProbePublicationMode(ctx, owner, storeID); err != nil {
+	last, err := s.ProbePublicationMode(ctx, owner, storeID)
+	if err != nil {
 		t.Fatalf("new authorization C0 probe failed: %v", err)
 	}
-	if err := s.Disconnect(ctx, owner, storeID); err != nil {
-		t.Fatal(err)
+	s.probeMu.Lock()
+	s.probeNext[seller] = time.Now().Add(-time.Second)
+	s.probeMu.Unlock()
+	managed.Store(true)
+	disconnectDuringProbe.Store(true)
+	if _, err := s.ProbePublicationMode(ctx, owner, storeID); !errors.Is(err, ErrCBTProbeStale) {
+		t.Fatalf("probe must not write after disconnect: %v", err)
+	}
+	var checkedAt time.Time
+	if err := db.QueryRow(ctx, `SELECT publication_mode,checked_at FROM app.meli_cbt_c0_evidence
+ WHERE store_id=$1::uuid`, storeID).Scan(&savedMode, &checkedAt); err != nil ||
+		savedMode != last.Mode || !checkedAt.Equal(last.CheckedAt.Truncate(time.Microsecond)) {
+		t.Fatalf("stale probe changed stored evidence: mode=%s checked_at=%s err=%v", savedMode, checkedAt, err)
 	}
 	stores, err = s.List(ctx, owner)
 	if err != nil || len(stores) != 1 || stores[0].Status != "disconnected" ||

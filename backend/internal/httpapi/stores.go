@@ -160,6 +160,7 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, meli.ErrRefreshBusy):
 			writeError(w, http.StatusServiceUnavailable, "store token refresh in progress")
 		case errors.Is(err, meli.ErrCBTProbeCooldown):
+			w.Header().Set("Retry-After", "10")
 			writeError(w, http.StatusTooManyRequests, "CBT account probe recently checked; retry later")
 		case errors.Is(err, meli.ErrCBTProbeStale):
 			writeError(w, http.StatusConflict, "CBT account changed during probe; rerun C0")

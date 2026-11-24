@@ -37,16 +37,17 @@ const publicationUnverified = "undetermined"
 var ErrCBTProbeCooldown = errors.New("CBT C0 probe cooldown is active")
 var ErrCBTProbeStale = errors.New("CBT C0 store authorization or identity changed")
 
-// Each authorized store permits at most one manual C0 probe per 10 seconds
-// within this Go process. No Redis or background scheduler is needed.
-func (s *Service) claimC0Probe(storeID string) error {
+// Each authorized seller permits at most one manual C0 probe per 10 seconds
+// within this Go process. The globally unique seller ID comes from the
+// owner-verified store, not the caller's UUID spelling.
+func (s *Service) claimC0Probe(sellerID string) error {
 	s.probeMu.Lock()
 	defer s.probeMu.Unlock()
 	if s.probeNext == nil {
 		s.probeNext = make(map[string]time.Time)
 	}
 	now := time.Now()
-	if deadline, ok := s.probeNext[storeID]; ok && now.Before(deadline) {
+	if deadline, ok := s.probeNext[sellerID]; ok && now.Before(deadline) {
 		return ErrCBTProbeCooldown
 	}
 	if len(s.probeNext) > 512 {
@@ -56,7 +57,7 @@ func (s *Service) claimC0Probe(storeID string) error {
 			}
 		}
 	}
-	s.probeNext[storeID] = now.Add(10 * time.Second)
+	s.probeNext[sellerID] = now.Add(10 * time.Second)
 	return nil
 }
 
@@ -71,7 +72,7 @@ func (s *Service) ProbePublicationMode(ctx context.Context, owner, storeID strin
 	if !auth.Verified || len(auth.Markets) == 0 {
 		return PublicationEvidence{}, ErrSiteNotAuthorized
 	}
-	if err := s.claimC0Probe(storeID); err != nil {
+	if err := s.claimC0Probe(auth.SellerID); err != nil {
 		return PublicationEvidence{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
