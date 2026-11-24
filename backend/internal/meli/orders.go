@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -61,7 +62,8 @@ type OrderRecord struct {
 	PackID                 string         `json:"pack_id,omitempty"`
 	Status                 string         `json:"status"`
 	CurrencyID             string         `json:"currency_id"`
-	TotalAmount            string         `json:"total_amount"`
+	TotalAmount            string         `json:"total_amount"` // Raw upstream field; its currency label can disagree with its value.
+	SalesAmountUSD         string         `json:"sales_amount_usd,omitempty"`
 	DateCreated            time.Time      `json:"date_created"`
 	LastUpdated            time.Time      `json:"last_updated"`
 	ShipmentID             string         `json:"shipment_id,omitempty"`
@@ -259,6 +261,7 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 				Title       string      `json:"title"`
 				VariationID json.Number `json:"variation_id"`
 			} `json:"item"`
+			ElementID  json.Number `json:"element_id"`
 			Quantity   int         `json:"quantity"`
 			UnitPrice  json.Number `json:"unit_price"`
 			CurrencyID string      `json:"currency_id"`
@@ -314,6 +317,7 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 	if len(payload.OrderItems) > 100 {
 		return OrderRecord{}, ErrOrderInvalidResponse
 	}
+	seenElements := make(map[string]OrderLine)
 	for _, item := range payload.OrderItems {
 		if item.Quantity <= 0 || item.Quantity > 100000 ||
 			!orderAmountPattern.MatchString(item.UnitPrice.String()) ||
@@ -330,9 +334,59 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 			}
 			line.VariationID = item.Item.VariationID.String()
 		}
+		if elementID := item.ElementID.String(); elementID != "" {
+			if !orderNumber(elementID) {
+				return OrderRecord{}, ErrOrderInvalidResponse
+			}
+			if previous, found := seenElements[elementID]; found {
+				if previous != line {
+					return OrderRecord{}, ErrOrderInvalidResponse
+				}
+				continue
+			}
+			seenElements[elementID] = line
+		}
 		record.Items = append(record.Items, line)
 	}
 	return record, nil
+}
+
+// Marketplace Orders can report a local total under a USD header. Only sum
+// explicit USD merchandise lines, per Order, excluding shipping and payments.
+func orderSalesAmountUSD(items []OrderLine) string {
+	if len(items) == 0 {
+		return ""
+	}
+	total := new(big.Rat)
+	for _, line := range items {
+		if line.CurrencyID != "USD" || line.Quantity < 1 || !orderAmountPattern.MatchString(line.UnitPrice) {
+			return ""
+		}
+		price, _ := new(big.Rat).SetString(line.UnitPrice)
+		total.Add(total, price.Mul(price, big.NewRat(int64(line.Quantity), 1)))
+	}
+	amount := strings.TrimRight(total.FloatString(8), "0")
+	if strings.HasSuffix(amount, ".") {
+		return amount + "00"
+	}
+	if len(amount)-strings.IndexByte(amount, '.') == 2 {
+		return amount + "0"
+	}
+	return amount
+}
+
+// Both order ingestion paths can replace the line snapshots. Keep a cached
+// product image for any listing still present without restoring old line data.
+func orderItemsWithSavedImages(incoming, stored string) string {
+	return `(SELECT COALESCE(jsonb_agg(
+	 CASE WHEN saved.url IS NOT NULL THEN jsonb_set(line.value,'{image_url}',to_jsonb(saved.url),true)
+	      ELSE line.value END ORDER BY line.pos),'[]'::jsonb)
+	 FROM jsonb_array_elements(` + incoming + `) WITH ORDINALITY AS line(value,pos)
+	 LEFT JOIN LATERAL (
+	   SELECT old.value->>'image_url' AS url FROM jsonb_array_elements(` + stored + `) AS old(value)
+	   WHERE old.value->>'item_id'=line.value->>'item_id' AND COALESCE(old.value->>'image_url','')<>''
+	   LIMIT 1
+	 ) saved ON true)`
 }
 
 const orderConnection = `SELECT c.id,c.status,m.value->>'user_id' AS child_id
@@ -581,7 +635,7 @@ SET pack_id=EXCLUDED.pack_id,status=EXCLUDED.status,currency_id=EXCLUDED.currenc
 total_amount=EXCLUDED.total_amount,date_created=EXCLUDED.date_created,
 last_updated=EXCLUDED.last_updated,shipment_id=EXCLUDED.shipment_id,
 shipment_snapshot=CASE WHEN meli_orders.shipment_id=EXCLUDED.shipment_id THEN meli_orders.shipment_snapshot END,
-order_items=EXCLUDED.order_items,updated_at=now()
+order_items=`+orderItemsWithSavedImages("EXCLUDED.order_items", "meli_orders.order_items")+`,updated_at=now()
 WHERE app.meli_orders.last_updated<=EXCLUDED.last_updated`,
 			store, scope.Site, scope.Logistic, childSeller, rec.ID, rec.PackID, rec.Status,
 			rec.CurrencyID, rec.TotalAmount, rec.DateCreated, rec.LastUpdated, rec.ShipmentID, string(items))
@@ -790,9 +844,8 @@ func (s *Service) authorizeOrderRead(ctx context.Context, owner, store string, s
 const orderColumnsBase = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
  trim_scale(o.total_amount)::text,o.date_created,o.last_updated,COALESCE(o.shipment_id,''),
  COALESCE((
-   SELECT jsonb_agg(line.value ||
-     CASE WHEN image.url IS NOT NULL THEN jsonb_build_object('image_url',image.url)
-          ELSE '{}'::jsonb END ORDER BY line.pos)
+   SELECT jsonb_agg(line.value || jsonb_build_object(
+     'listing_image_url',image.url,'cached_image_url',cached.url) ORDER BY line.pos)
    FROM jsonb_array_elements(o.order_items) WITH ORDINALITY AS line(value,pos)
    LEFT JOIN LATERAL (
      SELECT COALESCE(NULLIF(p.details->>'secure_thumbnail',''),
@@ -804,6 +857,17 @@ const orderColumnsBase = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_
        AND p.details->>'seller_id'=o.seller_id
      LIMIT 1
    ) AS image ON true
+   LEFT JOIN LATERAL (
+     SELECT entry.value->>'image_url' AS url
+     FROM app.meli_orders sibling
+     CROSS JOIN LATERAL jsonb_array_elements(sibling.order_items) AS entry(value)
+     WHERE image.url IS NULL AND COALESCE(line.value->>'image_url','')=''
+       AND sibling.store_id=o.store_id AND sibling.site_id=o.site_id
+       AND sibling.logistic_type=o.logistic_type AND sibling.seller_id=o.seller_id
+       AND entry.value->>'item_id'=line.value->>'item_id'
+       AND COALESCE(entry.value->>'image_url','')<>''
+     LIMIT 1
+   ) AS cached ON true
  ), '[]'::jsonb),
  COALESCE(p.purchase_order_id,''),
  CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
@@ -846,19 +910,34 @@ func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	if checked.Valid {
 		o.DispatchCheckedAt = &checked.Time
 	}
-	if err == nil {
-		err = json.Unmarshal(items, &o.Items)
+	if err != nil {
+		return o, err
 	}
+	var lines []struct {
+		OrderLine
+		ListingURL string `json:"listing_image_url"`
+		CachedURL  string `json:"cached_image_url"`
+	}
+	if err := json.Unmarshal(items, &lines); err != nil {
+		return o, err
+	}
+	o.Items = make([]OrderLine, 0, len(lines))
+	for _, line := range lines {
+		storedURL := line.ImageURL
+		line.ImageURL = ""
+		for _, candidate := range []string{line.ListingURL, storedURL, line.CachedURL} {
+			if orderImageURLAllowed(candidate) {
+				line.ImageURL = candidate
+				break
+			}
+		}
+		o.Items = append(o.Items, line.OrderLine)
+	}
+	o.SalesAmountUSD = orderSalesAmountUSD(o.Items)
 	if cost.Valid {
 		o.PurchaseCostCNY = &cost.String
 	}
-	// Only the official Mercado Libre image CDN can render in the desktop app.
-	for i := range o.Items {
-		if !orderImageURLAllowed(o.Items[i].ImageURL) {
-			o.Items[i].ImageURL = ""
-		}
-	}
-	return o, err
+	return o, nil
 }
 
 func orderImageURLAllowed(raw string) bool {

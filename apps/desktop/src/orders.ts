@@ -39,6 +39,7 @@ export type OrderRecord = {
   status: string;
   currency_id: string;
   total_amount: string;
+  sales_amount_usd?: string;
   date_created: string;
   last_updated: string;
   shipment_id?: string;
@@ -202,6 +203,24 @@ export function orderDate(value: string) {
     hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   });
 }
+export function officialTrackingURL(value?: string) {
+  if (!value || value.length > 2048 || /[\\\s]/.test(value)) return "";
+  try {
+    const url = new URL(value);
+    const tld = url.hostname.split(".").at(-1) ?? "";
+    return url.protocol === "https:" && !url.username && !url.password && !url.port &&
+      url.hostname.includes(".") && /^[a-z]{2,}$/.test(tld) &&
+      !["localhost", "local", "internal", "test", "invalid", "example", "onion", "arpa"].includes(tld)
+      ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+export function orderUSD(value?: string) {
+  if (!value || !/^\d+(\.\d+)?$/.test(value)) return "待核实";
+  const [whole, fraction = ""] = value.split(".");
+  return "USD " + whole + "." + fraction.padEnd(2, "0");
+}
 export function orderMoney(value: string, currency: string) {
   const symbols: Record<string, string> = {
     USD: "$", BRL: "R$", MXN: "MX$", ARS: "AR$", CLP: "CLP$", CNY: "¥",
@@ -259,7 +278,7 @@ export function searchOrders(storeId: string, site: string, logistic: string, qu
     throw error;
   });
 }
-// A user-clicked, read-only official item query which only caches a trusted image URL.
+// Read-only official item query which only caches a trusted image URL.
 export function refreshOrderImage(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
   return storeRequest<OrderRecord>(pathWithTail(scope, id + "/image-refresh"), "POST",

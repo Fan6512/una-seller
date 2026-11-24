@@ -13,6 +13,10 @@ on:
       - 'backend/**'
   workflow_dispatch:
     inputs:
+      check_only:
+        description: Compile and test the native desktop without packaging
+        type: boolean
+        default: false
       desktop_only:
         description: Build only the desktop installer
         type: boolean
@@ -34,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}-${{ inputs.signed_smoke && 'signed-smoke' || 'default' }}${{ inputs.loopback_api && '-loopback-api' || '' }}
+  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}-${{ inputs.signed_smoke && 'signed-smoke' || 'default' }}${{ inputs.loopback_api && '-loopback-api' || '' }}${{ inputs.check_only && '-compile' || '' }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
@@ -57,7 +61,7 @@ jobs:
       !cancelled() &&
       (github.event_name != 'push' || needs.production-environment.result == 'success') &&
       (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    name: Windows Tauri x64 (NSIS)
+    name: ${{ inputs.check_only && 'Windows Tauri x64 compile and tests' || 'Windows Tauri x64 (NSIS)' }}
     environment: ${{ github.event_name == 'push' && 'desktop-production' || 'desktop-ci' }}
     env:
       VITE_API_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.loopback_api && 'http://127.0.0.1:8787' || '' }}
@@ -108,14 +112,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Compile and test native desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.check_only
+        run: |
+          npm run icons
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
       - name: Build test NSIS installer
-        if: github.event_name != 'push' && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.signed_smoke && !inputs.check_only
         env:
           VITE_UNA_SELLER_DEV_DIAGNOSTICS: '1'
         run: npm run tauri:build -- --bundles nsis -- --locked
 
       - name: Build signed NSIS installer
-        if: github.event_name == 'push' || inputs.signed_smoke
+        if: github.event_name == 'push' || (inputs.signed_smoke && !inputs.check_only)
         env:
           SIGNED_SMOKE: ${{ inputs.signed_smoke }}
           UPDATER_PUBLIC_KEY: ${{ github.event_name == 'push' && vars.TAURI_UPDATER_PUBLIC_KEY || '' }}
@@ -174,7 +187,7 @@ jobs:
           }
 
       - name: Upload isolated signed smoke artifacts
-        if: inputs.signed_smoke
+        if: inputs.signed_smoke && !inputs.check_only
         uses: actions/upload-artifact@v4
         with:
           name: una-seller-updater-smoke
@@ -192,19 +205,19 @@ jobs:
           retention-days: 1
 
       - name: Set up Go for local API
-        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke && !inputs.check_only
         uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache: false
 
       - name: Build local API for Windows
-        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke && !inputs.check_only
         working-directory: backend
         run: go build -o ../apps/desktop/src-tauri/target/release/una-seller-api.exe ./cmd/api
 
       - name: Upload Windows app, installer and local API
-        if: github.event_name != 'push' && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.signed_smoke && !inputs.check_only
         uses: actions/upload-artifact@v4
         with:
           name: una-seller-windows-x64

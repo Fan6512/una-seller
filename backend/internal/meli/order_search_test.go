@@ -79,6 +79,17 @@ func TestOrderSearchVerifiedOwnerScopeAndPagination(t *testing.T) {
 		page.Items[0].SiteID != "MLM" || page.Items[0].StoreID != store {
 		t.Fatalf("cross-site Order ID: %+v %v", page, err)
 	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET pack_id='910999'
+	 WHERE store_id IN ($1::uuid,$2::uuid) AND order_id IN ('100001','200002','400004')`, store, foreignStore); err != nil {
+		t.Fatal(err)
+	}
+	base.Store, base.Query = "all", "910999"
+	page, err = s.SearchOrders(ctx, owner, base)
+	if err != nil || len(page.Items) != 2 || page.Items[0].ID == page.Items[1].ID ||
+		page.Items[0].SalesAmountUSD != "12.00" || page.Items[1].SalesAmountUSD != "12.00" {
+		t.Fatalf("Pack search must return scoped orders individually: %+v %v", page, err)
+	}
+	base.Store = store
 	base.Query = "denim"
 	base.Site = "MLB"
 	page, err = s.SearchOrders(ctx, owner, base)

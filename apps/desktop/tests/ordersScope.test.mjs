@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
-  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate } from "/src/orders.ts";
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate, officialTrackingURL, orderUSD } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -37,6 +37,8 @@ const deferred = [];
 const purchaseRequests = [];
 const purchaseFilters = [];
 const searchRequests = [];
+const imageRequests = [];
+let exerciseImages = false;
 const order = { order_id: "102", status: "paid", order_items: [
     { item_id: "MLB101", title: "Original title without translation", quantity: 1, unit_price: "12", currency_id: "USD" },
   ], total_amount: "12", currency_id: "USD",
@@ -50,7 +52,7 @@ const shipmentDetails = {
   shipment_id: order.shipment_id, status: "delivered", tracking_number: "OFFICIAL-TRACK-102",
   checked_at: "2026-11-24T04:00:00Z", first_mile_carrier: "Fixture first mile",
   shipped_at: "2026-11-21T04:00:00Z", delivered_at: "2026-11-24T03:30:00Z",
-  details: { checked_at: "2026-11-24T04:00:00Z", carrier_name: "Fixture official carrier", tracking_url: "https://example.invalid/track/102",
+  details: { checked_at: "2026-11-24T04:00:00Z", carrier_name: "Fixture official carrier", tracking_url: "https://www.jtexpress.com.br/track/102",
     history: [{ status: "shipped", date: "2026-11-21T04:00:00Z" },
       { status: "delivered", date: "2026-11-24T03:30:00Z" }] },
 };
@@ -62,6 +64,10 @@ for (const [status, substatus, label] of [
 window.fetch = (path, options) => {
   const { pathname, searchParams } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
+  if (decodeURIComponent(pathname).endsWith("/image-refresh")) {
+    if (exerciseImages) return new Promise(resolve => imageRequests.push({ resolve, path, signal: options.signal }));
+    return Promise.resolve(Response.json({ error: "order_image_unavailable" }, { status: 404 }));
+  }
   if (pathname.endsWith("/orders/200002/shipment")) {
     assert(searchParams.get("details") === "1", "selected order must request detail mode");
     return new Promise((resolve) => pendingShipmentDetails.push({ resolve, path, signal: options.signal }));
@@ -380,8 +386,19 @@ try {
     detailsFields.textContent.includes("首程承运商Fixture first mile") &&
     [...detailsFields.querySelectorAll("time")].some(time => time.dateTime === shipmentDetails.delivered_at),
     "tracking, first-mile carrier and exact receipt time must stay distinct");
-  assert(detailsFields.querySelector("a")?.href === shipmentDetails.details.tracking_url,
-    "official carrier tracking link is missing");
+  const trackingActions = [...detailsFields.querySelectorAll("button")];
+  const browserTracking = trackingActions.find(button => button.textContent === "在浏览器中打开");
+  const opened = [];
+  window.open = (...args) => opened.push(args);
+  browserTracking?.click();
+  assert(trackingActions.some(button => button.textContent === "官方物流查询") &&
+    trackingActions.some(button => button.textContent === "复制地址") &&
+    opened[0]?.[0] === shipmentDetails.details.tracking_url && opened[0]?.[2] === "noopener,noreferrer",
+    "carrier actions must offer popup, clipboard and safe browser fallback");
+  assert(officialTrackingURL("file:///tmp/example") === "" &&
+    officialTrackingURL("https://10.0.0.1/track") === "" &&
+    officialTrackingURL("https://u@jtexpress.com.br/track") === "", "unsafe tracking address accepted");
+  assert(orderUSD("11.28") === "USD 11.28" && orderUSD() === "待核实", "USD display must fail closed");
   const timeline = [...document.querySelectorAll(".orders-detail-block h3")]
     .find(item => item.textContent === "官方物流时间轴");
   assert(timeline?.parentElement.querySelectorAll("time").length === 2 &&
@@ -496,6 +513,33 @@ try {
   await new Promise(resolve => setTimeout(resolve, 20));
   assert(!document.querySelector(".orders-detail-fields")?.textContent.includes("Stale carrier"),
     "delayed result escaped the store selection guard");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  exerciseImages = true;
+  const testingThumbnail = "https://http2.mlstatic.com/D_700-I.jpg";
+  select("订单店铺", "one");
+  select("站点和物流模式", "MLB|remote");
+  const imageField = searchInput();
+  flushSync(() => {
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    nativeSetter.call(imageField, "");
+    imageField.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  order.order_items[0] = { ...order.order_items[0], item_id: "MLB700" };
+  flushSync(() => submitSearch().click());
+  await waitFor(() => imageRequests.length === 1, "new order did not start non-blocking image backfill");
+  assert(document.querySelectorAll(".orders-id").length === 2, "image read blocked order rows");
+  const staleImage = imageRequests.shift();
+  select("订单店铺", "two");
+  await waitFor(() => imageRequests.length === 1, "next store did not start independent image backfill");
+  const matchingImage = imageRequests.shift();
+  assert(staleImage.signal.aborted && staleImage.path.includes("/stores/one/") &&
+    matchingImage.path.includes("/stores/two/"), "image work did not follow the store scope");
+  staleImage.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: "https://http2.mlstatic.com/stale.jpg" }] }));
+  matchingImage.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: testingThumbnail }] }));
+  await waitFor(() => document.querySelectorAll(".orders-product-preview img").length === 2,
+    "same-shop orders for one item did not share the image");
+  assert([...document.querySelectorAll(".orders-product-preview img")].every(img => img.src === testingThumbnail) &&
+    imageRequests.length === 0, "late image update or repeat item request escaped its scope");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";
