@@ -11,10 +11,10 @@ const statusText: Record<StoreConnection["status"], string> = {
 };
 
 const publicationModeNames: Record<string, string> = {
-  fully_managed: "Fully Managed 全托管（C0 已识别）",
-  standard_up: "Standard UP（C0 已识别）",
-  legacy_candidate: "Legacy 旧版候选（需继续确认）",
-  undetermined: "尚未确认",
+  fully_managed: "全托管店铺",
+  standard_up: "标准 UP 店铺",
+  legacy_candidate: "传统刊登店铺候选（待确认）",
+  undetermined: "刊登类型待确认",
 };
 
 export default function StoresPage({ onConnectionChecked }: { onConnectionChecked?: (storeId: string) => void }) {
@@ -81,7 +81,7 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
     try {
       const url = await startStoreAuthorization();
       setAuthorizationURL(url);
-      setNotice("请在系统浏览器打开下方官方链接，完成卖家授权后返回此处刷新店铺。");
+      setNotice("请在系统浏览器打开下方官方链接，完成卖家授权后系统会自动核实刊登类型一次；返回此处刷新店铺。");
     } catch (e) {
       setError(readableStoreError(e, "无法开始授权"));
     } finally {
@@ -184,7 +184,15 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
           {items.map((item) => (
             <article key={item.id} className="store-card">
               <div className="store-card-top">
-                <div><strong>{item.nickname || "未提供昵称"}</strong><p>CBT 主账号 ID：{item.seller_id}</p></div>
+                <div>
+                  <strong>{item.nickname || "未提供昵称"}</strong>
+                  <p>CBT 主账号 ID：{item.seller_id}</p>
+                  <span className="store-type-label">
+                    刊登类型：{item.publication_mode_checked_at
+                      ? publicationModeNames[item.publication_mode ?? "undetermined"] ?? "刊登类型待确认"
+                      : "待检测确认"}
+                  </span>
+                </div>
                 <span className={"store-status " + (item.status === "connected" ? "store-connected" : "store-attention")}>{statusText[item.status] || "状态未知"}</span>
               </div>
               <p className="store-note">
@@ -195,8 +203,7 @@ export default function StoresPage({ onConnectionChecked }: { onConnectionChecke
                   : "站点映射未验证：不开放站点刊登或订单操作。"}
               </p>
               <p className="store-note">
-                CBT 刊登模式：{publicationModeNames[item.publication_mode ?? "undetermined"] ?? "尚未确认"}
-                {item.publication_mode_checked_at ? " · 最近取证：" + new Date(item.publication_mode_checked_at).toLocaleString() : " · 尚未完成真实 C0 取证"}
+                {item.publication_mode_checked_at ? "最近取证：" + new Date(item.publication_mode_checked_at).toLocaleString() : "尚未取得有效刊登类型证据；可点击下方按钮手动核实。"}
               </p>
               <p className="store-note">C0 是官方只读账号模式识别，不代表具备商品创建或图片上传权限；软件不会修改官方店铺经营模式。</p>
               <div className="store-actions">
