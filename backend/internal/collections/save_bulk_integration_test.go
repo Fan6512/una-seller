@@ -1,7 +1,6 @@
 package collections_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -107,7 +106,6 @@ func TestCollectionSaveImageQueryCountIndependentOfImageVolume(t *testing.T) {
 
 func TestCollectionSaveImageBatchCompletePartialSemantics(t *testing.T) {
 	const owner = "2a9c0000-0000-4000-8000-000000000081"
-	const url = "https://www.amazon.com/dp/B800000081"
 	store, ctx := disposableDB(t, owner)
 	seed := inputJSON(t, `{"source_platform":"amazon","source_site":"US","source_url":"https://www.amazon.com/dp/B800000081","title":"Original batch title","collection_status":"complete","images":[{"url":"https://example.com/root-a.jpg","type":"main"},{"url":"https://example.com/root-a.jpg","type":"additional"},{"url":"https://example.com/root-b.jpg","type":"additional"}],"variants":[{"attributes":{"Color":"A"},"image_urls":["https://example.com/a-old.jpg","https://example.com/a-old.jpg"]},{"attributes":{"Color":"B"},"image_urls":[]}]}`)
 	p, created, err := store.Save(ctx, owner, seed)
@@ -168,12 +166,10 @@ func TestCollectionSaveImageBatchCompletePartialSemantics(t *testing.T) {
 	if _, err := store.Get(ctx, "2a9c0000-0000-4000-8000-000000000090", p.ID); err != collections.ErrNotFound {
 		t.Fatalf("cross-owner access: %v", err)
 	}
-	_ = url
 }
 
 func TestCollectionSaveBatchFailureRollsBack(t *testing.T) {
 	const owner = "2a9c0000-0000-4000-8000-000000000082"
-	const url = "https://www.amazon.com/dp/B800000082"
 	store, ctx := disposableDB(t, owner)
 	seed := inputJSON(t, `{"source_platform":"amazon","source_site":"US","source_url":"https://www.amazon.com/dp/B800000082","title":"Original batch title","collection_status":"complete","images":[{"url":"https://example.com/old.jpg","type":"main"}]}`)
 	original, _, err := store.Save(ctx, owner, seed)
@@ -194,5 +190,4 @@ func TestCollectionSaveBatchFailureRollsBack(t *testing.T) {
 	if err != nil || got.Title != "Original batch title" || len(got.Images) != 1 || got.Images[0].URL != "https://example.com/old.jpg" {
 		t.Fatalf("transaction failed to roll back earlier updates: err=%v got=%+v", err, got)
 	}
-	_ = url
 }
