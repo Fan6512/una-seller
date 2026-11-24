@@ -25,7 +25,7 @@ func (s *Service) RefreshOrderDispatchSLA(ctx context.Context, owner, store stri
 	if !validUUID(store) || !orderScopeValid(scope) || !orderNumber(orderID) {
 		return OrderRecord{}, ErrOrderNotFound
 	}
-	order, err := s.GetOrder(ctx, owner, store, scope, orderID)
+	order, err := s.getOrder(ctx, owner, store, scope, orderID, false)
 	if err != nil {
 		return OrderRecord{}, err
 	}
@@ -110,5 +110,5 @@ func (s *Service) RefreshOrderDispatchSLA(ctx context.Context, owner, store stri
 	if err = tx.Commit(ctx); err != nil {
 		return OrderRecord{}, err
 	}
-	return s.GetOrder(ctx, owner, store, scope, orderID)
+	return s.getOrder(ctx, owner, store, scope, orderID, false)
 }

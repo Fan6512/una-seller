@@ -787,7 +787,7 @@ func (s *Service) authorizeOrderRead(ctx context.Context, owner, store string, s
 // Recheck the current mapping in the same statement that reads cached orders.
 // Shared projection used by both local and cross-store cached order reads.
 // Keep scanOrder's destinations in this same column order.
-const orderColumns = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
+const orderColumnsBase = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
  trim_scale(o.total_amount)::text,o.date_created,o.last_updated,COALESCE(o.shipment_id,''),
  COALESCE((
    SELECT jsonb_agg(line.value ||
@@ -808,11 +808,15 @@ const orderColumns = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
  COALESCE(p.purchase_order_id,''),
  CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
  COALESCE(p.purchase_tracking_number,''),
- COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at,
- CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id THEN o.shipment_snapshot END`
+ COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at,`
 
-const orderSelect = `WITH connection AS (` + orderConnection + `)
- SELECT ` + orderColumns + `
+// List and cross-store search never return the potentially large history array.
+const orderColumns = orderColumnsBase + ` CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id THEN o.shipment_snapshot-'details' END`
+const orderDetailColumns = orderColumnsBase + ` CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id THEN o.shipment_snapshot END`
+
+const orderSelectPrefix = `WITH connection AS (` + orderConnection + `)
+ SELECT `
+const orderSelectFrom = `
  FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  LEFT JOIN app.meli_order_purchases p
@@ -823,6 +827,9 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
    AND sla.seller_id=o.seller_id AND sla.order_id=o.order_id
    AND sla.shipment_id=o.shipment_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4`
+
+const orderSelect = orderSelectPrefix + orderColumns + orderSelectFrom
+const orderDetailSelect = orderSelectPrefix + orderDetailColumns + orderSelectFrom
 
 func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	var o OrderRecord
@@ -907,13 +914,22 @@ func (s *Service) ListOrders(ctx context.Context, owner, store string,
 
 func (s *Service) GetOrder(ctx context.Context, owner, store string,
 	scope OrderScope, id string) (OrderRecord, error) {
+	return s.getOrder(ctx, owner, store, scope, id, true)
+}
+
+func (s *Service) getOrder(ctx context.Context, owner, store string,
+	scope OrderScope, id string, withDetails bool) (OrderRecord, error) {
 	if !orderScopeValid(scope) || !orderNumber(id) {
 		return OrderRecord{}, ErrOrderNotFound
 	}
 	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
 		return OrderRecord{}, err
 	}
-	rows, err := s.db.Query(ctx, orderSelect+` AND o.order_id=$5 LIMIT 1`,
+	query := orderSelect
+	if withDetails {
+		query = orderDetailSelect
+	}
+	rows, err := s.db.Query(ctx, query+` AND o.order_id=$5 LIMIT 1`,
 		store, owner, scope.Site, scope.Logistic, id)
 	if err != nil {
 		return OrderRecord{}, err

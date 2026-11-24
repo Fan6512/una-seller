@@ -1009,6 +1009,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
               </section>
               {detail.shipment?.details && <section className="orders-detail-block">
                 <h3>官方物流时间轴</h3>
+                {detail.shipment.details.checked_at && <p className="orders-muted" title="本机时区">详情最近核验：{orderDate(detail.shipment.details.checked_at)}
+                  {detail.shipment.checked_at && Date.parse(detail.shipment.checked_at) > Date.parse(detail.shipment.details.checked_at) && " · 概要已更新，详情可能较旧，可手动刷新"}</p>}
                 {detail.shipment.details.history?.length ? <ol className="orders-fulfillment-steps">
                   {detail.shipment.details.history.map((event, index) => <li key={index}>
                     <b>{shipmentStatusLabel(event)}</b>

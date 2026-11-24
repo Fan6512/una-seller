@@ -31,6 +31,7 @@ type OrderShipment struct {
 }
 
 type OrderShipmentDetails struct {
+	CheckedAt   time.Time            `json:"checked_at"`
 	CarrierName string               `json:"carrier_name,omitempty"`
 	TrackingURL string               `json:"tracking_url,omitempty"`
 	History     []OrderShipmentEvent `json:"history"`
@@ -47,7 +48,7 @@ func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string,
 	if !validUUID(store) || !orderScopeValid(scope) || !orderNumber(orderID) {
 		return OrderRecord{}, ErrOrderNotFound
 	}
-	order, err := s.GetOrder(ctx, owner, store, scope, orderID)
+	order, err := s.getOrder(ctx, owner, store, scope, orderID, false)
 	if err != nil {
 		return OrderRecord{}, err
 	}
@@ -110,6 +111,8 @@ func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string,
 		if err != nil {
 			return OrderRecord{}, err
 		}
+		details.CheckedAt = checkedAt
+		snapshot.Details = details
 		for _, event := range details.History {
 			// A timestamp for a substatus update cannot date the status transition.
 			if event.Substatus != "" {
@@ -150,7 +153,8 @@ UPDATE app.meli_orders o SET shipment_snapshot=CASE
  THEN o.shipment_snapshot
  ELSE $8::jsonb || jsonb_strip_nulls(jsonb_build_object(
    'shipped_at', COALESCE($8::jsonb->'shipped_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'shipped_at' END),
-   'delivered_at', COALESCE($8::jsonb->'delivered_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'delivered_at' END)
+   'delivered_at', COALESCE($8::jsonb->'delivered_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'delivered_at' END),
+   'details', COALESCE($8::jsonb->'details', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'details' END)
  )) END
 FROM authorized c
 WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
@@ -182,16 +186,13 @@ WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
 		}
 		return OrderRecord{}, ErrOrderAuthorizationChanged
 	}
-	result, err := s.GetOrder(ctx, owner, store, scope, orderID)
+	result, err := s.getOrder(ctx, owner, store, scope, orderID, withDetails)
 	if err != nil {
 		return OrderRecord{}, err
 	}
 	if result.ShipmentID != order.ShipmentID || result.Shipment == nil ||
 		(details != nil && !result.Shipment.CheckedAt.Equal(checkedAt)) {
 		return OrderRecord{}, ErrOrderShipmentChanged
-	}
-	if details != nil {
-		result.Shipment.Details = details
 	}
 	return result, nil
 }

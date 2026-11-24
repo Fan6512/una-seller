@@ -185,16 +185,48 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 	}
 	before = calls.Load()
 	cached, err := s.GetOrder(ctx, owner, store, scope, "10001")
-	if err != nil || cached.Shipment == nil || cached.Shipment.Details != nil || cached.Shipment.DeliveredAt == nil ||
-		!cached.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) || calls.Load() != before {
-		t.Fatalf("cached read lost verified dates or exposed detail history: %+v, %v", cached.Shipment, err)
+	if err != nil || cached.Shipment == nil || cached.Shipment.Details == nil || cached.Shipment.DeliveredAt == nil ||
+		!cached.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) ||
+		cached.Shipment.Details.CarrierName != shipment.Details.CarrierName ||
+		cached.Shipment.Details.TrackingURL != shipment.Details.TrackingURL ||
+		len(cached.Shipment.Details.History) != 3 ||
+		!cached.Shipment.Details.CheckedAt.Equal(shipment.CheckedAt) || calls.Load() != before {
+		t.Fatalf("cached detail read lost official history, carrier or dates: %+v, %v", cached.Shipment, err)
 	}
-	// Summary refreshes must preserve verified dates when the platform omits them.
+	// List and global search must not expose cached details.
+	page, err := s.ListOrders(ctx, owner, store, scope, "", "", 0)
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("cached list: %+v, %v", page, err)
+	}
+	for _, row := range page.Items {
+		if row.ID == "10001" && (row.Shipment == nil || row.Shipment.Details != nil) {
+			t.Fatalf("list exposed details or lost summary: %+v", row.Shipment)
+		}
+	}
+	search, err := s.SearchOrders(ctx, owner, OrderSearchFilter{Store: store, Site: "MLB", Logistic: "remote"})
+	if err != nil || len(search.Items) != 2 {
+		t.Fatalf("cached search: %+v, %v", search, err)
+	}
+	for _, row := range search.Items {
+		if row.ID == "10001" && (row.Shipment == nil || row.Shipment.Details != nil) {
+			t.Fatalf("search exposed details or lost summary: %+v", row.Shipment)
+		}
+	}
+	if calls.Load() != before {
+		t.Fatal("cached reads requested official API")
+	}
+	// Summary refreshes must preserve verified dates and details when omitted.
 	reply.Store(&response{code: http.StatusOK, body: delivered})
 	result, err = s.RefreshOrderShipment(ctx, owner, store, scope, "10001", false)
 	if err != nil || result.Shipment == nil || result.Shipment.Details != nil ||
 		result.Shipment.DeliveredAt == nil || !result.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) {
 		t.Fatalf("summary refresh lost the verified delivery date: %+v, %v", result.Shipment, err)
+	}
+	cached, err = s.GetOrder(ctx, owner, store, scope, "10001")
+	if err != nil || cached.Shipment == nil || cached.Shipment.Details == nil ||
+		len(cached.Shipment.Details.History) != 3 ||
+		!cached.Shipment.Details.CheckedAt.Equal(shipment.CheckedAt) {
+		t.Fatalf("summary refresh erased cached details or changed their verification time: %+v, %v", cached.Shipment, err)
 	}
 	cached, err = s.GetOrder(ctx, otherOwner, otherStore, scope, "10001")
 	if err != nil || cached.ShipmentID != "987651236" || cached.Shipment != nil {

@@ -26,6 +26,7 @@ export type OrderShipment = {
   last_updated?: string;
   checked_at: string;
   details?: {
+    checked_at?: string;
     carrier_name?: string;
     tracking_url?: string;
     history: { status: string; substatus?: string; date: string }[] | null;

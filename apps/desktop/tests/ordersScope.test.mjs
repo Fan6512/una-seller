@@ -44,12 +44,13 @@ const order = { order_id: "102", status: "paid", order_items: [
 let slaFetchCount = 0;
 let shipmentFetchCount = 0;
 let shipmentDetailsCount = 0;
+let cachedShipmentDetails;
 const pendingShipmentDetails = [];
 const shipmentDetails = {
   shipment_id: order.shipment_id, status: "delivered", tracking_number: "OFFICIAL-TRACK-102",
   checked_at: "2026-11-24T04:00:00Z", first_mile_carrier: "Fixture first mile",
   shipped_at: "2026-11-21T04:00:00Z", delivered_at: "2026-11-24T03:30:00Z",
-  details: { carrier_name: "Fixture official carrier", tracking_url: "https://example.invalid/track/102",
+  details: { checked_at: "2026-11-24T04:00:00Z", carrier_name: "Fixture official carrier", tracking_url: "https://example.invalid/track/102",
     history: [{ status: "shipped", date: "2026-11-21T04:00:00Z" },
       { status: "delivered", date: "2026-11-24T03:30:00Z" }] },
 };
@@ -69,6 +70,8 @@ window.fetch = (path, options) => {
     shipmentFetchCount++;
     if (searchParams.get("details") === "1") {
       shipmentDetailsCount++;
+      cachedShipmentDetails = shipmentDetails;
+      order.shipment = { ...shipmentDetails, details: undefined };
       return Promise.resolve(Response.json({ ...order, shipment: shipmentDetails }));
     }
     order.shipment = { shipment_id: order.shipment_id, status: "shipped", substatus: "in_transit",
@@ -119,7 +122,7 @@ window.fetch = (path, options) => {
     return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: filter }));
   }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
-  if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json(order));
+  if (pathname.endsWith("/orders/102")) return Promise.resolve(Response.json({ ...order, shipment: cachedShipmentDetails ?? order.shipment }));
   if (pathname.endsWith("/orders/200002")) return Promise.resolve(Response.json({
     ...order, order_id: "200002", order_items: [
       { item_id: "MLM100", title: "Lemon massage tool", quantity: 1, unit_price: "12", currency_id: "USD" },
@@ -377,6 +380,16 @@ try {
   assert(timeline?.parentElement.querySelectorAll("time").length === 2 &&
     !document.querySelector(".orders-shipping-refs").textContent.includes("Fixture official carrier"),
     "timeline must be rendered inside the selected detail");
+  const beforeReopen = shipmentFetchCount;
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  await waitFor(() => !document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
+    "detail did not close");
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier") &&
+    [...document.querySelectorAll(".orders-detail-block h3")].some(item => item.textContent === "官方物流时间轴"),
+    "reopening detail did not display cached carrier and history");
+  assert(shipmentFetchCount === beforeReopen && shipmentDetailsCount === 1,
+    "reopening cached detail must not request official shipment");
   flushSync(() => [...document.querySelectorAll(".orders-detail-refresh")][0].click());
   await waitFor(() => document.querySelector(".orders-detail-summary")?.textContent.includes("部分退款"),
     "manual order refresh did not display refunded state");
