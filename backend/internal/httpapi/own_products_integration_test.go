@@ -84,12 +84,25 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if w := call(owner, "PUT", draftPath, draftBody); w.Code != 200 {
 		t.Fatalf("draft %d %s", w.Code, w.Body.String())
 	}
+	legacyVariant := `{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","image_urls":["https://example.com/black.jpg","https://example.com/shared.jpg"]}`
+	legacyDraft := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":1,
+"listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT123",
+"seller_sku":"P-001","weight_g":"850","images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],"variants":[` + legacyVariant + `]}}`
+	if w := call(owner, "PUT", draftPath, legacyDraft); w.Code != 200 {
+		t.Fatalf("legacy draft write %d %s", w.Code, w.Body.String())
+	}
+	if w := call(owner, "GET", draftPath, ""); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"purchase_cost_cny":"24.50"`) ||
+		!strings.Contains(w.Body.String(), `"target_net_proceeds_usd":"10.25"`) ||
+		!strings.Contains(w.Body.String(), `"value_id":"101"`) {
+		t.Fatalf("legacy draft write lost new fields: %d %s", w.Code, w.Body.String())
+	}
 	if w := call(owner, "POST", approvePath, `{"expected_revision":0}`); w.Code != 409 {
 		t.Fatalf("stale approval %d", w.Code)
 	}
 	approvals := make(chan *httptest.ResponseRecorder, 2)
 	for range 2 {
-		go func() { approvals <- call(owner, "POST", approvePath, `{"expected_revision":1}`) }()
+		go func() { approvals <- call(owner, "POST", approvePath, `{"expected_revision":2}`) }()
 	}
 	first, repeated := <-approvals, <-approvals
 	if repeated.Code == 201 {
@@ -123,22 +136,25 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		(*response.Product.ListingFields.CategoryAttributes)[1].UnitID != "l" ||
 		response.Product.ListingFields.TargetNetProceedsUSD == nil || *response.Product.ListingFields.TargetNetProceedsUSD != "10.25" ||
 		response.Product.ListingFields.Variants == nil || len(*response.Product.ListingFields.Variants) != 1 ||
-		(*response.Product.ListingFields.Variants)[0].PurchaseCostCNY != "24.50" ||
-		(*response.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" ||
+		(*response.Product.ListingFields.Variants)[0].PurchaseCostCNY == nil ||
+		*(*response.Product.ListingFields.Variants)[0].PurchaseCostCNY != "24.50" ||
+		(*response.Product.ListingFields.Variants)[0].TargetNetProceedsUSD == nil ||
+		*(*response.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" ||
 		(*response.Product.ListingFields.Variants)[0].Price != "89.90" ||
-		len((*response.Product.ListingFields.Variants)[0].CategoryAttributes) != 1 ||
-		(*response.Product.ListingFields.Variants)[0].CategoryAttributes[0].ValueID != "101" ||
+		(*response.Product.ListingFields.Variants)[0].CategoryAttributes == nil ||
+		len(*(*response.Product.ListingFields.Variants)[0].CategoryAttributes) != 1 ||
+		(*(*response.Product.ListingFields.Variants)[0].CategoryAttributes)[0].ValueID != "101" ||
 		len((*response.Product.ListingFields.Variants)[0].ImageURLs) != 2 {
 		t.Fatalf("wrong snapshot or listing fields: %#v", response.Product)
 	}
-	again := call(owner, "POST", approvePath, `{"expected_revision":1}`)
+	again := call(owner, "POST", approvePath, `{"expected_revision":2}`)
 	if again.Code != 200 || !strings.Contains(again.Body.String(), "already_approved") {
 		t.Fatalf("duplicate approval %d", again.Code)
 	}
 	// Converted working drafts are permanently read-only; users must edit
 	// app.own_products, never a stale working draft that will not be consumed.
 	if w := call(owner, "PUT", draftPath,
-		`{"title":"Invisible after approval","description":"wrong","notes":"wrong","expected_revision":1}`); w.Code != 409 || !strings.Contains(w.Body.String(), "read-only after product-box approval") {
+		`{"title":"Invisible after approval","description":"wrong","notes":"wrong","expected_revision":2}`); w.Code != 409 || !strings.Contains(w.Body.String(), "read-only after product-box approval") {
 		t.Fatalf("converted draft still writable: %d %s", w.Code, w.Body.String())
 	}
 	if w := call(other, "PUT", draftPath, draftBody); w.Code != 404 {
@@ -179,7 +195,7 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	updated := call(owner, "PUT", "/api/v1/products/"+id,
 		`{"title":"Edited product","description":"Own description","notes":"Own notes","expected_revision":2,
 		"listing_fields":{"seller_sku":"P-002","weight_g":"1200","length_cm":"23","width_cm":"19","height_cm":"9",
-		"titles":{"en":"Edited English Title","es":"Otro título en español","pt":"Outro título em português"},"category_id":"CBT999"}}`)
+		"titles":{"en":"Edited English Title","es":"Otro título en español","pt":"Outro título em português"},"category_id":"CBT999","variants":[`+legacyVariant+`]}}`)
 	if updated.Code != 200 {
 		t.Fatalf("listing fields edit %d %s", updated.Code, updated.Body.String())
 	}
@@ -194,7 +210,10 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		editedResponse.Product.ListingFields.CategoryID != "CBT999" || editedResponse.Product.ListingFields.Titles.Portuguese != "Outro título em português" ||
 		editedResponse.Product.ListingFields.TargetNetProceedsUSD == nil || *editedResponse.Product.ListingFields.TargetNetProceedsUSD != "10.25" ||
 		editedResponse.Product.ListingFields.Variants == nil || len(*editedResponse.Product.ListingFields.Variants) != 1 ||
-		(*editedResponse.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" {
+		(*editedResponse.Product.ListingFields.Variants)[0].TargetNetProceedsUSD == nil ||
+		*(*editedResponse.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" ||
+		!strings.Contains(updated.Body.String(), `"purchase_cost_cny":"24.50"`) ||
+		!strings.Contains(updated.Body.String(), `"value_id":"101"`) {
 		t.Fatalf("merchant listing edit not persisted: %#v", editedResponse.Product.ListingFields)
 	}
 	if w := call(owner, "PUT", "/api/v1/products/"+id,

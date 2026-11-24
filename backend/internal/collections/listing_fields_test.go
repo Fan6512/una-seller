@@ -77,12 +77,43 @@ func TestDescriptionTranslationManualEditAndReadoption(t *testing.T) {
 
 func TestTargetListingAmounts(t *testing.T) {
 	proceeds := "8.1234"
-	variants := []ListingVariant{{Attributes: map[string]string{"Color": "Black"}, Price: "79.90", Currency: "BRL", PurchaseCostCNY: "25.50", TargetNetProceedsUSD: "8.50", CategoryAttributes: []ListingCategoryAttribute{{CategoryID: "CBT123", ID: "COLOR", Value: "Black", ValueID: "1"}}}}
+	variants := []ListingVariant{{Attributes: map[string]string{"Color": "Black"}, Price: "79.90", Currency: "BRL", PurchaseCostCNY: new("25.50"), TargetNetProceedsUSD: new("8.50"), CategoryAttributes: &[]ListingCategoryAttribute{{CategoryID: "CBT123", ID: "COLOR", Value: "Black", ValueID: "1"}}}}
 	fields := ListingFields{TargetNetProceedsUSD: &proceeds, Variants: &variants}
-	if err := fields.Validate(); err != nil { t.Fatal(err) }
+	if err := fields.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	proceeds = "-1"
-	if err := fields.Validate(); err == nil { t.Fatal("invalid proceeds accepted") }
+	if err := fields.Validate(); err == nil {
+		t.Fatal("invalid proceeds accepted")
+	}
 	proceeds = ""
-	variants[0].PurchaseCostCNY = "1.12345"
-	if err := fields.Validate(); err == nil { t.Fatal("invalid cost accepted") }
+	variants[0].PurchaseCostCNY = new("1.12345")
+	if err := fields.Validate(); err == nil {
+		t.Fatal("invalid cost accepted")
+	}
+}
+
+func TestPreserveVariantFields(t *testing.T) {
+	black := map[string]string{"Color": "Black"}
+	white := map[string]string{"Color": "White"}
+	blue := map[string]string{"Color": "Blue"}
+	previous := []ListingVariant{
+		{SellerSKU: "black", Attributes: black, PurchaseCostCNY: new("25.50"), TargetNetProceedsUSD: new("8.50")},
+		{Attributes: white, PurchaseCostCNY: new("20.00"), CategoryAttributes: &[]ListingCategoryAttribute{{CategoryID: "CBT1055", ID: "COLOR", Value: "White", ValueID: "52055"}}},
+	}
+	current := []ListingVariant{
+		{Attributes: white, PurchaseCostCNY: new(""), CategoryAttributes: &[]ListingCategoryAttribute{}},
+		{SellerSKU: "black", Attributes: blue},
+	}
+	saved, err := preserveVariantFields(current, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *saved[0].PurchaseCostCNY != "" || len(*saved[0].CategoryAttributes) != 0 ||
+		*saved[1].PurchaseCostCNY != "25.50" || *saved[1].TargetNetProceedsUSD != "8.50" || current[1].PurchaseCostCNY != nil {
+		t.Fatalf("old metadata was lost, copied to the wrong row, or restored after an explicit clear: %+v", saved)
+	}
+	if _, err := preserveVariantFields([]ListingVariant{{Attributes: blue}}, previous); err != ErrDraftConflict {
+		t.Fatalf("ambiguous legacy replacement should conflict, got %v", err)
+	}
 }

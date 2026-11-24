@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -111,14 +113,14 @@ type ListingCategoryAttribute struct {
 var listingCategoryAttributeID = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,79}$`)
 
 type ListingVariant struct {
-	SellerSKU            string                     `json:"seller_sku"`
-	Attributes           map[string]string          `json:"attributes"`
-	Price                string                     `json:"price"`
-	Currency             string                     `json:"currency"`
-	ImageURLs            []string                   `json:"image_urls"`
-	PurchaseCostCNY      string                     `json:"purchase_cost_cny,omitempty"`
-	TargetNetProceedsUSD string                     `json:"target_net_proceeds_usd,omitempty"`
-	CategoryAttributes   []ListingCategoryAttribute `json:"category_attributes,omitempty"`
+	SellerSKU            string                      `json:"seller_sku"`
+	Attributes           map[string]string           `json:"attributes"`
+	Price                string                      `json:"price"`
+	Currency             string                      `json:"currency"`
+	ImageURLs            []string                    `json:"image_urls"`
+	PurchaseCostCNY      *string                     `json:"purchase_cost_cny,omitempty"`
+	TargetNetProceedsUSD *string                     `json:"target_net_proceeds_usd,omitempty"`
+	CategoryAttributes   *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
 }
 
 func allNumeric(value string) bool {
@@ -138,6 +140,10 @@ func listingMoney(value string) bool {
 		return true
 	}
 	return moneyPattern.MatchString(value)
+}
+
+func optionalListingMoney(value *string) bool {
+	return value == nil || listingMoney(*value)
 }
 func listingDecimal(value string, max float64, integer bool) bool {
 	if value == "" {
@@ -181,13 +187,84 @@ func (f ListingFields) normalizedCopy() *ListingFields {
 }
 
 func (f ListingFields) needsPrevious() bool {
-	return f.Descriptions != nil || f.Titles.NFC().exceedsRegionalLimits()
+	return f.Descriptions != nil || f.Titles.NFC().exceedsRegionalLimits() ||
+		(f.Variants != nil && slices.ContainsFunc(*f.Variants, ListingVariant.omitsWorkbenchFields))
+}
+
+func (v ListingVariant) omitsWorkbenchFields() bool {
+	return v.PurchaseCostCNY == nil || v.TargetNetProceedsUSD == nil || v.CategoryAttributes == nil
+}
+
+func preserveVariantFields(current, previous []ListingVariant) ([]ListingVariant, error) {
+	current = slices.Clone(current)
+	matched := make([]bool, len(current))
+	used := make([]bool, len(previous))
+	sameSKU := func(a, b ListingVariant) bool { return a.SellerSKU != "" && a.SellerSKU == b.SellerSKU }
+	sameAttributes := func(a, b ListingVariant) bool {
+		return len(a.Attributes) > 0 && maps.Equal(a.Attributes, b.Attributes)
+	}
+	// Legacy rows have no immutable ID. Match only unique pairs and never by position.
+	for _, same := range []func(ListingVariant, ListingVariant) bool{
+		func(a, b ListingVariant) bool { return sameSKU(a, b) && sameAttributes(a, b) },
+		sameSKU, sameAttributes,
+	} {
+		oldCount, newCount := make([]int, len(current)), make([]int, len(previous))
+		candidate := make([]int, len(current))
+		for i, v := range current {
+			if matched[i] {
+				continue
+			}
+			for j, old := range previous {
+				if !used[j] && same(v, old) {
+					oldCount[i]++
+					newCount[j]++
+					candidate[i] = j
+				}
+			}
+		}
+		for i, count := range oldCount {
+			j := candidate[i]
+			if count != 1 || newCount[j] != 1 {
+				continue
+			}
+			matched[i], used[j] = true, true
+			if current[i].PurchaseCostCNY == nil {
+				current[i].PurchaseCostCNY = previous[j].PurchaseCostCNY
+			}
+			if current[i].TargetNetProceedsUSD == nil {
+				current[i].TargetNetProceedsUSD = previous[j].TargetNetProceedsUSD
+			}
+			if current[i].CategoryAttributes == nil {
+				current[i].CategoryAttributes = previous[j].CategoryAttributes
+			}
+		}
+	}
+	for i, v := range current {
+		if matched[i] || !v.omitsWorkbenchFields() {
+			continue
+		}
+		for j, old := range previous {
+			if !used[j] && ((old.PurchaseCostCNY != nil && *old.PurchaseCostCNY != "") ||
+				(old.TargetNetProceedsUSD != nil && *old.TargetNetProceedsUSD != "") ||
+				(old.CategoryAttributes != nil && len(*old.CategoryAttributes) > 0)) {
+				return nil, ErrDraftConflict
+			}
+		}
+	}
+	return current, nil
 }
 
 func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, error) {
 	next := f.normalizedCopy()
 	if err := next.Titles.validateRegionalLimits(previous.Titles.NFC()); err != nil {
 		return nil, err
+	}
+	if next.Variants != nil && previous.Variants != nil && slices.ContainsFunc(*next.Variants, ListingVariant.omitsWorkbenchFields) {
+		variants, err := preserveVariantFields(*next.Variants, *previous.Variants)
+		if err != nil {
+			return nil, err
+		}
+		next.Variants = &variants
 	}
 	if next.Descriptions == nil {
 		if next.DescriptionTranslation != nil {
@@ -250,7 +327,7 @@ func (f ListingFields) Validate() error {
 		!validListingText(f.CategoryPath, 400) || !validListingText(f.Brand, 120) ||
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
 		!validListingText(f.GTIN, 50) ||
-		!listingMoney(f.PurchasePrice) || (f.TargetNetProceedsUSD != nil && !listingMoney(*f.TargetNetProceedsUSD)) ||
+		!listingMoney(f.PurchasePrice) || !optionalListingMoney(f.TargetNetProceedsUSD) ||
 		!listingDecimal(f.WeightG, 1000000, true) ||
 		!listingDecimal(f.LengthCM, 10000, false) ||
 		!listingDecimal(f.WidthCM, 10000, false) ||
@@ -306,7 +383,7 @@ func (f ListingFields) Validate() error {
 		}
 		for _, v := range *f.Variants {
 			if !validListingText(v.SellerSKU, 120) || len(v.Attributes) > 12 ||
-				!listingMoney(v.Price) || !listingMoney(v.PurchaseCostCNY) || !listingMoney(v.TargetNetProceedsUSD) || (v.Currency != "" && !currencyPattern.MatchString(v.Currency)) ||
+				!listingMoney(v.Price) || !optionalListingMoney(v.PurchaseCostCNY) || !optionalListingMoney(v.TargetNetProceedsUSD) || (v.Currency != "" && !currencyPattern.MatchString(v.Currency)) ||
 				len(v.ImageURLs) > 30 {
 				return errors.New("invalid variant fields")
 			}
@@ -315,8 +392,10 @@ func (f ListingFields) Validate() error {
 					return errors.New("invalid variant attribute")
 				}
 			}
-			if err := validateListingCategoryAttributes(v.CategoryAttributes, 12); err != nil {
-				return err
+			if v.CategoryAttributes != nil {
+				if err := validateListingCategoryAttributes(*v.CategoryAttributes, 12); err != nil {
+					return err
+				}
 			}
 			for _, u := range v.ImageURLs {
 				if !validImageURL(u) {
