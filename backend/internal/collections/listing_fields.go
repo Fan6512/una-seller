@@ -84,6 +84,7 @@ type ListingFields struct {
 	GTIN                   string                      `json:"gtin"`
 	PurchasePrice          string                      `json:"purchase_price"`
 	PurchaseCurrency       string                      `json:"purchase_currency"`
+	TargetNetProceedsUSD   *string                     `json:"target_net_proceeds_usd,omitempty"`
 	WeightG                string                      `json:"weight_g"`
 	LengthCM               string                      `json:"length_cm"`
 	WidthCM                string                      `json:"width_cm"`
@@ -115,6 +116,9 @@ type ListingVariant struct {
 	Price      string            `json:"price"`
 	Currency   string            `json:"currency"`
 	ImageURLs  []string          `json:"image_urls"`
+	PurchaseCostCNY string `json:"purchase_cost_cny,omitempty"`
+	TargetNetProceedsUSD string `json:"target_net_proceeds_usd,omitempty"`
+	CategoryAttributes []ListingCategoryAttribute `json:"category_attributes,omitempty"`
 }
 
 func allNumeric(value string) bool {
@@ -246,7 +250,7 @@ func (f ListingFields) Validate() error {
 		!validListingText(f.CategoryPath, 400) || !validListingText(f.Brand, 120) ||
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
 		!validListingText(f.GTIN, 50) ||
-		!listingMoney(f.PurchasePrice) ||
+		!listingMoney(f.PurchasePrice) || (f.TargetNetProceedsUSD != nil && !listingMoney(*f.TargetNetProceedsUSD)) ||
 		!listingDecimal(f.WeightG, 1000000, true) ||
 		!listingDecimal(f.LengthCM, 10000, false) ||
 		!listingDecimal(f.WidthCM, 10000, false) ||
@@ -313,7 +317,7 @@ func (f ListingFields) Validate() error {
 		}
 		for _, v := range *f.Variants {
 			if !validListingText(v.SellerSKU, 120) || len(v.Attributes) > 12 ||
-				!listingMoney(v.Price) || (v.Currency != "" && !currencyPattern.MatchString(v.Currency)) ||
+				!listingMoney(v.Price) || !listingMoney(v.PurchaseCostCNY) || !listingMoney(v.TargetNetProceedsUSD) || (v.Currency != "" && !currencyPattern.MatchString(v.Currency)) ||
 				len(v.ImageURLs) > 30 {
 				return errors.New("invalid variant fields")
 			}
@@ -321,6 +325,12 @@ func (f ListingFields) Validate() error {
 				if name == "" || value == "" || !validListingText(name, 80) || !validListingText(value, 200) {
 					return errors.New("invalid variant attribute")
 				}
+			}
+			if len(v.CategoryAttributes) > 12 {
+				return errors.New("too many variant category attributes")
+			}
+			if err := (ListingFields{CategoryAttributes: &v.CategoryAttributes}).Validate(); err != nil {
+				return err
 			}
 			for _, u := range v.ImageURLs {
 				if !validImageURL(u) {
