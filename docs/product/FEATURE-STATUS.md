@@ -30,8 +30,8 @@
 | AI 真实服务 | 三语标题/详情代码已合并；真实 Key、已保存测试商品与 Windows 操作验收尚缺 |
 | CBT 刊登 | C0 生产只读取证 PASS，当前店铺分类 standard_up；C1 已进入开发阶段，实施 PR 待建，真实商品创建、官方图片上传及发布记录未验收 |
 | CBT 测试账号 | 一个真实账号、五站点 MLB/MLM/MLC/MCO/MLA 均为 remote、UP enabled、net_proceeds；business_model 脱敏为 other。最新只读回读 2026-11-24 14:39:47（北京时间），原始枚举及卖家后台交叉核实仍待完成 |
-| 桌面端 | Windows 当前安装 V0.3；负责人批准构建与发布 V0.4 签名测试版，尚未完成构建、OTA 与 GUI 验收；AI/词典整体 QA 和 macOS 实机仍待验收 |
-| 部署 | #66 Go API 823e6056 已生产部署（据负责人报告）；0010 已迁移，0011/0012 保留；9 单真实 Shipment 后端验收 PASS。C0 已回读；新版四标签/自动取证的真实重授权及 Windows GUI 尚未验收；V0.4 测试版已批准，正式发布和真实官方写入仍需单独审批 |
+| 桌面端 | Windows 当前安装 V0.3；V0.4 签名 Pre-release `desktop-test-v0.4.0` 已发布（构建 run 45364449099，更新签名 minisign 验证 PASS）；Windows 实机安装与 OTA 待验收；公网更新接口尚未由 Nginx 暴露（404）。AI/词典整体 QA 和 macOS 实机仍待验收 |
+| 部署 | #66 Go API 823e6056 已生产部署（据负责人报告）；0010 已迁移，0011/0012 保留；9 单真实 Shipment 后端验收 PASS。C0 已回读；新版四标签/自动取证的真实重授权及 Windows GUI 尚未验收；V0.4 已发布为 Pre-release，正式发布和真实官方写入仍需单独审批 |
 
 ## 三、已完成（限定范围内真实验收通过）
 
@@ -58,7 +58,7 @@
 | TR-02 | CBT 全量分类中文离线词典、增量更新与人工覆盖 | 代码已合并；中文 0/10,954 | [#72](https://github.com/Fan6512/una-seller/pull/72) | 先五批真实试译、核对质量与额度，随后断点续跑并记录覆盖率；不因没有密钥假报 PASS |
 | AI-01 | 根据产品事实生成 EN/MX/BR 三语 SEO 标题 | 代码已合并；真实 AI 调用待验收 | [#71](https://github.com/Fan6512/una-seller/pull/71) | 使用真实保存的商品生成、分别采纳；MX/BR 不超过 60 字符且不得编造属性 |
 | AI-02 | 英文卖点与详情独立采纳，按母版翻译 ES/PT，译文过期提醒 | 代码已合并；真实服务与 Windows 读回待验收 | [#71](https://github.com/Fan6512/una-seller/pull/71) | 从已保存英文描述翻译；人工核对数字/单位，手改后检测过期，重启读回 |
-| DESK-01 | V0.3 编辑器、正式版/可选测试版更新通道 | 代码已合并；签名 OTA/新客户端真实验收待完成 | [#29](https://github.com/Fan6512/una-seller/pull/29)、[#65](https://github.com/Fan6512/una-seller/pull/65) / [#28](https://github.com/Fan6512/una-seller/issues/28) | 最新版 Windows QA、实际验签更新、测试版 ON/OFF；正式 Release 需单独授权 |
+| DESK-01 | V0.3 编辑器、正式版/可选测试版更新通道 | 代码已合并；V0.4 Pre-release 已发布，签名 OTA/新版 GUI 待实机验收 | [#29](https://github.com/Fan6512/una-seller/pull/29)、[#65](https://github.com/Fan6512/una-seller/pull/65) / [#28](https://github.com/Fan6512/una-seller/issues/28) | 最新版 Windows QA、实际验签更新、测试版 ON/OFF；公网 `/api/v1/desktop/updates` 当前 Nginx 404，OTA 前需补齐路由；正式 Release 需单独授权 |
 
 ### B. 已刊登管理、订单与财务
 
@@ -70,7 +70,7 @@
 | ORD-01 | 订单只读同步、列表详情、跨站点/跨店铺搜索 | 代码已合并；当前真实 Windows/账号闭环待复核 | [#40](https://github.com/Fan6512/una-seller/pull/40)、[#43](https://github.com/Fan6512/una-seller/pull/43)、[#55](https://github.com/Fan6512/una-seller/pull/55) | 真实店铺同步、Order ID 精确搜索和店铺隔离；仅搜索已同步订单 |
 | ORD-02 | 1688 采购订单号、成本、国内运单**手工关联** | 代码已合并；新版 GUI 与真实订单核对待完成 | [#46](https://github.com/Fan6512/una-seller/pull/46)、[#54](https://github.com/Fan6512/una-seller/pull/54) | 1688 采购记录与官方订单分开展示，确认跨店不串单；**未自动读取 1688** |
 | ORD-03 | 官方发货 SLA 与单笔订单状态刷新 | 代码已合并；真实 Seller Center 对照仍不完整 | [#48](https://github.com/Fan6512/una-seller/pull/48) | 真实订单时限及退款状态按官方回读，不把 Shipment ID 当运单 |
-| ORD-04 | 官方 Shipment 发货/运输/签收及运单追踪 | **代码已合并；生产后端 PASS，Windows 待验收** | [#66](https://github.com/Fan6512/una-seller/pull/66) | 2026-11-24 生产 0010、API 823e6056、9 单真实物流与完整缓存 PASS；[脱敏验收摘要](../architecture/ORD-04-DEPLOY-REPORT-20261124.md)。V0.4 测试版已批准，待签名发布、OTA 和真实 GUI；正式 Release 待审批 |
+| ORD-04 | 官方 Shipment 发货/运输/签收及运单追踪 | **代码已合并；生产后端 PASS，Windows 待验收** | [#66](https://github.com/Fan6512/una-seller/pull/66) | 2026-11-24 生产 0010、API 823e6056、9 单真实物流与完整缓存 PASS；[脱敏验收摘要](../architecture/ORD-04-DEPLOY-REPORT-20261124.md)。V0.4 已发布为 Pre-release（[下载](https://github.com/Fan6512/una-seller/releases/tag/desktop-test-v0.4.0)），Windows 安装与 OTA 待验收；正式 Release 待审批 |
 | FIN-01 | 官方 CBT 账单只读预览、费用/冲正/退款明细 | **Draft PR 开发中；未合并** | [#49](https://github.com/Fan6512/una-seller/pull/49) | 合流当前 main，真实账单与 Seller Center 对账、Windows 验收；未核实净回款标注“待核账” |
 
 ## 五、待完成（尚无可用业务闭环）
@@ -115,6 +115,7 @@
 
 | 日期 | 变更 | 依据 |
 | --- | --- | --- |
+| 2026-11-24 | V0.4 Windows 签名测试版发布为 Pre-release（`desktop-test-v0.4.0`，0.4.0）；安装包 SHA-256 `0ab9c688…`，更新签名 minisign 验证 PASS；Windows 实机与 OTA 待验收；公网更新接口仍为 Nginx 404 | [#89](https://github.com/Fan6512/una-seller/pull/89)；构建 run 45364449099；[Release](https://github.com/Fan6512/una-seller/releases/tag/desktop-test-v0.4.0) |
 | 2026-11-24 | ORD-04 生产后端验收 PASS（0010、9 单真实物流与缓存）；批准 V0.4 签名测试版，OTA/GUI 待验收，未正式发布 | [#66](https://github.com/Fan6512/una-seller/pull/66)；[脱敏验收摘要](../architecture/ORD-04-DEPLOY-REPORT-20261124.md) |
 | 2026-11-24 | 负责人批准普通台账直接提交 main；重要设计、合同、代码与治理变更仍走 PR，保留并发保护及正常 CI | PR #88 负责人决策 |
 | 2026-11-24 | CBT-01 单账号真实 C0 生产验收完成；CBT-02 P0 进入开发，实施 PR 待建；同步更新证据边界与流程 | [#87](https://github.com/Fan6512/una-seller/pull/87)；[PR #87 生产升级与真实 C0 验收摘要](../architecture/GO-API-PR87-DEPLOY-REPORT-20261124.md)；生产数据库最新回读 14:39:47 北京时间 |
@@ -396,7 +397,7 @@ flowchart TD
     M -->|否| N["拒绝安装，保留当前版本"]
     M -->|是| O["用户确认更新、安装并重启"]
 
-    F -.-> P["V0.4 测试版已批准；OTA 与 Windows GUI 待验收"]
+    F -.-> P["V0.4 Pre-release 已发布；OTA 与 Windows GUI 待验收"]
     H -.-> Q["真实签名 OTA / macOS 实机尚未验收"]
 
     classDef verify fill:#fff5e5,color:#7a4d00,stroke:#e3ae56
