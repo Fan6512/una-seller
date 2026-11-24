@@ -235,12 +235,16 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     <CategoryAttributesForm category={value.category_id} values={value.category_attributes ?? []}
       onChange={fields => set("category_attributes",fields)} disabled={disabled}/>
 
-    <fieldset className="listing-editor-plain" aria-label="采购成本">
+    <fieldset className="listing-editor-plain" aria-label="采购成本与目标净收益">
+      <div className="listing-field-grid">
       <label className="listing-field">采购成本（¥）
         <input value={legacyPurchase ? "" : value.purchase_price} disabled={disabled}
           placeholder={legacyPurchase ? "核实后输入人民币金额" : "人民币金额"}
           onChange={event=>onChange({...value,purchase_price:event.target.value,purchase_currency:"CNY"})}/>
       </label>
+      {field("净收益（$）","target_net_proceeds_usd","目标净回款，USD",21)}
+      </div>
+      <small className="listing-fields-note">净收益为刊登目标净回款（美元），不是订单结算或利润。</small>
       {legacyPurchase && <small className="listing-currency-legacy" role="status">
         历史采购成本 {value.purchase_price}（{value.purchase_currency || "币种未确认"}）。核实实际人民币金额后再填写。
       </small>}
