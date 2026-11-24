@@ -74,3 +74,15 @@ func TestDescriptionTranslationManualEditAndReadoption(t *testing.T) {
 		t.Fatalf("re-adopting the same master must clear manual marker: %+v %v", afterAI, err)
 	}
 }
+
+func TestTargetListingAmounts(t *testing.T) {
+	proceeds := "8.1234"
+	variants := []ListingVariant{{Attributes: map[string]string{"Color": "Black"}, Price: "79.90", Currency: "BRL", PurchaseCostCNY: "25.50", TargetNetProceedsUSD: "8.50", CategoryAttributes: []ListingCategoryAttribute{{CategoryID: "CBT123", ID: "COLOR", Value: "Black", ValueID: "1"}}}}
+	fields := ListingFields{TargetNetProceedsUSD: &proceeds, Variants: &variants}
+	if err := fields.Validate(); err != nil { t.Fatal(err) }
+	proceeds = "-1"
+	if err := fields.Validate(); err == nil { t.Fatal("invalid proceeds accepted") }
+	proceeds = ""
+	variants[0].PurchaseCostCNY = "1.12345"
+	if err := fields.Validate(); err == nil { t.Fatal("invalid cost accepted") }
+}
