@@ -51,6 +51,8 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 	const callback = "https://example.test" + CallbackPath
 
 	var challenge, sellerSite atomic.Value
+	var autoTagCalls atomic.Int32
+	var failAuto atomic.Bool
 	sellerSite.Store("CBT")
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -79,7 +81,17 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 				http.Error(w, "invalid token", 401)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": json.Number(sellerID), "nickname": "Synthetic CBT Seller", "site_id": sellerSite.Load()})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": json.Number(sellerID), "nickname": "Synthetic CBT Seller", "site_id": sellerSite.Load(), "status": map[string]any{"sell": map[string]bool{"allow": true}}})
+		case "/users/" + sellerID:
+			autoTagCalls.Add(1)
+			if failAuto.Load() {
+				http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+				return
+			}
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+accessToken {
+				t.Error("automatic C0 must use the authorized read-only request")
+			}
+			_, _ = w.Write([]byte(`{"tags":["user_product_seller"]}`))
 		case "/marketplace/users/" + sellerID:
 			if r.Header.Get("Authorization") != "Bearer "+accessToken {
 				http.Error(w, "invalid marketplace token", http.StatusUnauthorized)
@@ -140,6 +152,9 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 		store.Marketplaces[1].SiteID != "MLM" || store.Marketplaces[1].UserID.String() != "345678" {
 		t.Fatalf("CBT parent/child marketplace mapping missing: %+v", store)
 	}
+	if autoTagCalls.Load() != 1 || store.PublicationEvidence == nil || store.PublicationMode != "standard_up" {
+		t.Fatalf("new grant did not automatically probe exactly once: calls=%d mode=%s", autoTagCalls.Load(), store.PublicationMode)
+	}
 	if _, err := service.Complete(ctx, state, "code_test", ""); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("replayed state accepted: %v", err)
 	}
@@ -169,6 +184,26 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 		t.Fatal("another owner's context decrypted the token")
 	}
 
+	// An optional C0 failure after reauthorization must keep the new
+	// grant connected, remove old evidence, and not retry on List.
+	failAuto.Store(true)
+	relink, err := service.Start(ctx, owner1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reurl, err := urlParse(relink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge.Store(reurl.Query().Get("code_challenge"))
+	rebound, err := service.Complete(ctx, reurl.Query().Get("state"), "code_test", "")
+	if err != nil || rebound.ID != store.ID || rebound.Status != "connected" || rebound.PublicationEvidence != nil || rebound.PublicationMode != "undetermined" {
+		t.Fatalf("optional C0 failure changed authorization: %+v err=%v", rebound, err)
+	}
+	current, err := service.List(ctx, owner1)
+	if err != nil || len(current) != 1 || current[0].PublicationEvidence != nil || autoTagCalls.Load() != 2 {
+		t.Fatalf("failed C0 retained old evidence or retried on List: %+v err=%v calls=%d", current, err, autoTagCalls.Load())
+	}
 	stores, err := service.List(ctx, owner2)
 	if err != nil || len(stores) != 0 {
 		t.Fatalf("another owner can see the store: %v, %v", stores, err)

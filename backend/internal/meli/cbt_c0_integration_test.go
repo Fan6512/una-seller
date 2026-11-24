@@ -147,8 +147,10 @@ func TestCBTC0PublicationModeOwnerUpsertReauthAndDisconnectPG(t *testing.T) {
 		t.Fatalf("owner B saw another owner's store: %+v err=%v", other, err)
 	}
 
-	// Reauthorization must atomically replace OAuth material AND remove old
-	// evidence; it must never leave the old Fully Managed mode attached.
+	// Reauthorization replaces old evidence and attempts C0 once using
+	// the new grant. The old Fully Managed mode must not survive.
+	managed.Store(false)
+	beforeReauthCalls := calls.Load()
 	link, err := s.Start(ctx, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -161,13 +163,19 @@ func TestCBTC0PublicationModeOwnerUpsertReauthAndDisconnectPG(t *testing.T) {
 	if err != nil || reauth.ID != storeID {
 		t.Fatalf("reauthorization failed or changed store: %+v err=%v", reauth, err)
 	}
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM app.meli_cbt_c0_evidence
- WHERE store_id=$1::uuid`, storeID).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("old evidence survived reauth: %d (%v)", count, err)
+	if calls.Load()-beforeReauthCalls != 5 || reauth.PublicationMode != "standard_up" || reauth.PublicationEvidence == nil {
+		t.Fatalf("reauth did not automatically perform one C0 probe: calls=%d mode=%s", calls.Load()-beforeReauthCalls, reauth.PublicationMode)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*),min(publication_mode) FROM app.meli_cbt_c0_evidence
+ WHERE store_id=$1::uuid`, storeID).Scan(&count, &savedMode); err != nil || count != 1 || savedMode != "standard_up" {
+		t.Fatalf("reauth did not replace old evidence: count=%d mode=%s err=%v", count, savedMode, err)
 	}
 	stores, err = s.List(ctx, owner)
-	if err != nil || len(stores) != 1 || stores[0].PublicationMode != "undetermined" || stores[0].PublicationEvidence != nil {
-		t.Fatalf("reauth did not invalidate C0: %+v err=%v", stores, err)
+	if err != nil || len(stores) != 1 || stores[0].PublicationMode != "standard_up" || stores[0].PublicationEvidence == nil {
+		t.Fatalf("reauth did not expose current C0: %+v err=%v", stores, err)
+	}
+	if calls.Load()-beforeReauthCalls != 5 {
+		t.Fatal("reading the store list repeated the automatic C0 probe")
 	}
 
 	s.probeMu.Lock()

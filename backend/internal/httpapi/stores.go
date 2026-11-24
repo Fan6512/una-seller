@@ -264,7 +264,7 @@ func (a storeAPI) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("<!doctype html><html lang='zh'><meta charset='utf-8'><title>授权成功</title><h2>美客多店铺授权成功</h2><p>可以关闭此页面，返回 Una Seller 点击刷新店铺。</p></html>"))
+	_, _ = w.Write([]byte("<!doctype html><html lang='zh'><meta charset='utf-8'><title>授权成功</title><h2>美客多店铺授权成功</h2><p>系统已尝试自动识别刊登类型。可以关闭此页面，返回 Una Seller 刷新店铺；如尚未确认，可手动核实。</p></html>"))
 }
 
 func (a storeAPI) publishedListings(w http.ResponseWriter, r *http.Request, owner, store string, authStart time.Time) {
