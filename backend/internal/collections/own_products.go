@@ -285,7 +285,8 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
           'category_attributes',listing_fields->'category_attributes',
           'descriptions',listing_fields->'descriptions',
           'description_translation',listing_fields->'description_translation',
-          'target_net_proceeds_usd',listing_fields->'target_net_proceeds_usd')) || $7::jsonb,
+          'target_net_proceeds_usd',listing_fields->'target_net_proceeds_usd',
+          'variants',listing_fields->'variants')) || $7::jsonb,
         listing_fields),
       revision=revision+1,updated_at=now()
     WHERE id=$1::uuid AND owner_user_id=$2::uuid AND revision=$6 RETURNING revision`,
