@@ -147,6 +147,56 @@ func TestCBTC0PublicationModeOwnerUpsertReauthAndDisconnectPG(t *testing.T) {
 		t.Fatalf("owner B saw another owner's store: %+v err=%v", other, err)
 	}
 
+	// Probe directly with a previously authorized snapshot. Change only the
+	// local row so all three official mock GETs still match that snapshot.
+	auth, err := s.RequireStoreConnection(ctx, owner, storeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedAccess, err := s.cipher.Seal("new-synthetic-token", tokenAAD(owner, seller, "access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		change  string
+		args    []any
+		restore string
+		oldArgs []any
+	}{
+		{"access_cipher_changed", "UPDATE app.meli_store_connections SET access_token_ciphertext=$2 WHERE id=$1::uuid", []any{storeID, changedAccess}, "UPDATE app.meli_store_connections SET access_token_ciphertext=$2 WHERE id=$1::uuid", []any{storeID, auth.accessCipher}},
+		{"marketplaces_changed", "UPDATE app.meli_store_connections SET marketplaces=marketplaces || '[{\"user_id\":765432,\"site_id\":\"MLM\",\"logistic_type\":\"remote\"}]'::jsonb WHERE id=$1::uuid", []any{storeID}, "UPDATE app.meli_store_connections SET marketplaces=$2::jsonb WHERE id=$1::uuid", []any{storeID, string(auth.marketsJSON)}},
+		{"newer_evidence", "UPDATE app.meli_cbt_c0_evidence SET checked_at=now()+interval '1 hour' WHERE store_id=$1::uuid", []any{storeID}, "UPDATE app.meli_cbt_c0_evidence SET checked_at=$2 WHERE store_id=$1::uuid", []any{storeID, second.CheckedAt}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := db.Exec(ctx, tc.change, tc.args...); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if _, err := db.Exec(ctx, tc.restore, tc.oldArgs...); err != nil {
+					t.Fatal(err)
+				}
+			}()
+			var before, after []byte
+			query := "SELECT to_jsonb(e) FROM app.meli_cbt_c0_evidence e WHERE store_id=$1::uuid"
+			if err := db.QueryRow(ctx, query, storeID).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			managed.Store(false)
+			defer managed.Store(true)
+			beforeCalls := calls.Load()
+			if _, err := s.probeAuthorizedPublicationMode(ctx, owner, storeID, auth); !errors.Is(err, ErrCBTProbeStale) {
+				t.Fatalf("stale snapshot was not rejected: %v", err)
+			}
+			if calls.Load()-beforeCalls != 3 {
+				t.Fatal("probe did not reach the persistence guard")
+			}
+			if err := db.QueryRow(ctx, query, storeID).Scan(&after); err != nil || string(before) != string(after) {
+				t.Fatalf("stale probe changed stored evidence: %v", err)
+			}
+		})
+	}
+
 	// Reauthorization replaces old evidence and attempts C0 once using
 	// the new grant. The old Fully Managed mode must not survive.
 	managed.Store(false)

@@ -347,7 +347,7 @@ func (s *Service) Complete(ctx context.Context, state, code, providerError strin
 			out.PublicationModeCheckedAt = &proof.CheckedAt
 			out.PublicationEvidence = &proof
 		} else {
-			log.Print("CBT C0 automatic authorization probe did not complete; manual check remains available")
+			log.Printf("CBT C0 automatic authorization probe failed: %v; manual check remains available", probeErr)
 		}
 	}
 	return out, nil

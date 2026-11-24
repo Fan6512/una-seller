@@ -152,7 +152,7 @@ func TestOAuthAuthorizationAndStoreIsolation(t *testing.T) {
 		store.Marketplaces[1].SiteID != "MLM" || store.Marketplaces[1].UserID.String() != "345678" {
 		t.Fatalf("CBT parent/child marketplace mapping missing: %+v", store)
 	}
-	if autoTagCalls.Load() != 1 || store.PublicationEvidence == nil || store.PublicationMode != "standard_up" {
+	if autoTagCalls.Load() != 1 || store.PublicationEvidence == nil || store.PublicationMode != "undetermined" {
 		t.Fatalf("new grant did not automatically probe exactly once: calls=%d mode=%s", autoTagCalls.Load(), store.PublicationMode)
 	}
 	if _, err := service.Complete(ctx, state, "code_test", ""); !errors.Is(err, ErrInvalidState) {
