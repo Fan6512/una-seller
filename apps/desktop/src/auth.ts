@@ -154,11 +154,52 @@ export async function signOut(): Promise<void> {
   try {
     await fetch(authBase + "/auth/v1/logout", {
       method: "POST",
+      signal: AbortSignal.timeout(8_000),
       headers: { "apikey": publishableKey, "Authorization": "Bearer " + token },
     });
   } catch {
     // Local logout still clears credentials if the network is offline.
   }
+}
+
+// Supabase Auth owns password hashes and optional email OTP reauthentication.
+// The desktop never saves a current/new password or OTP to persistent storage.
+export async function sendPasswordVerificationNonce(): Promise<void> {
+  const token = await getAccessToken();
+  const response = await fetch(authBase + "/auth/v1/reauthenticate", {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+    headers: { "apikey": publishableKey, "Authorization": "Bearer " + token },
+  });
+  if (!response.ok) throw new Error("无法发送密码修改验证码，请检查邮箱与登录状态");
+}
+
+export async function changeAccountPassword(currentPassword: string, newPassword: string, nonce = ""): Promise<void> {
+  const token = await getAccessToken();
+  const response = await fetch(authBase + "/auth/v1/user", {
+    method: "PUT",
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+    headers: {
+      "apikey": publishableKey,
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      current_password: currentPassword,
+      password: newPassword,
+      ...(nonce.trim() ? { nonce: nonce.trim() } : {}),
+    }),
+  });
+  if (response.ok) return;
+  const data = await response.json().catch(() => null) as { code?: string; error_code?: string } | null;
+  const errorCode = data?.code ?? data?.error_code;
+  if (errorCode === "reauthentication_needed") throw new Error("当前账号要求邮箱二次验证，请先发送验证码后填写。");
+  if (errorCode === "same_password") throw new Error("新密码不能与当前密码相同。");
+  if (response.status === 401) throw new Error("当前登录已过期，请重新登录后修改密码。");
+  if (response.status === 422 || response.status === 400) throw new Error("当前密码、验证码或新密码不符合登录服务要求，请核对后再试。");
+  throw new Error("修改密码失败，请稍后重试。");
 }
 
 export function rejectSession() {
