@@ -148,6 +148,11 @@ export function validateListingFields(v:ListingFields, previousTitles?: Localize
     (x.currency!==""&&!/^[A-Z]{3}$/.test(x.currency))||
     Object.keys(x.attributes).length===0||
     Object.entries(x.attributes).some(([k,val])=>!k||!val||Array.from(k).length>80||Array.from(val).length>200)||
+    (x.category_attributes?.length??0)>12||
+    (x.category_attributes??[]).some(a=>!/^CBT[0-9]{1,15}$/.test(a.category_id)||!/^[A-Z][A-Z0-9_]{0,79}$/.test(a.id)||
+      Array.from(a.value).length>500||(a.value_id?.length??0)>80||(a.unit_id?.length??0)>80||
+      (Boolean(a.value_id)&&!a.value.trim()))||
+    new Set((x.category_attributes??[]).map(a=>a.category_id+":"+a.id)).size!==(x.category_attributes?.length??0)||
     x.image_urls.length>30||x.image_urls.some(url=>!/^https:\/\/[^\s]+$/i.test(url)||url.length>2000))) {
     return "变体价格、币种（3 位大写字母）、SKU、属性或图片 URL 不符合要求";
   }
