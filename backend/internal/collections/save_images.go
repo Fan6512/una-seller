@@ -22,6 +22,8 @@ func insertCollectionImages(ctx context.Context, tx pgx.Tx, productID string, im
 
 	// Complete recaptures preserve incoming duplicate rows and input order.
 	// Partial recaptures skip existing URLs and later duplicates in this batch.
+	// NOT EXISTS sees only the statement snapshot: occurrence=1 is essential
+	// to exclude duplicates within this same INSERT statement.
 	// MAX(image_order) is read once from the statement snapshot; row_number
 	// allocates contiguous append positions after the existing highest order.
 	_, err := tx.Exec(ctx, `WITH incoming AS (
@@ -63,6 +65,8 @@ func insertVariantImages(ctx context.Context, tx pgx.Tx, productID string, varia
 	}
 	// The position produced by WITH ORDINALITY is global. Per-variant
 	// row_number restores each image group's original input order.
+	// occurrence=1 deduplicates within the batch: NOT EXISTS cannot see rows
+	// inserted by its own statement (only rows in the original snapshot).
 	_, err := tx.Exec(ctx, `WITH incoming AS (
   SELECT variant_id::uuid AS variant_id,image_url,ordinality AS ord
   FROM unnest($2::text[],$3::text[]) WITH ORDINALITY AS u(variant_id,image_url,ordinality)
@@ -84,6 +88,7 @@ func insertVariantImages(ctx context.Context, tx pgx.Tx, productID string, varia
          ROW_NUMBER() OVER (PARTITION BY variant_id ORDER BY ord)-1 AS image_offset
   FROM selected
 ), max_orders AS (
+  -- Each variant belongs to exactly one product; this narrows scans safely.
   SELECT existing.variant_id,MAX(existing.image_order) AS max_order
   FROM app.source_product_images existing
   WHERE existing.source_product_id=$1::uuid
