@@ -277,3 +277,22 @@ func TestInferenceRequiresExplicitC0Evidence(t *testing.T) {
 		})
 	}
 }
+
+func TestInferPublicationModeRemoteUPWithUnknownBusinessModel(t *testing.T) {
+	e := accountEvidence{
+		UserProductSeller: "present",
+		WarehouseAccess:   "absent",
+		SellAllowed:       "enabled",
+		Marketplaces: []marketplaceEvidence{
+			{SiteID: "MLB", LogisticType: "remote", BusinessModel: "unrecognized:standard", PricingModel: "net_proceeds", UserProduct: "enabled"},
+			{SiteID: "MLM", LogisticType: "remote", BusinessModel: "unrecognized", PricingModel: "net_proceeds", UserProduct: "enabled"},
+		},
+	}
+	if got := inferPublicationMode(e); got != "standard_up" {
+		t.Fatalf("CLI and service classification disagree: got %s", got)
+	}
+	e.WarehouseAccess = "unverified"
+	if got := inferPublicationMode(e); got != "undetermined" {
+		t.Fatalf("missing warehouse evidence must remain undetermined: got %s", got)
+	}
+}

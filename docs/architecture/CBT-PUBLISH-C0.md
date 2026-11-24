@@ -20,13 +20,13 @@
 探针现会在脱敏 JSON 中输出 `publication_mode` 与 `mode_evidence_level`，供后续 UNA Seller 店铺模式配置使用：
 
 - `fully_managed`：**全部**已核实子站点一致返回 `business_model = "CBT CN Fulfillment Managed"`，且主账号允许销售；混合、缺失或未知值保持 `undetermined`，并保留逐站点脱敏证据。
-- `standard_up`：主账号启用 `user_product_seller`，没有全托管指示、没有矛盾的子站点 UP 标记，且账号允许销售。
+- `standard_up`：主账号启用 `user_product_seller`，没有全托管指示、没有矛盾的子站点 UP 标记，且账号允许销售。对于已脱敏为 `other` 的非全托管业务枚举，仅当全部已验证子站点均为 `remote` 且 `user_product = enabled`、主账号 `warehouse_management = absent` 时，允许依据一致的独立官方证据识别标准 UP；否则保持未确认。官方 [User Products] 与 [卖家权限] 分别说明 UP 标签及标准 CBT 的 remote 物流。
 - `legacy_candidate`：账号没有 UP 标签，也未返回已启用的子站点 UP；**仅是待确认的旧版候选，不能据此使用 Legacy POST**。
-- `undetermined`：标签缺失、业务模式未知或矛盾、账号销售状态不明等；必须人工确认，不能按默认模型发布。
+- `undetermined`：标签缺失、业务模式未知且不满足上述独立证据组合、站点矛盾、账号销售状态不明等；必须人工确认，不能按默认模型发布。
 
 `mode_evidence_level = c0_read_only_not_publish_approved` 始终表明只是发布模型只读识别，**不等于具备创建或图片上传权限**。模式名称只用于 UNA Seller 内部适配，绝不修改 Mercado Libre 官方账号类别。没有真实账号脱敏输出前，不得将当前已连接店铺设成任何确定模式。
 
-实际执行必须在持有有效授权、可安全刷新 OAuth Token 的受控环境中进行；不得读取 Supabase 存放的加密 Token 并尝试绕过 Go 解密，也不得把 Token 发到 GitHub Issues、聊天或日志。完成真实三次 GET 后，以官方证据将店铺按 `publication_mode` 分类，并额外核对官方可写接口权限；当前 Draft PR #85 已包含只读探针、独立私有证据表、店铺模式显示及基于授权记录中全局唯一 Seller ID 的单进程 10 秒触发冷却（HTTP 429 返回 `Retry-After: 10`）；**需要独立批准迁移/部署后才能运行真实 GET 并写入真实店铺证据**。C1 发布前仍必须逐站点核对创建/图片上传权限，不能把店铺级模式当作站点级写入授权。断开连接可保留历史证据，但任何消费者读取当前证据必须同时按 owner、store 关联连接记录并要求 `status = 'connected'`。
+实际执行必须在持有有效授权、可安全刷新 OAuth Token 的受控环境中进行；不得读取 Supabase 存放的加密 Token 并尝试绕过 Go 解密，也不得把 Token 发到 GitHub Issues、聊天或日志。完成真实三次 GET 后，以官方证据将店铺按 `publication_mode` 分类，并额外核对官方可写接口权限；已合并 PR #85 已包含只读探针、独立私有证据表、店铺模式显示及基于授权记录中全局唯一 Seller ID 的单进程 10 秒触发冷却（HTTP 429 返回 `Retry-After: 10`）；生产迁移与 Go API 部署已获批准并完成；真实 C0 已成功返回并持久化一份脱敏证据，旧分类器因非全托管业务枚举被归为 `other` 而显示 `undetermined`。修订分类器后必须在获批的新服务版本上重新触发真实 C0，不能直接改数据库模式。C1 发布前仍必须逐站点核对创建/图片上传权限，不能把店铺级模式当作站点级写入授权。断开连接可保留历史证据，但任何消费者读取当前证据必须同时按 owner、store 关联连接记录并要求 `status = 'connected'`。
 
 ## 负责人只读验证
 

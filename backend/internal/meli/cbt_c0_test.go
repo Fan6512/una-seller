@@ -120,3 +120,45 @@ func TestCBTC0FiltersUnknownBusinessAndPricing(t *testing.T) {
 		t.Fatalf("tag: %s", got)
 	}
 }
+
+func TestCBTC0RemoteUPWithUnknownBusinessModel(t *testing.T) {
+	// Sanitized live shape: all five sites are remote and explicitly UP-enabled.
+	base := PublicationEvidence{
+		SellAllowed: "enabled", UserProductSeller: "present", WarehouseManagement: "absent",
+		Sites: []PublicationSiteEvidence{
+			{SiteID: "MLB", LogisticType: "remote", BusinessModel: "other", PricingModel: "net_proceeds", UserProduct: "enabled"},
+			{SiteID: "MLM", LogisticType: "remote", BusinessModel: "other", PricingModel: "net_proceeds", UserProduct: "enabled"},
+			{SiteID: "MLC", LogisticType: "remote", BusinessModel: "other", PricingModel: "net_proceeds", UserProduct: "enabled"},
+			{SiteID: "MCO", LogisticType: "remote", BusinessModel: "other", PricingModel: "net_proceeds", UserProduct: "enabled"},
+			{SiteID: "MLA", LogisticType: "remote", BusinessModel: "other", PricingModel: "net_proceeds", UserProduct: "enabled"},
+		},
+	}
+	if got := ClassifyPublicationEvidence(base); got != "standard_up" {
+		t.Fatalf("consistent remote UP evidence: got %s", got)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*PublicationEvidence)
+	}{
+		{"managed_mixed", func(e *PublicationEvidence) { e.Sites[0].BusinessModel = "CBT CN Fulfillment Managed" }},
+		{"fulfillment", func(e *PublicationEvidence) { e.Sites[0].LogisticType = "fulfillment" }},
+		{"missing_logistics", func(e *PublicationEvidence) { e.Sites[0].LogisticType = "" }},
+		{"disabled_child", func(e *PublicationEvidence) { e.Sites[0].UserProduct = "disabled" }},
+		{"unknown_child", func(e *PublicationEvidence) { e.Sites[0].UserProduct = "unverified" }},
+		{"missing_parent_tag", func(e *PublicationEvidence) { e.UserProductSeller = "unverified" }},
+		{"absent_parent_tag", func(e *PublicationEvidence) { e.UserProductSeller = "absent" }},
+		{"warehouse_present", func(e *PublicationEvidence) { e.WarehouseManagement = "present" }},
+		{"warehouse_unknown", func(e *PublicationEvidence) { e.WarehouseManagement = "unverified" }},
+		{"selling_disabled", func(e *PublicationEvidence) { e.SellAllowed = "disabled" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := base
+			e.Sites = append([]PublicationSiteEvidence(nil), base.Sites...)
+			tc.mutate(&e)
+			if got := ClassifyPublicationEvidence(e); got != "undetermined" {
+				t.Fatalf("inconsistent evidence must remain undetermined: got %s", got)
+			}
+		})
+	}
+}

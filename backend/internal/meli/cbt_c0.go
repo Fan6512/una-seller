@@ -255,8 +255,10 @@ func publicationPricingModel(v string) string {
 
 // These are routing candidates, not permission to POST.
 // A store is classified as Fully Managed only when EVERY mapped child
-// explicitly agrees. Mixed/unknown evidence stays undetermined. Legacy
-// eligibility always needs separate write-permission verification.
+// explicitly agrees. Unknown non-managed business_model values alone do not
+// establish a route; explicit UP flags plus remote logistics on every child
+// and an absent warehouse tag can identify standard CBT UP independently.
+// Legacy eligibility always needs separate write-permission verification.
 func ClassifyPublicationEvidence(e PublicationEvidence) string {
 	if e.SellAllowed != "enabled" || len(e.Sites) == 0 {
 		return publicationUnverified
@@ -265,7 +267,11 @@ func ClassifyPublicationEvidence(e PublicationEvidence) string {
 	hasUnknown := false
 	hasDisabledUP := false
 	hasEnabledUP := false
+	allRemoteUP := true
 	for _, site := range e.Sites {
+		if site.LogisticType != "remote" || site.UserProduct != "enabled" {
+			allRemoteUP = false
+		}
 		if site.BusinessModel == "CBT CN Fulfillment Managed" {
 			managedCount++
 		}
@@ -286,6 +292,12 @@ func ClassifyPublicationEvidence(e PublicationEvidence) string {
 		return publicationUnverified
 	}
 	if hasUnknown {
+		// The official UP tag and per-child UP capability are independent
+		// of business_model. Official standard CBT uses remote logistics;
+		// an explicit Managed marker above always takes precedence.
+		if e.UserProductSeller == "present" && e.WarehouseManagement == "absent" && allRemoteUP {
+			return "standard_up"
+		}
 		return publicationUnverified
 	}
 	if e.UserProductSeller == "present" && !hasDisabledUP {
