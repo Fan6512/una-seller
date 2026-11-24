@@ -85,6 +85,16 @@ curl -i https://mkd.186512.xyz/api/v1/collections
 
 **限制：桌面应用依然直接访问 Supabase Auth。** 即使 Go API 已云端化，当前 Windows 网络若无法访问 Supabase Auth，登录/续签仍可能需要本机代理；本期不另做登录代理。
 
+## 5.1 Auth 校验快路径（PR #81，待审核部署）
+
+> 以下为 **PR #81 代码行为**，并非已经在 Ubuntu 服务器完成部署或真实性能验收；以实际部署 SHA 为准。
+
+- **仅 4 类只读端点**启用快路径：`GET /api/v1/collections`、`GET /api/v1/collections/{uuid}`、`GET /api/v1/products`、`GET /api/v1/products/{uuid}`。UUID 必须通过现有 `ValidUserID` 校验。其他路径即使使用 GET（包括 `/working-draft`、`/cost`、店铺绑定/授权类接口）仍走 `/auth/v1/user` 实时验证；所有 POST、PUT、DELETE 等写操作也不走快路径。新路由不会自动进入白名单。
+- 对 **HS256** Access Token：后端仍先以 Supabase `/auth/v1/user` 的成功响应确定身份，仅对上述只读端点缓存该 Token 的成功结果，最多 **30 秒**，且不会超过 Access Token 的 `exp`。缓存键为 Token 的 SHA-256 摘要、单进程内存有界，不持有 JWT 签名共享密钥；失效或失败不缓存。**残留风险**：若 Supabase 账号被删除或远端已拒绝某个 Token，快路径中仍已缓存的成功结果可能在余下 ≤30 秒内继续允许读取；写操作/其他敏感接口每次请求仍访问 Auth。普通客户端退出会清除本地凭据，但不能据此宣称已签发的 Access Token 立即全局失效。
+- 对 **ES256 / RS256** Access Token：使用 Supabase 的公开 JWKS 验签并校验 `iss`、`aud`、`role`、`exp`、`iat`、`sub`。公钥缓存最多 10 分钟；未知 `kid` 触发受限刷新。允许 30 秒时钟偏差仅用于签发时间等校验，过期时间仍严格拒绝。空/异常 JWKS 不覆盖已有密钥集；JWKS 故障期间失败关闭，最多 30 秒负缓存限制重试洪峰。
+- **排查办法**：先在本机已登录客户端内仅检查 Access Token *header* 的 `alg` / 是否有 `kid`；不要把完整 Access Token、Refresh Token、Authorization Header、签名密钥、完整账号会话截图写入日志或提交 PR。出现只读接口 `503` 时，检查 JWKS 网络与时钟/NTP；写接口 `503` 则优先检查远端 `/auth/v1/user` 可达性。必要时回滚该 PR 对应后端二进制，恢复全部接口远程验证，不需要修改 Supabase 密钥或清理数据库。
+- 性能验收以部署后客户端 RTT / API Auth 耗时 / 数据库耗时 **P95** 为准。CI PASS 不能代替实机延迟与真实签名算法确认。
+
 ## 6. 回滚
 Go 服务可执行文件更新前备份上一版；需要回滚时恢复对应二进制并 `sudo systemctl restart una-seller-api`。Nginx 每次修改前备份新建的 `mkd` vhost，`nginx -t` 失败绝不 reload；已有其他站点保持原样。不要清空 Supabase 数据库或修改其他 Docker 容器。
 
