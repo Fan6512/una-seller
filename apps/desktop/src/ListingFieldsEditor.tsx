@@ -324,7 +324,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     </fieldset>
 
     <CategoryAttributesForm category={value.category_id} values={value.category_attributes ?? []}
-      onChange={fields => set("category_attributes",fields)} disabled={disabled} onRules={setCategoryRules}/>
+      onChange={fields => set("category_attributes",fields)} disabled={disabled} onRules={setCategoryRules} hasVariants={variants.length>0}/>
 
     <fieldset className="listing-editor-plain" aria-label="采购成本与目标净收益">
       <div className="listing-field-grid">
