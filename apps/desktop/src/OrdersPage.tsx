@@ -936,8 +936,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
           <dialog ref={detailDialogRef} className="orders-modal" aria-labelledby="orders-detail-title"
             onCancel={(event) => { event.preventDefault(); closeOrder(); }}
-            onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}
-            onClose={() => { if (selectedId) setSelectedId(""); setSelectedRowScope(null); }}>
+            onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}>
             <div className="orders-detail" aria-label="订单详情">
               <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[selectedRowScope?.site ?? scope?.site ?? ""] ?? selectedRowScope?.site ?? scope?.site}</small>
                 <h2 id="orders-detail-title">{selectedId || "订单详情"}</h2></div>

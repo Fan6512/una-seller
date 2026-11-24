@@ -465,6 +465,8 @@ try {
   const newShipment = await openShipping(1);
   assert(oldShipment.signal.aborted && oldShipment.path.includes("/stores/one/") && newShipment.path.includes("/stores/two/"),
     "same order ID across stores reused the wrong request or did not abort the old response");
+  // Chromium can deliver the previous dialog's close event after reopening.
+  flushSync(() => document.querySelector('dialog[aria-labelledby="orders-detail-title"]').dispatchEvent(new Event("close")));
   newShipment.resolve(Response.json({ ...order, order_id: "200002", shipment: shipmentDetails }));
   await waitFor(() => document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier"),
     "new scoped shipment did not render");
