@@ -152,11 +152,6 @@ func (s *Store) Save(ctx context.Context, owner string, in Input) (Product, bool
 				return Product{}, false, err
 			}
 			if v.ImageURLs.Present && (!partial || (!v.ImageURLs.Null && len(v.ImageURLs.Value) > 0)) {
-				if !partial {
-					if _, err = tx.Exec(ctx, `DELETE FROM app.source_product_images WHERE variant_id=$1`, variantID); err != nil {
-						return Product{}, false, err
-					}
-				}
 				for _, imageURL := range v.ImageURLs.Value {
 					variantImageIDs = append(variantImageIDs, variantID)
 					variantImageURLs = append(variantImageURLs, imageURL)
