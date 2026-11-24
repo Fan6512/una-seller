@@ -70,7 +70,7 @@ window.fetch = (path, options) => {
       fields[0],
       { ...fields[2], allowed_units: [{ id: "ml", name: "mL" }] },
       { ...fields[3], values: [{ id: 300, name: "Plastic" }] },
-    ] : [],
+    ] : id === "CBT5" ? [{id:"COLOR",name:"Color",hierarchy:"CHILD_PK",value_type:"list",tags:{required:true},values:[{id:1,name:"Black"},{id:2,name:"White"},{id:3,name:"Blue"}]}] : [],
   }));
 };
 let editor, working, aiRequest, aiCancelled, aiMode, saveAccepted, reloadSaved;
@@ -317,6 +317,44 @@ try {
   await click("button", "AI 优化标题");
   await loaded('[role="alert"]', "AI fixture unavailable");
   assert(editor.titles.en === "Refined Glass Pitcher", "error changed adopted title");
+  switchCategory("CBT5");
+  await loaded("th", "Color（颜色）");
+  await click("button", "+ 添加变体");
+  await click("button", "+ 添加变体");
+  const color1=await loaded("th","Color（颜色）");
+  assert(color1.querySelector("input"),"bilingual search missing");
+  input(color1.querySelector("input"),"黑色");
+  const firstColor=document.querySelector('select[aria-label="变体 1 Color"]');
+  assert([...firstColor.options].some(o=>o.textContent.includes("Black（黑色）"))&&!([...firstColor.options].some(o=>o.textContent.includes("White"))),"Chinese option filter failed");
+  input(firstColor,"1");
+  input(color1.querySelector("input"),"");
+  input(document.querySelector('select[aria-label="变体 2 Color"]'),"2");
+  assert(editor.variants[0].category_attributes[0].value==="Black"&&editor.variants[1].category_attributes[0].value_id==="2","official values not saved");
+  input(document.querySelector('input[aria-label="变体 1 采购成本（¥）"]'),"20.25");
+  input(document.querySelector('input[aria-label="变体 1 净收益（$）"]'),"8.50");
+  const openPicker=async i=>{flushSync(()=>document.querySelectorAll(".listing-variant-images-button")[i].click());};
+  const appendImage=async url=>{
+    input(document.querySelector('input[aria-label="追加变体图片 URL"]'),url);
+    await click("button","添加链接");
+  };
+  const img=s=>"https://example.com/"+s+".jpg";
+  await openPicker(0);await appendImage(img("black"));await appendImage(img("shared"));await appendImage(img("shared2"));
+  await click(".listing-variant-image-picker-head button","完成");
+  await openPicker(1);await appendImage(img("white"));
+  await click(".listing-variant-image-picker-head button","复用副图");
+  await click("button","应用复用副图");
+  assert(JSON.stringify(editor.variants[1].image_urls)===JSON.stringify([img("white"),img("shared"),img("shared2")]),"single reuse changed main or lost secondaries");
+  await click(".listing-variant-image-picker-head button","完成");
+  await click("button","+ 添加变体");
+  input(document.querySelector('select[aria-label="变体 3 Color"]'),"3");
+  await openPicker(2);await appendImage(img("blue"));await click(".listing-variant-image-picker-head button","完成");
+  await click(".listing-gallery-toolbar button","批量复用副图");
+  await click("button","应用复用副图");
+  assert(JSON.stringify(editor.variants[2].image_urls)===JSON.stringify([img("blue"),img("shared"),img("shared2")]),"bulk reuse changed main or lost order");
+  await click('[aria-label="复用副图"] button',"关闭");
+  assert(validateListingFields(editor)==="","new workbench fields not valid");
+  flushSync(()=>saveAccepted());flushSync(()=>reloadSaved());
+  assert(editor.variants[0].purchase_cost_cny==="20.25"&&editor.variants[0].target_net_proceeds_usd==="8.50"&&editor.variants[2].image_urls[0]===img("blue"),"variant reload lost new fields or images");
   const published = { id: "MLB1", category_id: "MLB771", description: "Fixture details",
     cbt_category_path: { original: ["Home", "Other"], zh: ["家居", "其他"] } };
   const showPublished = listing => flushSync(() => root.render(React.createElement(PublishedListingEditor, {
