@@ -54,6 +54,8 @@ func TestProbeRedactsAccountEvidence(t *testing.T) {
 	}
 	want := accountEvidence{
 		SiteID:            "CBT",
+		PublicationMode:   "undetermined",
+		ModeEvidenceLevel: "c0_read_only_not_publish_approved",
 		UserProductSeller: "present",
 		GlobalSeller:      "present",
 		WarehouseAccess:   "present",
@@ -241,6 +243,36 @@ func TestProbeDoesNotLeakFailedResponseOrFollowRedirect(t *testing.T) {
 			got, err := probe(probeClient(), server.URL, mockToken)
 			if err == nil || err.Error() != tt.want || got.Marketplaces != nil {
 				t.Fatal("unsafe or unrecognized response produced evidence or unexpected error")
+			}
+		})
+	}
+}
+
+func TestInferenceRequiresExplicitC0Evidence(t *testing.T) {
+	cases := []struct {
+		name    string
+		tags    string
+		allowed string
+		sites   []marketplaceEvidence
+		want    string
+	}{
+		{"managed_mixed_with_missing", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: unverified}}, "undetermined"},
+		{"managed_all_children", "present", "enabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: "CBT CN Fulfillment Managed"}}, "fully_managed"},
+		{"up_tag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "enabled"}}, "standard_up"},
+		{"up_tag_without_marketplace_flag", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: unverified}}, "standard_up"},
+		{"up_conflicting_disabled", "present", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "disabled"}}, "undetermined"},
+		{"legacy_not_confirmed", "absent", "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: "disabled"}}, "legacy_candidate"},
+		{"unknown_business_model", "present", "enabled", []marketplaceEvidence{{BusinessModel: "unrecognized:CBT CN Unfamiliar", UserProduct: "enabled"}}, "undetermined"},
+		{"selling_disabled", "present", "disabled", []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}}, "undetermined"},
+		{"selling_unverified", "present", unverified, []marketplaceEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}}, "undetermined"},
+		{"missing_tags", unverified, "enabled", []marketplaceEvidence{{BusinessModel: unverified, UserProduct: unverified}}, "undetermined"},
+		{"empty_mapping", "present", "enabled", nil, "undetermined"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inferPublicationMode(accountEvidence{UserProductSeller: tc.tags, SellAllowed: tc.allowed, Marketplaces: tc.sites})
+			if got != tc.want {
+				t.Fatalf("mode=%q, want %q", got, tc.want)
 			}
 		})
 	}

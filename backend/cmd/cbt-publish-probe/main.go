@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Fan6512/una-seller/backend/internal/meli"
 )
 
 const (
@@ -29,6 +31,8 @@ var (
 
 type accountEvidence struct {
 	SiteID            string                `json:"site_id"`
+	PublicationMode   string                `json:"publication_mode"`
+	ModeEvidenceLevel string                `json:"mode_evidence_level"`
 	UserProductSeller string                `json:"user_product_seller"`
 	GlobalSeller      string                `json:"global_seller"`
 	WarehouseAccess   string                `json:"warehouse_management"`
@@ -121,7 +125,32 @@ func probe(client *http.Client, base, token string) (accountEvidence, error) {
 			UserProduct:   capabilityStatus(entry.UserProduct),
 		})
 	}
+	result.PublicationMode = inferPublicationMode(result)
+	result.ModeEvidenceLevel = "c0_read_only_not_publish_approved"
 	return result, nil
+}
+
+// inferPublicationMode is a conservative suggestion for Una Seller routing,
+// not evidence of API write access. Legacy eligibility cannot be proven
+// solely from an absent User Product tag.
+func inferPublicationMode(e accountEvidence) string {
+	sites := make([]meli.PublicationSiteEvidence, 0, len(e.Marketplaces))
+	for _, site := range e.Marketplaces {
+		business := site.BusinessModel
+		if strings.HasPrefix(business, "unrecognized") {
+			business = "other"
+		}
+		sites = append(sites, meli.PublicationSiteEvidence{
+			SiteID: site.SiteID, LogisticType: site.LogisticType,
+			BusinessModel: business, PricingModel: site.PricingModel,
+			UserProduct: site.UserProduct,
+		})
+	}
+	return meli.ClassifyPublicationEvidence(meli.PublicationEvidence{
+		SellAllowed:       e.SellAllowed,
+		UserProductSeller: e.UserProductSeller,
+		Sites:             sites,
+	})
 }
 
 func capabilityStatus(enabled *bool) string {
