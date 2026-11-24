@@ -177,3 +177,14 @@ test("target amounts and official variant fields round-trip without changing sou
   reload.target_net_proceeds_usd="-1";
   assert.match(validateListingFields(reload),/净收益/);
 });
+
+test("old JSONB variants with null image arrays load with explicit clearable workbench fields", () => {
+  const fields = initialListingFields({
+    variants: [{ seller_sku: "SKU", attributes: { Color: "Black" }, price: "", currency: "", image_urls: null }],
+  }, undefined, "Historical glass jar");
+  assert.deepEqual(fields.variants[0].image_urls, []);
+  assert.deepEqual(fields.variants[0].category_attributes, []);
+  assert.equal(fields.variants[0].purchase_cost_cny, "");
+  assert.equal(fields.variants[0].target_net_proceeds_usd, "");
+  assert.equal(validateListingFields(fields), "");
+});

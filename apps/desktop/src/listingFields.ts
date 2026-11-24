@@ -77,6 +77,9 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
       price:v.price??"",
       currency:v.currency??"",
       image_urls:v.image_urls.slice(),
+      purchase_cost_cny:"",
+      target_net_proceeds_usd:"",
+      category_attributes:[],
     }))??[],
   };
   if(!saved)return defaults;
@@ -90,7 +93,11 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
   if (saved.category_attributes) result.category_attributes = saved.category_attributes.map(field => ({ ...field }));
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
-  if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,attributes:{...v.attributes},image_urls:v.image_urls.slice(),category_attributes:v.category_attributes?.map(a=>({...a}))}));
+  if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,
+    attributes:{...v.attributes},image_urls:v.image_urls?.slice()??[],
+    purchase_cost_cny:v.purchase_cost_cny??"",target_net_proceeds_usd:v.target_net_proceeds_usd??"",
+    category_attributes:v.category_attributes?.map(a=>({...a}))??[],
+  }));
   return result;
 }
 export function detectTitleLanguage(title:string): TitleLanguage | "uncertain" {
