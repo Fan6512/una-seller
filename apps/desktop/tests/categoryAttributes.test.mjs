@@ -63,17 +63,25 @@ window.fetch = (path, options) => {
     category_id: id, technical_specs_verified: true,
     translations_zh: id === "CBT2" ? { Brand: "品牌", Plastic: "塑料", Style: "款式" } : undefined,
     path_zh: id === "CBT2" ? ["家居", "Other"] : undefined,
-    technical_requirements: id === "CBT2" ? ["STYLE"] : undefined,
+    technical_requirements: id === "CBT2" ? ["STYLE"] : id === "CBT1055" ? ["INTERNAL_MEMORY"] : undefined,
     technical_requirement_names: id === "CBT2" ? { STYLE: "Style" } : undefined,
     path: [{ id: "CBT1", name: "Home" }, { id, name: id === "CBT1" ? "Jugs" : "Other" }],
     attributes: id === "CBT1" ? fields : id === "CBT2" ? [
       fields[0],
       { ...fields[2], allowed_units: [{ id: "ml", name: "mL" }] },
       { ...fields[3], values: [{ id: 300, name: "Plastic" }] },
-    ] : id === "CBT5" ? [{id:"COLOR",name:"Color",hierarchy:"CHILD_PK",value_type:"list",tags:{required:true},values:[{id:1,name:"Black"},{id:2,name:"White"},{id:3,name:"Blue"}]}] : [],
+    ] : id === "CBT1055" ? [
+      {id:"IS_DUAL_SIM",name:"Is Dual SIM",hierarchy:"PARENT_PK",value_type:"boolean",tags:{required:true},
+        values:[{id:"242084",name:"No"},{id:"242085",name:"Yes"}]},
+      {id:"COLOR",name:"Color",hierarchy:"CHILD_PK",value_type:"string",tags:{required:true,allow_variations:true},
+        values:[{id:"52049",name:"Black"},{id:"52055",name:"White"},{id:"52028",name:"Blue"}]},
+      {id:"INTERNAL_MEMORY",name:"Internal memory",hierarchy:"CHILD_PK",value_type:"number_unit",
+        allowed_units:[{id:"GB",name:"GB"},{id:"MB",name:"MB"}]},
+      {id:"MAIN_COLOR",name:"Main color",hierarchy:"CHILD_DEPENDENT",value_type:"list",values:[{id:"2450295",name:"Black"}]},
+    ] : [],
   }));
 };
-let editor, working, aiRequest, aiCancelled, aiMode, saveAccepted, reloadSaved;
+let editor, working, aiRequest, aiCancelled, aiMode, saveAccepted, reloadSaved, setEditorDisabled, setEditorValue;
 function Fixture() {
   const [value, setValue] = useState(() => initialListingFields({
     category_id: "CBT1", category_path: "Home / Jugs",
@@ -82,6 +90,9 @@ function Fixture() {
   const [saved, setSaved] = useState(undefined);
   const [revision, setRevision] = useState(1);
   const [editorKey, setEditorKey] = useState(1);
+  const [disabled, setDisabled] = useState(false);
+  setEditorDisabled = setDisabled;
+  setEditorValue = setValue;
   editor = value;
   working = value.category_attributes ?? [];
   saveAccepted = () => {
@@ -97,7 +108,7 @@ function Fixture() {
     setEditorKey(n => n + 1);
   };
   return React.createElement(ListingFieldsEditor, {
-    key: editorKey, value, onChange: setValue, aiSaved: saved,
+    key: editorKey, value, onChange: setValue, aiSaved: saved, disabled,
     aiProduct: { source_product_id: "fixture-product", expected_revision: revision },
   });
 }
@@ -317,7 +328,10 @@ try {
   await click("button", "AI 优化标题");
   await loaded('[role="alert"]', "AI fixture unavailable");
   assert(editor.titles.en === "Refined Glass Pitcher", "error changed adopted title");
-  switchCategory("CBT5");
+  switchCategory("CBT1055");
+  const commonColor=(await loaded("label","Color · 必填")).querySelector("select");
+  assert(commonColor.options.length>1,"single-product official string suggestions missing");
+  input((await loaded("label","Is Dual SIM · 必填 · 家族共用")).querySelector("select"),"242085");
   await loaded("th", "Color（颜色）");
   await click("button", "+ 添加变体");
   await click("button", "+ 添加变体");
@@ -326,12 +340,40 @@ try {
   input(color1.querySelector("input"),"黑色");
   const firstColor=document.querySelector('select[aria-label="变体 1 Color"]');
   assert([...firstColor.options].some(o=>o.textContent.includes("Black（黑色）"))&&!([...firstColor.options].some(o=>o.textContent.includes("White"))),"Chinese option filter failed");
-  input(firstColor,"1");
+  assert(!commonColor.isConnected,"child spec still editable as a shared attribute");
+  assert(![...document.querySelectorAll("th")].some(node=>node.textContent.includes("Main color")),
+    "dependent spec rendered as an independent variation axis");
+  input(firstColor,"52049");
   input(color1.querySelector("input"),"");
-  input(document.querySelector('select[aria-label="变体 2 Color"]'),"2");
-  assert(editor.variants[0].category_attributes[0].value==="Black"&&editor.variants[1].category_attributes[0].value_id==="2","official values not saved");
+  const secondColor=document.querySelector('select[aria-label="变体 2 Color"]');
+  const secondCustom=document.querySelector('input[aria-label="变体 2 Color 自定义值"]');
+  input(secondCustom,"黑色");
+  await loaded("small","请填写英文规格");
+  input(secondColor,"52055");
+  assert(editor.variants[0].category_attributes[0].value==="Black"&&
+    editor.variants[0].category_attributes[0].value_id==="52049"&&
+    editor.variants[1].category_attributes[0].value_id==="52055"&&
+    working.some(f=>f.id==="IS_DUAL_SIM"&&f.value==="Yes"&&f.value_id==="242085"),
+    "official child and parent options did not retain the unmodified English values and IDs");
+  input(document.querySelector('input[aria-label="变体 1 Internal memory"]'),"64.0");
+  input(document.querySelector('select[aria-label="变体 1 Internal memory unit"]'),"GB");
+  await loaded("small","待填写规格值");
+  assert(document.querySelector('input[aria-label="变体 2 Internal memory"]').getAttribute("aria-required")==="true",
+    "supplemental official required rule was treated as optional");
+  input(document.querySelector('input[aria-label="变体 2 Internal memory"]'),"64");
+  input(document.querySelector('select[aria-label="变体 2 Internal memory unit"]'),"GB");
+  input(secondColor,"52049");
+  await loaded("small","重复官方规格组合");
+  input(secondCustom," black ");
+  await loaded("small","重复官方规格组合");
+  input(secondColor,"52055");
+  switchCategory("CBT2");
+  await loaded("small","历史规格：CBT1055 · COLOR · Black");
+  switchCategory("CBT1055");
+  await loaded("th","Color（颜色）");
+  assert(document.querySelector('select[aria-label="变体 1 Color"]').value==="52049","category switch lost its historical official selection");
   input(document.querySelector('input[aria-label="变体 1 采购成本（¥）"]'),"20.25");
-  input(document.querySelector('input[aria-label="变体 1 净收益（$）"]'),"8.50");
+  input(document.querySelector('input[aria-label="变体 1 目标净收益（USD）"]'),"8.50");
   const openPicker=async i=>{flushSync(()=>document.querySelectorAll(".listing-variant-images-button")[i].click());};
   const appendImage=async url=>{
     input(document.querySelector('input[aria-label="追加变体图片 URL"]'),url);
@@ -340,13 +382,30 @@ try {
   const img=s=>"https://example.com/"+s+".jpg";
   await openPicker(0);await appendImage(img("black"));await appendImage(img("shared"));await appendImage(img("shared2"));
   await click(".listing-variant-image-picker-head button","完成");
-  await openPicker(1);await appendImage(img("white"));
+  await openPicker(1);await appendImage(img("white"));await appendImage(img("old"));
   await click(".listing-variant-image-picker-head button","复用副图");
+  let overwriteCount=0;
+  window.confirm=message=>{assert(message.includes("覆盖 1 个变体已有副图"),"unexpected overwrite confirmation");overwriteCount++;return false;};
+  await click("button","应用复用副图");
+  assert(overwriteCount===1&&editor.variants[1].image_urls[1]===img("old"),"cancelled reuse removed existing secondaries");
+  flushSync(()=>setEditorDisabled(true));
+  assert((await loaded("button","应用复用副图")).disabled&&document.querySelector('select[aria-label="变体 1 Color"]').disabled,
+    "locked workbench permits reuse or official spec edits");
+  flushSync(()=>setEditorDisabled(false));
+  window.confirm=()=>true;
   await click("button","应用复用副图");
   assert(JSON.stringify(editor.variants[1].image_urls)===JSON.stringify([img("white"),img("shared"),img("shared2")]),"single reuse changed main or lost secondaries");
   await click(".listing-variant-image-picker-head button","完成");
   await click("button","+ 添加变体");
-  input(document.querySelector('select[aria-label="变体 3 Color"]'),"3");
+  input(document.querySelector('select[aria-label="变体 3 Color"]'),"52028");
+  await click(".listing-gallery-toolbar button","批量复用副图");
+  await click('[aria-label="复用副图"] button',"清空选择");
+  assert((await loaded("button","应用复用副图")).disabled,"empty target selection remained actionable");
+  await click('[aria-label="复用副图"] button',"全选其他变体");
+  await click("button","应用复用副图");
+  await loaded('[role="status"]',"目标变体尚未设置有效主图");
+  assert(editor.variants[2].image_urls.length===0,"bulk reuse fabricated a target main image");
+  await click('[aria-label="复用副图"] button',"关闭");
   await openPicker(2);await appendImage(img("blue"));await click(".listing-variant-image-picker-head button","完成");
   await click(".listing-gallery-toolbar button","批量复用副图");
   await click("button","应用复用副图");
@@ -355,6 +414,13 @@ try {
   assert(validateListingFields(editor)==="","new workbench fields not valid");
   flushSync(()=>saveAccepted());flushSync(()=>reloadSaved());
   assert(editor.variants[0].purchase_cost_cny==="20.25"&&editor.variants[0].target_net_proceeds_usd==="8.50"&&editor.variants[2].image_urls[0]===img("blue"),"variant reload lost new fields or images");
+  assert(editor.variants[0].category_attributes.some(f=>f.id==="INTERNAL_MEMORY"&&f.value==="64.0"&&f.unit_id==="GB"),
+    "variant reload altered official unit or numeric value");
+  flushSync(()=>setEditorValue({...editor,variants:editor.variants.map((v,i)=>i===2?
+    {...v,image_urls:Array.from({length:30},(_,n)=>img("cap"+n))}:v)}));
+  await openPicker(2);
+  input(document.querySelector('input[aria-label="追加变体图片 URL"]'),img("overflow"));
+  assert((await loaded("button","添加链接")).disabled,"variant image picker permits the 31st image");
   const published = { id: "MLB1", category_id: "MLB771", description: "Fixture details",
     cbt_category_path: { original: ["Home", "Other"], zh: ["家居", "其他"] } };
   const showPublished = listing => flushSync(() => root.render(React.createElement(PublishedListingEditor, {

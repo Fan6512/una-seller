@@ -1,4 +1,4 @@
-import CategoryAttributesForm from "./CategoryAttributesForm";
+import CategoryAttributesForm, { choicesFor, enumOnly, requiredAttribute, unitsFor } from "./CategoryAttributesForm";
 import AICopyPanel from "./AICopyPanel";
 import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTitle } from "./listingFields";
@@ -89,7 +89,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const images=value.images??[];
   const variants=value.variants??[];
   const activeRules=categoryRules?.category_id===value.category_id?categoryRules:null;
-  const childRules=(activeRules?.attributes??[]).filter(r=>r.hierarchy==="CHILD_PK"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(r.id));
+  const childRules=(activeRules?.attributes??[]).filter(r=>r?.hierarchy==="CHILD_PK"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(r.id));
   // These are display-only hints; never change the platform option's value or ID.
   const glossary:Record<string,string>={Color:"颜色",Colour:"颜色",Size:"尺寸",Style:"款式",Material:"材质",Voltage:"电压",
     Capacity:"容量",Black:"黑色",White:"白色",Red:"红色",Blue:"蓝色",Green:"绿色",Yellow:"黄色",
@@ -97,10 +97,12 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     Beige:"米色","Navy Blue":"藏青色",Silver:"银色",Gold:"金色",Khaki:"卡其色",Burgundy:"酒红色"};
   const translations={...glossary,...activeRules?.translations_zh};
   const [specSearch,setSpecSearch]=useState<Record<string,string>>({});
+  useEffect(()=>setSpecSearch({}),[value.category_id]);
   const bilingual=(name:string)=>Object.hasOwn(translations,name)&&translations[name]!==name?name+"（"+translations[name]+"）":name;
-  const options=(rule:CBTAttributeRule)=>(rule.values??[]).filter(v=>v.id!=null&&v.name);
   const supported=(rule:CBTAttributeRule)=>!["read_only","hidden","fixed","multivalued","conditional_required","size_grid_required"].some(t=>rule.tags?.[t])&&
-    (rule.value_type==="string"||rule.value_type==="list"||rule.value_type==="number"||rule.value_type==="number_unit");
+    (enumOnly(rule)?choicesFor(rule).length>0:
+      rule.value_type==="number_unit"?unitsFor(rule).length>0:rule.value_type==="string"||rule.value_type==="number");
+  const hasChoices=(rule:CBTAttributeRule)=>supported(rule)&&rule.value_type!=="number_unit"&&choicesFor(rule).length>0;
   const duplicateCount=images.length-removeDuplicateGalleryLinks(images).length;
   const languages=[
     {key:"en" as const,label:"英语 EN",full:"英文标题（源标题 / CBT 分类推荐）",target:"建议 45–55 字符"},
@@ -177,28 +179,41 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     if(entered||unitId)history.push({category_id:value.category_id,id:rule.id,value:entered,value_id:valueId,unit_id:unitId});
     updateVariant(index,{category_attributes:history});
   };
+  const normalize=(s:string)=>s.trim().normalize("NFC").toLowerCase();
   const exactMatch=(rule:CBTAttributeRule,variant:ListingVariant)=>{
-    const normalize=(s:string)=>s.trim().normalize("NFC").toLowerCase();
     const names=[rule.id,rule.name,translations[rule.name]].filter(Boolean).map(normalize);
     const raw=Object.entries(variant.attributes).filter(([name])=>names.includes(normalize(name)));
     if(raw.length!==1)return undefined;
-    const matches=options(rule).filter(v=>[v.name,translations[v.name]].filter(Boolean).map(normalize).includes(normalize(raw[0][1])));
+    const matches=choicesFor(rule).filter(v=>[v.name,translations[v.name]].filter(Boolean).map(normalize).includes(normalize(raw[0][1])));
     return matches.length===1?matches[0]:undefined;
   };
-  const specIssue=(variant:ListingVariant,rule:CBTAttributeRule)=>{
-    const field=variant.category_attributes?.find(a=>a.category_id===value.category_id&&a.id===rule.id);
+  const currentSpec=(variant:ListingVariant,rule:CBTAttributeRule)=>
+    variant.category_attributes?.find(a=>a.category_id===value.category_id&&a.id===rule.id);
+  const mandatory=(rule:CBTAttributeRule)=>requiredAttribute(rule,activeRules?.technical_requirements);
+  const familyChildRules=childRules.filter(rule=>supported(rule)&&
+    (mandatory(rule)||variants.some(v=>currentSpec(v,rule)?.value.trim())));
+  const specIssue=(field:ReturnType<typeof currentSpec>,rule:CBTAttributeRule)=>{
     if(!supported(rule))return "特殊规格，刊登前人工核实";
-    if(!field?.value.trim())return "待填写";
+    if(!field?.value.trim())return mandatory(rule)||field?.unit_id?"待填写规格值":
+      familyChildRules.includes(rule)?"请核对家族规格项是否一致":"";
     if(Array.from(field.value).length>Math.min(rule.value_max_length||500,500))return "超过官方长度上限";
-    if(rule.value_type==="list"&&!options(rule).some(o=>String(o.id)===field.value_id&&o.name===field.value))return "待核实官方选项";
+    if((enumOnly(rule)||field.value_id)&&!choicesFor(rule).some(o=>String(o.id)===field.value_id&&o.name===field.value))return "待核实官方选项";
     if(!field.value_id&&/\p{Script=Han}/u.test(field.value))return "请填写英文规格";
     if((rule.value_type==="number"||rule.value_type==="number_unit")&&!/^-?\d+(?:\.\d+)?$/.test(field.value))return "请输入数字";
-    if(rule.value_type==="number_unit"&&!(rule.allowed_units??[]).some(u=>u.id===field.unit_id))return "请选择官方单位";
+    if(rule.value_type==="number_unit"&&!unitsFor(rule).some(u=>u.id===field.unit_id))return "请选择官方单位";
+    if(rule.value_type!=="number_unit"&&field.unit_id)return "当前字段不接受单位";
     return "";
   };
-  const completeKeys=variants.map(v=>childRules.length&&childRules.every(r=>!specIssue(v,r))?JSON.stringify(childRules.map(r=>{
-    const f=v.category_attributes!.find(a=>a.category_id===value.category_id&&a.id===r.id)!;
-    return [r.id,f.value_id||f.value.trim().toLowerCase(),f.unit_id??""];
+  const completeKeys=variants.map(v=>familyChildRules.length&&familyChildRules.every(r=>!specIssue(currentSpec(v,r),r))?JSON.stringify(familyChildRules.map(r=>{
+    const f=currentSpec(v,r)!;
+    let canonical=normalize(f.value);
+    if(r.value_type==="number"||r.value_type==="number_unit") {
+      canonical=canonical.replace(/^(-?)0+(?=\d)/,"$1").replace(/(\.\d*?)0+$/,"$1").replace(/\.$/,"");
+      if(canonical==="-0")canonical="0";
+    }
+    const matches=choicesFor(r).filter(o=>normalize(o.name)===canonical);
+    const id=r.value_type==="number_unit"?"":f.value_id||(matches.length===1?String(matches[0].id):"");
+    return [r.id,id?"id:"+id:"value:"+canonical,f.unit_id??""];
   })):"");
   // These controls have separate identities across modes and languages so an
   // already focused Spanish/Portuguese textarea cannot become the English input.
@@ -333,9 +348,9 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           placeholder={legacyPurchase ? "核实后输入人民币金额" : "人民币金额"}
           onChange={event=>onChange({...value,purchase_price:event.target.value,purchase_currency:"CNY"})}/>
       </label>
-      {field("净收益（$）","target_net_proceeds_usd","目标净回款，USD",21)}
+      {field("目标净收益（USD）","target_net_proceeds_usd","目标净回款",21)}
       </div>
-      <small className="listing-fields-note">净收益为刊登目标净回款（美元），不是订单结算或利润。</small>
+      <small className="listing-fields-note">用于填写刊登时的目标净回款。订单结算金额和利润另行计算。</small>
       {legacyPurchase && <small className="listing-currency-legacy" role="status">
         历史采购成本 {value.purchase_price}（{value.purchase_currency || "币种未确认"}）。核实实际人民币金额后再填写。
       </small>}
@@ -418,41 +433,50 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       <div className="listing-variant-toolbar">
         <strong>现有 {variants.length} 个变体</strong>
         <button type="button" disabled={disabled||variants.length>=100}
-          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[]}])}>
+          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[],
+            purchase_cost_cny:"",target_net_proceeds_usd:"",category_attributes:[]}])}>
           + 添加变体
         </button>
       </div>
-      {activeRules&&variants.length>0&&activeRules.attributes.some(r=>r.hierarchy==="PARENT_PK"&&(r.tags?.required||r.tags?.new_required)&&
-        !(value.category_attributes??[]).some(a=>a.category_id===value.category_id&&a.id===r.id&&a.value.trim()))&&
-        <p className="listing-validation">家族公共必填属性尚待核实（包含品牌等基础字段），请在刊登前确认 PARENT_PK 一致。</p>}
+      {activeRules&&variants.length>0&&<p className="listing-fields-note">家族共用属性请在 CBT 官方属性中填写。刊登前核对家族名称、类目和商品状态一致。</p>}
       <p className="listing-fields-note">{!activeRules?"选择 CBT 类目并加载官方规则后可填写 UP 规格。":childRules.length===0?"当前规则未返回 CHILD_PK，保留原始规格，需在刊登前核实。":"官方规格使用英文及官方 ID，中文仅辅助阅读。原始规格不自动提交。"}</p>
       <div className="listing-variant-table-scroll" role="region" aria-label="可横向滚动的变体表格" tabIndex={0}>
         <table className="listing-variant-table">
-          <thead><tr>{childRules.map(rule=><th key={rule.id} scope="col">{bilingual(rule.name||rule.id)}
-        {rule.value_type==="list"&&<input aria-label={"搜索规格 "+rule.id} disabled={disabled} placeholder="英文 / 中文"
-          value={specSearch[rule.id]??""} onChange={e=>setSpecSearch(old=>({...old,[rule.id]:e.target.value}))}/>}
-      </th>)}<th scope="col">原始规格（参考）</th><th scope="col">SKU</th><th scope="col">采购成本（¥）</th><th scope="col">净收益（$）</th><th scope="col">来源价格</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
+          <thead><tr>{childRules.map(rule=><th className="listing-variant-official" key={rule.id} scope="col">
+            {bilingual(rule.name||rule.id)}{mandatory(rule)&&" · 必填"}
+            {hasChoices(rule)&&<input aria-label={"搜索规格 "+rule.id} disabled={disabled} placeholder="英文 / 中文"
+              value={specSearch[rule.id]??""} onChange={e=>setSpecSearch(old=>({...old,[rule.id]:e.target.value}))}/>}
+          </th>)}<th className="listing-variant-spec" scope="col">原始规格（参考）</th><th scope="col">SKU</th><th scope="col">采购成本（¥）</th><th scope="col">目标净收益（USD）</th><th scope="col">来源价格</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
           <tbody>{variants.map((v,i)=><tr key={i}>
             {childRules.map(rule=>{
-              const f=v.category_attributes?.find(a=>a.category_id===value.category_id&&a.id===rule.id);
-              const issue=specIssue(v,rule);
-              const candidate=!f?.value&&exactMatch(rule,v);
+              const f=currentSpec(v,rule);
+              const issue=specIssue(f,rule);
+              const choices=choicesFor(rule);
+              const candidate=hasChoices(rule)&&!f?.value&&exactMatch(rule,v);
               const label="变体 "+(i+1)+" "+(rule.name||rule.id);
-              return <td key={rule.id}>
-                {supported(rule)?rule.value_type==="list"?<select disabled={disabled} aria-label={label} value={f?.value_id??""}
-                  onChange={e=>{const o=options(rule).find(o=>String(o.id)===e.target.value);setOfficialSpec(i,rule,o?.name??"",o?String(o.id):undefined);}}>
-                  <option value="">请选择</option>
-                  {f?.value_id&&!options(rule).some(o=>String(o.id)===f.value_id)&&<option value={f.value_id} disabled>{f.value}（待核实）</option>}
-                  {options(rule).filter(o=>String(o.id)===f?.value_id||bilingual(o.name).toLowerCase().includes((specSearch[rule.id]??"").trim().toLowerCase())).map(o=><option key={String(o.id)} value={String(o.id)}>{bilingual(o.name)}</option>)}
-                </select>:<>
-                  <input disabled={disabled} aria-label={label} value={f?.value??""} placeholder="English"
-                    maxLength={Math.min(rule.value_max_length||500,500)} onChange={e=>setOfficialSpec(i,rule,e.target.value,undefined,f?.unit_id)}/>
+              return <td className="listing-variant-official" key={rule.id}>
+                {supported(rule)?<>
+                  {hasChoices(rule)&&<select disabled={disabled} aria-label={label} value={f?.value_id??""}
+                    aria-required={mandatory(rule)} aria-invalid={Boolean(issue)}
+                    onChange={e=>{const o=choices.find(o=>String(o.id)===e.target.value);setOfficialSpec(i,rule,o?.name??"",o?String(o.id):undefined);}}>
+                    <option value="">请选择官方值</option>
+                    {f?.value_id&&!choices.some(o=>String(o.id)===f.value_id)&&<option value={f.value_id} disabled>{f.value}（待核实）</option>}
+                    {choices.filter(o=>String(o.id)===f?.value_id||normalize(bilingual(o.name)).includes(normalize(specSearch[rule.id]??"")))
+                      .map(o=><option key={String(o.id)} value={String(o.id)}>{bilingual(o.name)}</option>)}
+                  </select>}
+                  {!enumOnly(rule)&&<input disabled={disabled} aria-label={hasChoices(rule)?label+" 自定义值":label}
+                    aria-required={mandatory(rule)} aria-invalid={Boolean(issue)}
+                    value={f?.value??""} placeholder={rule.value_type==="string"?"English":"数字"}
+                    inputMode={rule.value_type==="string"?"text":"decimal"}
+                    maxLength={Math.min(rule.value_max_length||500,500)} onChange={e=>setOfficialSpec(i,rule,e.target.value,undefined,f?.unit_id)}/>}
                   {rule.value_type==="number_unit"&&<select disabled={disabled} aria-label={label+" unit"} value={f?.unit_id??""}
                     onChange={e=>setOfficialSpec(i,rule,f?.value??"",undefined,e.target.value||undefined)}>
-                    <option value="">单位</option>{(rule.allowed_units??[]).map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+                    <option value="">单位</option>
+                    {f?.unit_id&&!unitsFor(rule).some(u=>u.id===f.unit_id)&&<option value={f.unit_id} disabled>{f.unit_id}（待核实）</option>}
+                    {unitsFor(rule).map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
                   </select>}
                 </>:<small>特殊属性，保留历史值：{f?.value??"—"}</small>}
-                {candidate&&supported(rule)&&rule.value_type==="list"&&<button type="button" disabled={disabled}
+                {candidate&&<button type="button" disabled={disabled}
                   onClick={()=>setOfficialSpec(i,rule,candidate.name,String(candidate.id))}>匹配 {bilingual(candidate.name)}</button>}
                 {issue&&<small className="listing-validation">{issue}</small>}
               </td>;
@@ -481,9 +505,9 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
             <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" SKU"} value={v.seller_sku}
               maxLength={120} onChange={e=>updateVariant(i,{seller_sku:e.target.value})} placeholder="自定义 SKU"/></td>
             <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 采购成本（¥）"} value={v.purchase_cost_cny??""}
-              onChange={e=>updateVariant(i,{purchase_cost_cny:e.target.value})} placeholder="CNY"/></td>
-            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 净收益（$）"} value={v.target_net_proceeds_usd??""}
-              onChange={e=>updateVariant(i,{target_net_proceeds_usd:e.target.value})} placeholder="USD"/></td>
+              inputMode="decimal" maxLength={21} onChange={e=>updateVariant(i,{purchase_cost_cny:e.target.value})} placeholder="CNY"/></td>
+            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 目标净收益（USD）"} value={v.target_net_proceeds_usd??""}
+              inputMode="decimal" maxLength={21} onChange={e=>updateVariant(i,{target_net_proceeds_usd:e.target.value})} placeholder="USD"/></td>
             <td><small>{v.price? v.price+" "+(v.currency||"币种未确认"):"—"}</small></td>
             <td><button type="button" className="listing-variant-images-button" disabled={disabled}
                 onClick={()=>{setVariantImageIndex(variantImageIndex===i?null:i);setVariantImageUrlDraft("");setReuseMode(null);setReuseMessage("");}}>
@@ -523,7 +547,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
         <div className="listing-variant-image-options">
           {Array.from(new Set([...images.map(im=>im.url),...variants[variantImageIndex].image_urls]))
             .filter(url=>url.trim()!=="").map(url=><label key={url}>
-              <input type="checkbox" disabled={disabled} checked={variants[variantImageIndex].image_urls.includes(url)}
+              <input type="checkbox" disabled={disabled||(variants[variantImageIndex].image_urls.length>=30&&
+                !variants[variantImageIndex].image_urls.includes(url))} checked={variants[variantImageIndex].image_urls.includes(url)}
                 onChange={e=>updateVariant(variantImageIndex,{
                   image_urls:toggleVariantImage(variants[variantImageIndex].image_urls,url,e.target.checked)
                 })}/>
@@ -533,7 +558,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
         <div className="listing-variant-url-row">
           <input disabled={disabled} aria-label="追加变体图片 URL" placeholder="https://..." value={variantImageUrlDraft}
             onChange={e=>setVariantImageUrlDraft(e.target.value)}/>
-          <button type="button" disabled={disabled||!/^https:\/\/\S+$/i.test(variantImageUrlDraft.trim())}
+          <button type="button" disabled={disabled||variants[variantImageIndex].image_urls.length>=30||
+            variantImageUrlDraft.trim().length>2000||!/^https:\/\/\S+$/i.test(variantImageUrlDraft.trim())}
             onClick={()=>{
               updateVariant(variantImageIndex,{image_urls:toggleVariantImage(
                 variants[variantImageIndex].image_urls,variantImageUrlDraft.trim(),true)});
