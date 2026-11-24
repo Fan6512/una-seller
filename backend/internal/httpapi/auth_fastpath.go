@@ -42,16 +42,17 @@ type publicSigningKey struct {
 // fastAuth is process-local and bounded. No access token, signing secret or
 // user metadata is persisted, logged or exposed to the desktop.
 type fastAuth struct {
-	jwksURL       string
-	issuer        string
-	client        *http.Client
-	mu            sync.Mutex
-	keys          map[string]publicSigningKey
-	keysUntil     time.Time
-	lastJWKSFetch time.Time
-	positive      map[[32]byte]verifiedIdentity
-	tokenFlight   singleflight.Group
-	jwksFlight    singleflight.Group
+	jwksURL        string
+	issuer         string
+	client         *http.Client
+	mu             sync.Mutex
+	keys           map[string]publicSigningKey
+	keysUntil      time.Time
+	lastJWKSFetch  time.Time
+	jwksRetryAfter time.Time
+	positive       map[[32]byte]verifiedIdentity
+	tokenFlight    singleflight.Group
+	jwksFlight     singleflight.Group
 }
 
 func newFastAuth(base string, client *http.Client) *fastAuth {
@@ -207,6 +208,7 @@ func (f *fastAuth) verifyAsymmetric(ctx context.Context, raw string, header toke
 		jwt.WithAudience("authenticated"),
 		jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(),
+		jwt.WithLeeway(30*time.Second), // tolerate minor clock skew; exp is checked strictly below
 	).ParseWithClaims(raw, claims, func(t *jwt.Token) (any, error) {
 		if t.Method.Alg() != header.Algorithm || t.Header["kid"] != header.KeyID {
 			return nil, ErrInvalidSession
@@ -233,12 +235,16 @@ func (f *fastAuth) lookupKey(ctx context.Context, kid, alg string) (any, error) 
 	key, found := f.keys[kid]
 	fresh := now.Before(f.keysUntil)
 	recent := now.Sub(f.lastJWKSFetch) < jwksMissRetryDelay
+	retrying := now.Before(f.jwksRetryAfter)
 	f.mu.Unlock()
 	if fresh && found {
 		if key.alg != alg {
 			return nil, ErrInvalidSession
 		}
 		return key.key, nil
+	}
+	if retrying {
+		return nil, ErrAuthUnavailable
 	}
 	if fresh && recent {
 		return nil, ErrInvalidSession
@@ -250,7 +256,15 @@ func (f *fastAuth) lookupKey(ctx context.Context, kid, alg string) (any, error) 
 		now := time.Now()
 		_, found := f.keys[kid]
 		fresh := now.Before(f.keysUntil)
-		if fresh && (found || now.Sub(f.lastJWKSFetch) < jwksMissRetryDelay) {
+		if fresh && found {
+			f.mu.Unlock()
+			return nil, nil
+		}
+		if now.Before(f.jwksRetryAfter) {
+			f.mu.Unlock()
+			return nil, ErrAuthUnavailable
+		}
+		if fresh && now.Sub(f.lastJWKSFetch) < jwksMissRetryDelay {
 			f.mu.Unlock()
 			return nil, nil
 		}
@@ -291,8 +305,10 @@ func (f *fastAuth) lookupKey(ctx context.Context, kid, alg string) (any, error) 
 				continue
 			}
 			var pk any
+			var resolvedAlg string
 			switch {
-			case k.KeyType == "EC" && k.Algorithm == "ES256" && k.Curve == "P-256":
+			case k.KeyType == "EC" && (k.Algorithm == "" || k.Algorithm == "ES256") && k.Curve == "P-256":
+				resolvedAlg = "ES256"
 				xb, ex := base64.RawURLEncoding.DecodeString(k.X)
 				yb, ey := base64.RawURLEncoding.DecodeString(k.Y)
 				if ex != nil || ey != nil || len(xb) != 32 || len(yb) != 32 {
@@ -303,7 +319,8 @@ func (f *fastAuth) lookupKey(ctx context.Context, kid, alg string) (any, error) 
 					continue
 				}
 				pk = &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
-			case k.KeyType == "RSA" && k.Algorithm == "RS256":
+			case k.KeyType == "RSA" && (k.Algorithm == "" || k.Algorithm == "RS256"):
+				resolvedAlg = "RS256"
 				nb, en := base64.RawURLEncoding.DecodeString(k.N)
 				eb, ee := base64.RawURLEncoding.DecodeString(k.E)
 				if en != nil || ee != nil || len(nb) == 0 || len(eb) == 0 || len(eb) > 4 {
@@ -317,16 +334,26 @@ func (f *fastAuth) lookupKey(ctx context.Context, kid, alg string) (any, error) 
 				pk = &rsa.PublicKey{N: n, E: int(e)}
 			}
 			if pk != nil {
-				keys[k.KeyID] = publicSigningKey{alg: k.Algorithm, key: pk}
+				keys[k.KeyID] = publicSigningKey{alg: resolvedAlg, key: pk}
 			}
+		}
+		// Do not poison the 10-minute cache with an empty or unsupported key set.
+		// Keep the previously verified public keys until their original TTL.
+		if len(keys) == 0 {
+			return nil, ErrAuthUnavailable
 		}
 		f.mu.Lock()
 		f.keys = keys
 		f.keysUntil = time.Now().Add(jwksCacheTTL)
+		f.jwksRetryAfter = time.Time{}
 		f.mu.Unlock()
 		return nil, nil
 	})
 	if err != nil {
+		// Avoid sequential fetch storms while JWKS is empty or unavailable.
+		f.mu.Lock()
+		f.jwksRetryAfter = time.Now().Add(jwksMissRetryDelay)
+		f.mu.Unlock()
 		return nil, err
 	}
 	f.mu.Lock()
