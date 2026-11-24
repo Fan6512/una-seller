@@ -161,7 +161,8 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 				jsonb_strip_nulls(jsonb_build_object(
 					'category_attributes',d.listing_fields->'category_attributes',
 					'descriptions',d.listing_fields->'descriptions',
-					'description_translation',d.listing_fields->'description_translation')) || $7::jsonb,
+					'description_translation',d.listing_fields->'description_translation',
+					'target_net_proceeds_usd',d.listing_fields->'target_net_proceeds_usd')) || $7::jsonb,
 				d.listing_fields),
 				revision=d.revision+1,updated_at=now()
 			FROM app.source_products p
