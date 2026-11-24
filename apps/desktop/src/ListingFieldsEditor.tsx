@@ -129,7 +129,16 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const updateVariant=(index:number,patch:Partial<ListingVariant>)=>{
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
   };
-  const variantLabel=(v:ListingVariant,i:number)=>"变体 "+(i+1)+" · "+(v.seller_sku||Object.values(v.attributes).filter(Boolean).join(" / ")||"未命名");
+  const variantLabel=(v:ListingVariant,i:number)=>{
+    // Prefer confirmed specs from the current category, never another category's history.
+    const specs=(v.category_attributes??[]).filter(a=>a.category_id===value.category_id&&a.value.trim()&&
+      (!activeRules||childRules.some(rule=>rule.id===a.id)));
+    const ordered=activeRules?childRules.flatMap(rule=>specs.filter(a=>a.id===rule.id)):specs;
+    const official=ordered.map(a=>bilingual(a.value.trim())+(a.unit_id?" "+a.unit_id:"")).join(" / ");
+    const raw=Object.values(v.attributes).map(s=>s.trim()).filter(Boolean).map(bilingual).join(" / ");
+    const spec=official||raw;
+    return "变体 "+(i+1)+" · "+([spec,v.seller_sku.trim()].filter(Boolean).join(" · ")||"未命名");
+  };
   const beginReuse=(mode:"bulk"|"single",target?:number)=>{
     const index=variants.findIndex((v,i)=>i!==target&&v.image_urls.length>1);
     setReuseMode(mode);setReuseSource(index<0?"":String(index));
@@ -527,7 +536,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       {variants.length===0&&<p className="listing-fields-note">未采集到变体，可点击“添加变体”手动填写真实规格。</p>}
       {variantImageIndex!==null&&variants[variantImageIndex]&&<section className="listing-variant-image-picker" aria-label={"变体 "+(variantImageIndex+1)+" 图片选择"}>
         <div className="listing-variant-image-picker-head">
-          <strong>变体 {variantImageIndex+1} · 选择图片</strong>
+          <strong>{variantLabel(variants[variantImageIndex],variantImageIndex)} · 选择图片</strong>
           <button type="button" disabled={disabled||!variants[variantImageIndex].image_urls.length||!variants.some((v,i)=>i!==variantImageIndex&&v.image_urls.length>1)}
             onClick={()=>beginReuse("single",variantImageIndex)}>复用副图</button>
           <button type="button" onClick={()=>{setVariantImageIndex(null);setReuseMode(null);setReuseMessage("");}}>完成</button>

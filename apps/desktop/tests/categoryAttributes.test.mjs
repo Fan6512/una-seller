@@ -383,7 +383,10 @@ try {
   await openPicker(0);await appendImage(img("black"));await appendImage(img("shared"));await appendImage(img("shared2"));
   await click(".listing-variant-image-picker-head button","完成");
   await openPicker(1);await appendImage(img("white"));await appendImage(img("old"));
+  await loaded(".listing-variant-image-picker-head strong","White（白色）");
   await click(".listing-variant-image-picker-head button","复用副图");
+  await loaded('[aria-label="复用副图"] option',"Black（黑色） / 64.0 GB");
+  assert(![...document.querySelectorAll('[aria-label="复用副图"] option')].some(o=>o.textContent.includes("未命名")),"official-only variants lost display names");
   let overwriteCount=0;
   window.confirm=message=>{assert(message.includes("覆盖 1 个变体已有副图"),"unexpected overwrite confirmation");overwriteCount++;return false;};
   await click("button","应用复用副图");
@@ -399,6 +402,8 @@ try {
   await click("button","+ 添加变体");
   input(document.querySelector('select[aria-label="变体 3 Color"]'),"52028");
   await click(".listing-gallery-toolbar button","批量复用副图");
+  await loaded('[aria-label="复用副图"] label',"White（白色） / 64 GB");
+  await loaded('[aria-label="复用副图"] label',"Blue（蓝色）");
   await click('[aria-label="复用副图"] button',"清空选择");
   assert((await loaded("button","应用复用副图")).disabled,"empty target selection remained actionable");
   await click('[aria-label="复用副图"] button',"全选其他变体");
