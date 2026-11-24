@@ -35,7 +35,7 @@ type PublicationSiteEvidence struct {
 const publicationUnverified = "undetermined"
 
 var ErrCBTProbeCooldown = errors.New("CBT C0 probe cooldown is active")
-var ErrCBTProbeStale = errors.New("CBT C0 store authorization or identity changed")
+var ErrCBTProbeStale = errors.New("CBT C0 authorization, mapping or newer evidence superseded the probe")
 
 // Each authorized seller permits at most one manual C0 probe per 10 seconds
 // within this Go process. The globally unique seller ID comes from the
@@ -288,7 +288,6 @@ func ClassifyPublicationEvidence(e PublicationEvidence) string {
 	}
 	managedCount := 0
 	hasUnknown := false
-	hasDisabledUP := false
 	hasEnabledUP := false
 	allRemoteUP := true
 	for _, site := range e.Sites {
@@ -301,9 +300,6 @@ func ClassifyPublicationEvidence(e PublicationEvidence) string {
 		if site.BusinessModel == "other" {
 			hasUnknown = true
 		}
-		if site.UserProduct == "disabled" {
-			hasDisabledUP = true
-		}
 		if site.UserProduct == "enabled" {
 			hasEnabledUP = true
 		}
@@ -314,19 +310,12 @@ func ClassifyPublicationEvidence(e PublicationEvidence) string {
 		}
 		return publicationUnverified
 	}
-	if hasUnknown {
-		// The official UP tag and per-child UP capability are independent
-		// of business_model. Official standard CBT uses remote logistics;
-		// an explicit Managed marker above always takes precedence.
-		if e.UserProductSeller == "present" && e.WarehouseManagement == "absent" && allRemoteUP {
-			return "standard_up"
-		}
-		return publicationUnverified
-	}
-	if e.UserProductSeller == "present" && !hasDisabledUP {
+	// Apply the same independent-evidence gate to missing and unknown
+	// business_model values. A missing field is not stronger evidence.
+	if e.UserProductSeller == "present" && e.WarehouseManagement == "absent" && allRemoteUP {
 		return "standard_up"
 	}
-	if e.UserProductSeller == "absent" && !hasEnabledUP {
+	if !hasUnknown && e.UserProductSeller == "absent" && !hasEnabledUP {
 		return "legacy_candidate"
 	}
 	return publicationUnverified

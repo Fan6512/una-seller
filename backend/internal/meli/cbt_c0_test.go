@@ -67,8 +67,8 @@ func TestCBTC0ClassificationDoesNotInventLegacyEligibility(t *testing.T) {
 		{"managed", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}}, "fully_managed"},
 		{"mixed_managed_unknown", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: "unverified"}}, "undetermined"},
 		{"mixed_managed_standard", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "CBT CN Fulfillment Managed"}, {BusinessModel: "other"}}, "undetermined"},
-		{"standard", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", UserProduct: "enabled"}}, "standard_up"},
-		{"standard_when_flag_missing", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", UserProduct: "unverified"}}, "standard_up"},
+		{"standard", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", LogisticType: "remote", UserProduct: "enabled"}}, "standard_up"},
+		{"standard_when_flag_missing", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", LogisticType: "remote", UserProduct: "unverified"}}, "undetermined"},
 		{"contradictory_up", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", UserProduct: "disabled"}}, "undetermined"},
 		{"legacy_is_not_approval", "absent", "enabled", []PublicationSiteEvidence{{BusinessModel: "unverified", UserProduct: "disabled"}}, "legacy_candidate"},
 		{"unknown_business", "present", "enabled", []PublicationSiteEvidence{{BusinessModel: "other", UserProduct: "enabled"}}, "undetermined"},
@@ -78,7 +78,7 @@ func TestCBTC0ClassificationDoesNotInventLegacyEligibility(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ClassifyPublicationEvidence(PublicationEvidence{UserProductSeller: tc.tags, SellAllowed: tc.sell, Sites: tc.sites})
+			got := ClassifyPublicationEvidence(PublicationEvidence{UserProductSeller: tc.tags, SellAllowed: tc.sell, WarehouseManagement: "absent", Sites: tc.sites})
 			if got != tc.want {
 				t.Fatalf("got %s, want %s", got, tc.want)
 			}
@@ -135,6 +135,18 @@ func TestCBTC0RemoteUPWithUnknownBusinessModel(t *testing.T) {
 	}
 	if got := ClassifyPublicationEvidence(base); got != "standard_up" {
 		t.Fatalf("consistent remote UP evidence: got %s", got)
+	}
+	missing := base
+	missing.Sites = append([]PublicationSiteEvidence(nil), base.Sites...)
+	for i := range missing.Sites {
+		missing.Sites[i].BusinessModel = "unverified"
+	}
+	if got := ClassifyPublicationEvidence(missing); got != "standard_up" {
+		t.Fatalf("consistent remote UP with missing business enum: got %s", got)
+	}
+	missing.Sites[0].UserProduct = "unverified"
+	if got := ClassifyPublicationEvidence(missing); got != "undetermined" {
+		t.Fatalf("missing enum must not weaken the UP evidence gate: got %s", got)
 	}
 	cases := []struct {
 		name   string
