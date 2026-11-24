@@ -284,7 +284,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     orderRefreshAbort.current?.abort();
     orderRefreshAbort.current = null;
     setRefreshingOrder(false);
-  }, [selectedId, selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic]);
+  }, [selectedId, selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic,
+    scope?.storeId, scope?.site, scope?.logistic]);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
   const closeOrder = () => { setSelectedId(""); setSelectedRowScope(null); };
@@ -365,7 +366,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   }, [scope?.storeId, scope?.site, scope?.logistic, storeFilter, siteFilter, logisticFilter,
     stores.length, activeQuery, scopeKey, statusFilter, purchaseLink, offset, nonce]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const controller = new AbortController();
     setDetail(null);
     setDetailError("");
@@ -428,7 +429,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setDetailError("");
     try {
       const fresh = action === "shipment"
-        ? await refreshOrderLogistics(target, id, "shipment", controller.signal)
+        ? await refreshOrderLogistics(target, id, "shipmentDetails", controller.signal)
         : await refreshOneOrder(target, id, controller.signal);
       if (controller.signal.aborted) return;
       if (shouldApplyOrderRefresh(id, selectedIdRef.current, controller.signal.aborted)) setDetail(fresh);
@@ -436,7 +437,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         "已从 Mercado Libre 重新读取订单 " + id + " 的最新状态。退款金额与最终净回款仍需单独核账。");
       setPage((previous) => ({ ...previous, items: previous.items.map((record) =>
         record.order_id === fresh.order_id && orderRecordKey(record, scope) ===
-          orderRecordKey(fresh, target) ? { ...record, ...fresh } : record) }));
+          orderRecordKey(fresh, target)
+          ? { ...record, ...fresh, shipment: fresh.shipment && { ...fresh.shipment, details: undefined } }
+          : record) }));
     } catch (error) {
       if (!controller.signal.aborted) setDetailError(displayError(error));
     } finally {
@@ -980,6 +983,19 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   <dt>平台运单号</dt><dd>{detail.shipment?.tracking_number ? <button type="button" onClick={() => copy(detail.shipment?.tracking_number ?? "")}>{detail.shipment.tracking_number}　复制</button> : (detail.shipment ? "平台未提供" : "尚未读取")}</dd>
                   <dt>平台物流状态</dt><dd title={[detail.shipment?.status, detail.shipment?.substatus].filter(Boolean).join(" / ")}>
                     {shipmentStatusLabel(detail.shipment)}</dd>
+                  {detail.shipment?.first_mile_carrier && <><dt>首程承运商</dt><dd>{detail.shipment.first_mile_carrier}</dd></>}
+                  <dt>官方承运商</dt><dd>{detail.shipment?.details
+                    ? (detail.shipment.details.carrier_name || "平台未提供") : "尚未读取"}</dd>
+                  <dt>物流查询</dt><dd>{detail.shipment?.details
+                    ? (detail.shipment.details.tracking_url
+                      ? <a href={detail.shipment.details.tracking_url} target="_blank" rel="noopener noreferrer">打开官方查询链接</a>
+                      : "平台未提供") : "尚未读取"}</dd>
+                  <dt>官方实际发货</dt><dd>{detail.shipment?.shipped_at
+                    ? <time dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
+                    : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
+                  <dt>买家签收时间</dt><dd>{detail.shipment?.delivered_at
+                    ? <time dateTime={detail.shipment.delivered_at}>{orderDate(detail.shipment.delivered_at)}</time>
+                    : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
                   <dt>物流最近核验</dt><dd>{detail.shipment ? orderDate(detail.shipment.checked_at) : "尚未读取"}</dd>
                   {detail.shipment?.last_updated && <><dt>平台物流更新时间</dt><dd>{orderDate(detail.shipment.last_updated)}</dd></>}
                   <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).date}
@@ -990,6 +1006,17 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   disabled={!detail.shipment_id || refreshingOrder || running || Boolean(logisticsAction) || installingUpdate}
                   onClick={() => void refreshSelectedOrder("shipment")}>更新平台物流</button>
               </section>
+              {detail.shipment?.details && <section className="orders-detail-block">
+                <h3>官方物流时间轴</h3>
+                {detail.shipment.details.history?.length ? <ol className="orders-fulfillment-steps">
+                  {detail.shipment.details.history.map((event, index) => <li key={index}>
+                    <b>{shipmentStatusLabel(event)}</b>
+                    <small><time dateTime={event.date}>{orderDate(event.date)}</time> · {event.status}
+                      {event.substatus && " / " + event.substatus}</small>
+                  </li>)}
+                </ol> : <p className="orders-muted">{detail.shipment.details.history
+                  ? "平台暂无物流事件。" : "平台未提供物流历史。"}</p>}
+              </section>}
               <section className="orders-detail-block">
                 <div className="orders-detail-block-title">
                   <h3>采购</h3>
@@ -1013,8 +1040,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                     </li>
                     <li><b>国内快递运输</b><small>厂家发货及国内物流状态待接入</small></li>
                     <li><b>货代仓库签收</b><small>货代仓入库状态待接入</small></li>
-                    <li><b>官方物流扫描交接</b><small>{detail.shipment ? "平台状态：" + shipmentStatusLabel(detail.shipment) + "；交接扫描时间待核实" : "官方物流尚未读取"}</small></li>
-                    <li><b>海外买家签收</b><small>{detail.shipment?.status === "delivered" ? "平台确认已签收" : detail.shipment ? "平台状态：" + shipmentStatusLabel(detail.shipment) + "；尚无签收确认" : "官方物流尚未读取"}</small></li>
+                    <li><b>官方物流扫描交接</b><small>{detail.shipment?.shipped_at
+                      ? "官方发货：" + orderDate(detail.shipment.shipped_at)
+                      : (detail.shipment ? "平台状态：" + shipmentStatusLabel(detail.shipment) + "；交接扫描时间待核实" : "官方物流尚未读取")}</small></li>
+                    <li><b>海外买家签收</b><small>{detail.shipment?.status === "delivered"
+                      ? (detail.shipment.delivered_at ? orderDate(detail.shipment.delivered_at) : "平台确认已签收，未提供时间")
+                      : (detail.shipment ? "平台状态：" + shipmentStatusLabel(detail.shipment) + "；尚无签收确认" : "官方物流尚未读取")}</small></li>
                   </ol>
                   <span>货代仓签收、官方物流接收、买家签收是三个不同事件；当前没有实时状态数据时不显示为已完成。</span>
                 </div>

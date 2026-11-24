@@ -43,16 +43,34 @@ const order = { order_id: "102", status: "paid", order_items: [
   shipment_id: "87123456" };
 let slaFetchCount = 0;
 let shipmentFetchCount = 0;
+let shipmentDetailsCount = 0;
+const pendingShipmentDetails = [];
+const shipmentDetails = {
+  shipment_id: order.shipment_id, status: "delivered", tracking_number: "OFFICIAL-TRACK-102",
+  checked_at: "2026-11-24T04:00:00Z", first_mile_carrier: "Fixture first mile",
+  shipped_at: "2026-11-21T04:00:00Z", delivered_at: "2026-11-24T03:30:00Z",
+  details: { carrier_name: "Fixture official carrier", tracking_url: "https://example.invalid/track/102",
+    history: [{ status: "shipped", date: "2026-11-21T04:00:00Z" },
+      { status: "delivered", date: "2026-11-24T03:30:00Z" }] },
+};
 for (const [status, substatus, label] of [
   ["ready_to_ship", "printed", "待发货"], ["shipped", "", "已发货"], ["shipped", "in_transit", "运输中"],
   ["shipped", "out_for_delivery", "派送中"], ["delivered", "", "已签收"],
   ["cancelled", "", "物流已取消"], ["unknown_new", "", "未知状态"],
 ]) assert(shipmentStatusLabel({ status, substatus }) === label, "wrong official shipment label: " + status);
 window.fetch = (path, options) => {
-  const { pathname } = new URL(path, location.href);
+  const { pathname, searchParams } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
+  if (pathname.endsWith("/orders/200002/shipment")) {
+    assert(searchParams.get("details") === "1", "selected order must request detail mode");
+    return new Promise((resolve) => pendingShipmentDetails.push({ resolve, path, signal: options.signal }));
+  }
   if (pathname.endsWith("/orders/102/shipment")) {
     shipmentFetchCount++;
+    if (searchParams.get("details") === "1") {
+      shipmentDetailsCount++;
+      return Promise.resolve(Response.json({ ...order, shipment: shipmentDetails }));
+    }
     order.shipment = { shipment_id: order.shipment_id, status: "shipped", substatus: "in_transit",
       tracking_number: "OFFICIAL-TRACK-102", checked_at: new Date().toISOString() };
     return Promise.resolve(Response.json(order));
@@ -339,11 +357,26 @@ try {
   const shipmentButton = () => [...document.querySelectorAll(".orders-detail-block button")]
     .find((item) => item.textContent === "更新平台物流");
   await waitFor(() => shipmentButton() && !shipmentButton().disabled, "order shipment button unavailable");
+  assert(shipmentDetailsCount === 0 && shipmentFetchCount === 1,
+    "batch/automatic order opening must not load tracking details");
   flushSync(() => shipmentButton().click());
-  await waitFor(() => shipmentFetchCount === 2 &&
-    document.querySelector(".orders-detail-fields")?.textContent.includes("OFFICIAL-TRACK-102") &&
-    document.querySelector(".orders-detail-fields")?.textContent.includes("物流最近核验"),
-    "single-order shipment refresh did not show tracking and check time");
+  await waitFor(() => shipmentDetailsCount === 1 &&
+    document.querySelector(".orders-detail-fields time")?.dateTime === shipmentDetails.shipped_at &&
+    document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier"),
+    "single-order shipment refresh did not show carrier and dispatch time");
+  const detailsFields = document.querySelector(".orders-detail-fields");
+  assert(detailsFields.textContent.includes("OFFICIAL-TRACK-102") &&
+    detailsFields.textContent.includes("物流最近核验") &&
+    detailsFields.textContent.includes("首程承运商Fixture first mile") &&
+    [...detailsFields.querySelectorAll("time")].some(time => time.dateTime === shipmentDetails.delivered_at),
+    "tracking, first-mile carrier and exact receipt time must stay distinct");
+  assert(detailsFields.querySelector("a")?.href === shipmentDetails.details.tracking_url,
+    "official carrier tracking link is missing");
+  const timeline = [...document.querySelectorAll(".orders-detail-block h3")]
+    .find(item => item.textContent === "官方物流时间轴");
+  assert(timeline?.parentElement.querySelectorAll("time").length === 2 &&
+    !document.querySelector(".orders-shipping-refs").textContent.includes("Fixture official carrier"),
+    "timeline must be rendered inside the selected detail");
   flushSync(() => [...document.querySelectorAll(".orders-detail-refresh")][0].click());
   await waitFor(() => document.querySelector(".orders-detail-summary")?.textContent.includes("部分退款"),
     "manual order refresh did not display refunded state");
@@ -417,6 +450,30 @@ try {
     document.querySelector('[data-testid="purchase-target-scope"]')?.textContent.includes("巴西"),
     "purchase modal must identify second-store MLB target");
   secondStorePurchase.resolve(Response.json({ purchase: null }));
+  await waitFor(() => document.querySelector('button[aria-label="关闭采购关联"]:enabled'),
+    "second store purchase did not settle");
+  flushSync(() => document.querySelector('button[aria-label="关闭采购关联"]').click());
+  const openShipping = async (index) => {
+    flushSync(() => [...document.querySelectorAll(".orders-id")][index].click());
+    await waitFor(() => shipmentButton() && !shipmentButton().disabled, "scoped shipment button unavailable");
+    flushSync(() => shipmentButton().click());
+    await waitFor(() => pendingShipmentDetails.length === 1, "scoped shipment request missing");
+    return pendingShipmentDetails.shift();
+  };
+  const oldShipment = await openShipping(0);
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  const newShipment = await openShipping(1);
+  assert(oldShipment.signal.aborted && oldShipment.path.includes("/stores/one/") && newShipment.path.includes("/stores/two/"),
+    "same order ID across stores reused the wrong request or did not abort the old response");
+  newShipment.resolve(Response.json({ ...order, order_id: "200002", shipment: shipmentDetails }));
+  await waitFor(() => document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier"),
+    "new scoped shipment did not render");
+  oldShipment.resolve(Response.json({ ...order, order_id: "200002", shipment: {
+    ...shipmentDetails, details: { ...shipmentDetails.details, carrier_name: "Stale carrier" },
+  } }));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert(!document.querySelector(".orders-detail-fields")?.textContent.includes("Stale carrier"),
+    "delayed result escaped the store selection guard");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";

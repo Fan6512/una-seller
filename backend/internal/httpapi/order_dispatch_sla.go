@@ -25,11 +25,18 @@ func (a storeAPI) orderLogistics(w http.ResponseWriter, r *http.Request, store, 
 		return
 	}
 	scope := meli.OrderScope{Site: q.Get("site"), Logistic: q.Get("logistic_type")}
-	refresh := a.service.RefreshOrderDispatchSLA
-	if action == "shipment" {
-		refresh = a.service.RefreshOrderShipment
+	details, withDetails := q["details"]
+	if withDetails && (action != "shipment" || len(details) != 1 || details[0] != "1") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_invalid_request"})
+		return
 	}
-	result, err := refresh(r.Context(), owner, store, scope, orderID)
+	var result meli.OrderRecord
+	var err error
+	if action == "shipment" {
+		result, err = a.service.RefreshOrderShipment(r.Context(), owner, store, scope, orderID, withDetails)
+	} else {
+		result, err = a.service.RefreshOrderDispatchSLA(r.Context(), owner, store, scope, orderID)
+	}
 	if err == nil {
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -41,6 +48,8 @@ func (a storeAPI) orderLogistics(w http.ResponseWriter, r *http.Request, store, 
 		code, status = "order_shipment_missing", http.StatusNotFound
 	case errors.Is(err, meli.ErrOrderShipmentDenied):
 		code, status = "order_shipment_denied", http.StatusForbidden
+	case errors.Is(err, meli.ErrOrderShipmentChanged):
+		code, status = "order_shipment_changed", http.StatusConflict
 	case errors.Is(err, meli.ErrOrderSLANoShipment):
 		code, status = "order_sla_no_shipment", http.StatusNotFound
 	case errors.Is(err, meli.ErrOrderSLAInvalid):

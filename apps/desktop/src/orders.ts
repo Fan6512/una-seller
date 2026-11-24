@@ -20,8 +20,16 @@ export type OrderShipment = {
   substatus?: string;
   tracking_number?: string;
   logistic_type?: string;
+  first_mile_carrier?: string;
+  shipped_at?: string;
+  delivered_at?: string;
   last_updated?: string;
   checked_at: string;
+  details?: {
+    carrier_name?: string;
+    tracking_url?: string;
+    history: { status: string; substatus?: string; date: string }[] | null;
+  };
 };
 
 export type OrderRecord = {
@@ -96,6 +104,7 @@ const messages: Record<string, string> = {
   order_platform_unavailable: "美客多订单接口暂不可用，请核对店铺权限或稍后重试。",
   order_shipment_missing: "平台未找到该运单或订单尚无 Shipment ID。",
   order_shipment_denied: "平台拒绝读取物流，请核对店铺授权及物流权限。",
+  order_shipment_changed: "物流读取期间运单或物流状态已更新，请重试。",
   order_site_not_authorized: "当前站点或物流类型尚未通过店铺映射验证。",
   order_reauth_required: "店铺已断开或需要重新授权，历史缓存订单仍可在允许时查看。",
   order_refresh_unknown: "店铺授权续签结果待确认，请先到店铺管理检查。",
@@ -137,7 +146,7 @@ export function displayOrderStatus(order: OrderRecord) {
   return orderStatusLabel(order.status);
 }
 
-export function shipmentStatusLabel(shipment?: OrderShipment) {
+export function shipmentStatusLabel(shipment?: Pick<OrderShipment, "status" | "substatus">) {
   if (!shipment) return "尚未读取";
   const { status, substatus } = shipment;
   if (status === "shipped") {
@@ -236,11 +245,13 @@ export function getOrder(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
   return orderRead<OrderRecord>(pathWithTail(scope, id), signal);
 }
-export function refreshOrderLogistics(scope: OrderScope, id: string, action: "sla" | "shipment", signal?: AbortSignal) {
+export function refreshOrderLogistics(scope: OrderScope, id: string, action: "sla" | "shipment" | "shipmentDetails", signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
+  const query = new URLSearchParams({ site: scope.site, logistic_type: scope.logistic });
+  if (action === "shipmentDetails") query.set("details", "1");
   return storeRequest<OrderRecord>(
     "/api/v1/stores/" + encodeURIComponent(scope.storeId) + "/orders/" + encodeURIComponent(id) +
-      "/" + action + "?" + new URLSearchParams({ site: scope.site, logistic_type: scope.logistic }),
+      "/" + (action === "shipmentDetails" ? "shipment" : action) + "?" + query,
     "POST", signal ? AbortSignal.any([signal, AbortSignal.timeout(25_000)])
       : AbortSignal.timeout(25_000), false, undefined, orderErrorLabel);
 }
