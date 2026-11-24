@@ -14,6 +14,7 @@ import { flushSync } from "react-dom";
 import ListingFieldsEditor from "/src/ListingFieldsEditor.tsx";
 import PublishedListingEditor from "/src/PublishedListingEditor.tsx";
 import { initialListingFields, validateListingFields } from "/src/listingFields.ts";
+import { setSiteTitleMode } from "/src/titleModePreference.ts";
 
 const fields = [
   { id: "BRAND", name: "Brand", value_type: "string", tags: { required: true } },
@@ -205,7 +206,9 @@ try {
   assert(editor.titles.es === "é".repeat(59) + "!" && editor.category_id === "CBT2" &&
     editor.category_path === "Home / Other", "Spanish adoption modified the category or persisted decomposed text");
   await click(candidateTab, "英语 EN");
-  assert(!adoptTitle.disabled, "English title longer than 60 should only warn");
+  const englishAdoptTitle = await loaded("button", "采纳标题");
+  assert(englishAdoptTitle !== adoptTitle && !adoptTitle.isConnected, "candidate input group was reused across languages");
+  assert(!englishAdoptTitle.disabled, "English title longer than 60 should only warn");
   input((await loaded("label", "候选标题")).querySelector("textarea"), "Refined Glass Pitcher");
   const history = JSON.stringify(editor.category_attributes);
   let confirmed = false, dialogCount = 0;
@@ -257,6 +260,44 @@ try {
   await click("button", "采纳葡语详情");
   assert(editor.descriptions.pt === "Corpo de vidro\n\nPara uso doméstico." &&
     editor.description_translation.pt_source_digest === originalDigest, "Portuguese adoption lost its source");
+  // Switch while both the product editor and AI candidate are on Portuguese.
+  const editorTabs = '[aria-label="标题与详情语言"] button';
+  await click(editorTabs, "葡语 BR");
+  const oldTitle = document.querySelector(".listing-active-title textarea");
+  const oldDescription = document.querySelector('textarea[placeholder="填写纯文本商品描述"]');
+  oldDescription.focus();
+  const beforeModeSwitch = JSON.stringify(editor);
+  const beforeAIRequest = aiRequest;
+  flushSync(() => setSiteTitleMode("platform_auto"));
+  await loaded("legend", "英文商品详情");
+  assert(!document.querySelector('[aria-label="标题与详情语言"]') &&
+    !document.querySelector('[aria-label="候选文案语言"]') &&
+    ![...document.querySelectorAll("button")].some(node => node.textContent.includes("翻译详情至 MX/BR")),
+    "auto mode exposed language tabs or regional translation");
+  assert(!oldTitle.isConnected && !oldDescription.isConnected, "auto mode reused a regional input");
+  assert(document.querySelector(".listing-active-title textarea").value === editor.titles.en &&
+    document.querySelector('textarea[placeholder="填写纯文本商品描述"]').value === editor.descriptions.en,
+    "auto mode did not bind both fields to English");
+  assert(JSON.stringify(editor) === beforeModeSwitch && aiRequest === beforeAIRequest,
+    "mode switch changed saved fields or issued an AI request");
+  await loaded("label", "候选英文标题");
+  await loaded("label", "候选英文详情");
+  assert(![...document.querySelectorAll("label")].some(node =>
+    /候选西语详情|候选葡语详情/.test(node.textContent)), "auto mode exposed regional AI candidates");
+  input(document.querySelector('textarea[placeholder="填写纯文本商品描述"]'), "Auto-mode English draft.");
+  const before = JSON.parse(beforeModeSwitch);
+  assert(editor.descriptions.en === "Auto-mode English draft." &&
+    editor.descriptions.es === before.descriptions.es && editor.descriptions.pt === before.descriptions.pt &&
+    JSON.stringify(editor.titles) === JSON.stringify(before.titles),
+    "English-only description edit clobbered regional data or titles");
+  input(document.querySelector('textarea[placeholder="填写纯文本商品描述"]'), before.descriptions.en);
+  flushSync(() => setSiteTitleMode("localized"));
+  await click(editorTabs, "葡语 BR");
+  assert(document.querySelector(".listing-active-title textarea").value === before.titles.pt &&
+    document.querySelector('textarea[placeholder="填写纯文本商品描述"]').value === before.descriptions.pt &&
+    JSON.stringify(editor) === beforeModeSwitch, "localized mode failed to restore the regional fields");
+  await click(editorTabs, "英语 EN");
+  await loaded("button", "重新翻译详情至 MX/BR");
   flushSync(() => saveAccepted());
   input(document.querySelector('textarea[placeholder="填写纯文本商品描述"]'), "Revised English master.");
   await loaded("p", "西语详情可能已过期");
