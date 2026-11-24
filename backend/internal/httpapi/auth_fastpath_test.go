@@ -119,7 +119,7 @@ func TestFastAuthHS256PositiveCacheAndSensitiveBypass(t *testing.T) {
 		t.Fatalf("expired cache accepted: err=%v count=%d", err, remoteCount.Load())
 	}
 
-	// Expired and forged tokens are never admitted from the positive cache.
+	// Expired JWTs are rejected locally; changed HS256 tokens miss cache and are rejected by Auth.
 	expired := testClaims(srv.URL + "/auth/v1")
 	expired["exp"] = time.Now().Add(-time.Minute).Unix()
 	old := testToken(t, jwt.SigningMethodHS256, "legacy", []byte("private-signing-secret"), expired)
@@ -205,6 +205,16 @@ func TestFastAuthJWKSValidClaimsAndRotation(t *testing.T) {
 	if jwksHits.Load() != 1 || authHits.Load() != 0 {
 		t.Fatalf("unexpected requests jwks=%d auth=%d", jwksHits.Load(), authHits.Load())
 	}
+	// A small issuance clock skew is permitted, but larger drift is rejected.
+	skew := testClaims(srv.URL + "/auth/v1")
+	skew["iat"] = time.Now().Add(5 * time.Second).Unix()
+	if id, err := v.VerifyFast(context.Background(), testToken(t, jwt.SigningMethodES256, "key-1", key1, skew)); err != nil || id != fastTestUser {
+		t.Fatalf("5s future iat should be accepted: id=%q err=%v", id, err)
+	}
+	skew["iat"] = time.Now().Add(45 * time.Second).Unix()
+	if _, err := v.VerifyFast(context.Background(), testToken(t, jwt.SigningMethodES256, "key-1", key1, skew)); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("45s future iat should be rejected: %v", err)
+	}
 	bad := testClaims(srv.URL + "/auth/v1")
 	bad["aud"] = "service_role"
 	if _, err := v.VerifyFast(context.Background(), testToken(t, jwt.SigningMethodES256, "key-1", key1, bad)); !errors.Is(err, ErrInvalidSession) {
@@ -252,6 +262,89 @@ func TestFastAuthJWKSValidClaimsAndRotation(t *testing.T) {
 	}
 }
 
+
+func TestFastAuthJWKSEmptySetPreservesKeysAndRecovers(t *testing.T) {
+	key1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// JWK "alg" is optional; key type and curve determine the allowed method.
+	jwk1 := testECJWK("key-1", key1)
+	delete(jwk1, "alg")
+	jwk2 := testECJWK("key-2", key2)
+	delete(jwk2, "alg")
+
+	var phase atomic.Int32
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/v1/.well-known/jwks.json" {
+			http.NotFound(w, r)
+			return
+		}
+		hits.Add(1)
+		switch phase.Load() {
+		case 0:
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{jwk1}})
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{jwk1, jwk2}})
+		}
+	}))
+	defer srv.Close()
+	v, err := NewSupabaseVerifier(srv.URL, "sb_publishable_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := testClaims(srv.URL + "/auth/v1")
+	oldToken := testToken(t, jwt.SigningMethodES256, "key-1", key1, claims)
+	newToken := testToken(t, jwt.SigningMethodES256, "key-2", key2, claims)
+	if _, err := v.VerifyFast(context.Background(), oldToken); err != nil {
+		t.Fatalf("optional JWK alg rejected: %v", err)
+	}
+	v.fast.mu.Lock()
+	originalExpiry := v.fast.keysUntil
+	v.fast.lastJWKSFetch = time.Now().Add(-jwksMissRetryDelay - time.Second)
+	v.fast.mu.Unlock()
+
+	// Empty JWKS is an outage, not a valid key rotation. Preserve old keys.
+	phase.Store(1)
+	if _, err := v.VerifyFast(context.Background(), newToken); !errors.Is(err, ErrAuthUnavailable) {
+		t.Fatalf("empty JWKS should fail closed with service unavailable: %v", err)
+	}
+	if _, err := v.VerifyFast(context.Background(), oldToken); err != nil {
+		t.Fatalf("previously cached key was discarded: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := v.VerifyFast(context.Background(), newToken); !errors.Is(err, ErrAuthUnavailable) {
+			t.Fatalf("retry during backoff must fail closed: %v", err)
+		}
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("empty JWKS caused repeated fetches: %d, want 2", hits.Load())
+	}
+	v.fast.mu.Lock()
+	expiryUnchanged := v.fast.keysUntil.Equal(originalExpiry)
+	v.fast.jwksRetryAfter = time.Time{}
+	v.fast.lastJWKSFetch = time.Now().Add(-jwksMissRetryDelay - time.Second)
+	v.fast.mu.Unlock()
+	if !expiryUnchanged {
+		t.Fatal("empty JWKS incorrectly prolonged key cache lifetime")
+	}
+
+	phase.Store(2)
+	if id, err := v.VerifyFast(context.Background(), newToken); err != nil || id != fastTestUser {
+		t.Fatalf("valid JWKS after recovery: id=%q err=%v", id, err)
+	}
+	if hits.Load() != 3 {
+		t.Fatalf("JWKS retry after recovery: %d hits, want 3", hits.Load())
+	}
+}
+
 func TestFastAuthJWKSRS256(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -275,19 +368,26 @@ func TestFastAuthJWKSRS256(t *testing.T) {
 }
 
 func TestFastAuthJWKSOutageFailsClosed(t *testing.T) {
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	v, _ := NewSupabaseVerifier(srv.URL, "sb_publishable_test")
 	token := testToken(t, jwt.SigningMethodES256, "missing", key, testClaims(srv.URL+"/auth/v1"))
-	if _, err := v.VerifyFast(context.Background(), token); !errors.Is(err, ErrAuthUnavailable) {
-		t.Fatalf("JWKS outage must fail closed with 503: %v", err)
+	for i := 0; i < 3; i++ {
+		if _, err := v.VerifyFast(context.Background(), token); !errors.Is(err, ErrAuthUnavailable) {
+			t.Fatalf("JWKS outage must fail closed with 503: %v", err)
+		}
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("outage caused sequential JWKS request storm: %d, want 1", hits.Load())
 	}
 }
 
-func TestFastAuthNoPlainTokenLeakage(t *testing.T) {
+func TestFastAuthOversizedTokenRejected(t *testing.T) {
 	v, _ := NewSupabaseVerifier("https://example.com", "sb_publishable_test")
 	raw := strings.Repeat("x", maxAccessTokenSize+1)
 	if _, err := v.VerifyFast(context.Background(), raw); !errors.Is(err, ErrInvalidSession) {
