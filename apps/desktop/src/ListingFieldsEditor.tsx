@@ -5,6 +5,7 @@ import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTi
 import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion } from "./collections";
 import { useEffect, useRef, useState } from "react";
 import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute } from "./editorUx";
+import { useSiteTitleMode } from "./titleModePreference";
 
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean;aiProduct?:AICopyProduct;aiSaved?:Partial<ListingFields>};
 export default function ListingFieldsEditor({value,onChange,disabled=false,aiProduct,aiSaved}:Props) {
@@ -15,6 +16,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const predictionRequest = useRef<AbortController|null>(null);
   const [copyMessage,setCopyMessage]=useState("");
   const [activeLanguage,setActiveLanguage]=useState<"en"|"es"|"pt">("en");
+  const siteTitleMode=useSiteTitleMode();
+  const platformAuto=siteTitleMode==="platform_auto";
   const [imagePreview,setImagePreview]=useState<number|null>(null);
   const [editingImage,setEditingImage]=useState<number|null>(null);
   const [variantImageIndex,setVariantImageIndex]=useState<number|null>(null);
@@ -106,49 +109,76 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const updateVariant=(index:number,patch:Partial<ListingVariant>)=>{
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
   };
-  return <section className="listing-fields">
-    <fieldset className="listing-editor-panel">
-      <legend>多语言标题与描述</legend>
-      <div className="listing-language-tabs" role="group" aria-label="标题语言">
-        {languages.map(item=><button key={item.key} type="button"
-          aria-pressed={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
-          {item.label} <small>{listingTextCount(value.titles[item.key])}</small>
-        </button>)}
-      </div>
+  // These controls have separate identities across modes and languages so an
+  // already focused Spanish/Portuguese textarea cannot become the English input.
+  const renderTitle=(lang:"en"|"es"|"pt",label:string)=>{
+    const language=languages.find(item=>item.key===lang)!;
+    const count=listingTextCount(value.titles[lang]);
+    return <>
       <label className="listing-field listing-active-title">
-        <span>{selectedLanguage.full}</span>
-        <textarea rows={3} disabled={disabled}
-          value={value.titles[activeLanguage]}
-          onChange={e=>setLocalizedTitle(activeLanguage,e.target.value)}
+        <span>{label}</span>
+        <textarea key={siteTitleMode+":"+lang} rows={3} disabled={disabled}
+          value={value.titles[lang]}
+          onChange={e=>setLocalizedTitle(lang,e.target.value)}
           placeholder="填写商品标题"/>
       </label>
       <div className="localized-title-actions">
-        <small className={"localized-title-count "+(listingTextCount(value.titles[activeLanguage])>localizedTitleLimit?"title-over-limit":"")}>
-          {listingTextCount(value.titles[activeLanguage])} 字符（含空格及符号） · {selectedLanguage.target}
-          {activeLanguage==="en"&&listingTextCount(value.titles.en)>localizedTitleLimit?" · 已超过 60 字符":""}
+        <small className={"localized-title-count "+(count>localizedTitleLimit?"title-over-limit":"")}>
+          {count} 字符（含空格及符号） · {language.target}
+          {lang==="en"&&count>localizedTitleLimit?" · 已超过 60 字符":""}
         </small>
-        <button type="button" disabled={!value.titles[activeLanguage]} onClick={()=>void copyListingText(value.titles[activeLanguage],"标题")}>
-          复制{activeLanguage==="en"?"英文":activeLanguage==="es"?"西语":"葡语"}标题
+        <button type="button" disabled={!value.titles[lang]} onClick={()=>void copyListingText(value.titles[lang],"标题")}>
+          复制{lang==="en"?"英文":lang==="es"?"西语":"葡语"}标题
         </button>
       </div>
-      {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
-      {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
-      <label className="listing-field">{selectedLanguage.label}商品描述
-        <textarea rows={5} disabled={disabled} value={value.descriptions?.[activeLanguage]??""}
-          onChange={e=>setLocalizedDescription(activeLanguage,e.target.value)} placeholder="填写纯文本商品描述"/>
-        <small>{listingTextCount(value.descriptions?.[activeLanguage]??"")} / 20000 字符</small>
-      </label>
-      <div className="localized-title-actions">
-        <button type="button" disabled={!value.descriptions?.[activeLanguage]}
-          onClick={()=>void copyListingText(value.descriptions?.[activeLanguage]??"","详情")}>复制详情</button>
-      </div>
-    </fieldset>
-    {aiProduct&&<AICopyPanel product={aiProduct} value={value} saved={aiSaved} disabled={disabled} onAdoptPoints={points=>{
+    </>;
+  };
+  const languageTabs=<div className="listing-language-tabs" role="group"
+    aria-label="标题与详情语言">
+    {languages.map(item=><button key={item.key} type="button"
+      aria-pressed={activeLanguage===item.key} onClick={()=>setActiveLanguage(item.key)}>
+      {item.label} <small>{listingTextCount(value.titles[item.key])}</small>
+    </button>)}
+  </div>;
+  const renderDescription=(lang:"en"|"es"|"pt")=><>
+    <label className="listing-field">{languages.find(item=>item.key===lang)!.label}商品描述
+      <textarea key={siteTitleMode+":description:"+lang} rows={5} disabled={disabled} value={value.descriptions?.[lang]??""}
+        onChange={e=>setLocalizedDescription(lang,e.target.value)} placeholder="填写纯文本商品描述"/>
+      <small>{listingTextCount(value.descriptions?.[lang]??"")} / 20000 字符</small>
+    </label>
+    <div className="localized-title-actions">
+      <button type="button" disabled={!value.descriptions?.[lang]}
+        onClick={()=>void copyListingText(value.descriptions?.[lang]??"","详情")}>复制详情</button>
+    </div>
+  </>;
+  return <section className="listing-fields">
+    {platformAuto ? <>
+      <fieldset key="platform-auto-title" className="listing-editor-panel">
+        <legend>UP 英文主标题</legend>
+        <p className="listing-fields-note">平台自动生成模式：仅编辑英文标题和详情。已保存的西语、葡语标题与详情会原样保留。</p>
+        {renderTitle("en","英文主标题（UP Family Name 参考）")}
+        {!value.titles.en.trim()&&<p className="listing-fields-note">尚未填写英文主标题。未来使用 UP 自动生成模式刊登前须填写英文标题；现有工作稿仍可按原规则保存。</p>}
+      </fieldset>
+      <fieldset key="platform-auto-description" className="listing-editor-panel">
+        <legend>英文商品详情</legend>
+        {renderDescription("en")}
+      </fieldset>
+    </> : <fieldset key="localized-title-description" className="listing-editor-panel">
+      <legend>多语言标题与描述</legend>
+      <p className="listing-fields-note">自定义站点标题：分别编辑英文、西语和葡语；最终能否提交站点级标题取决于 CBT 账号与官方接口。</p>
+      {languageTabs}
+      {renderTitle(activeLanguage,selectedLanguage.full)}
+      {renderDescription(activeLanguage)}
+    </fieldset>}
+    {copyMessage&&<p className="listing-fields-note" role="status">{copyMessage}</p>}
+    {!chosenTitle&&<p className="listing-validation">至少需要一个语言标题，才能保存。</p>}
+    {aiProduct&&<AICopyPanel product={aiProduct} value={value} saved={aiSaved} disabled={disabled} englishOnly={platformAuto} onAdoptPoints={points=>{
       if(value.bullet_points.some(text=>text.trim()) &&
         JSON.stringify(value.bullet_points)!==JSON.stringify(points) &&
         !window.confirm("采纳 AI 卖点会替换当前全部商品卖点，是否继续？"))return;
       set("bullet_points",points);
     }} onAdopt={(field,lang,text,sourceDigest)=>{
+      if(platformAuto&&lang!=="en")return;
       if(field==="descriptions"){
         setLocalizedDescription(lang,text,sourceDigest);
         return;
