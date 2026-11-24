@@ -4,7 +4,7 @@ import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTitle } from "./listingFields";
 import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion, type CBTCategoryRules, type CBTAttributeRule } from "./collections";
 import { useEffect, useRef, useState } from "react";
-import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute } from "./editorUx";
+import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute, planSecondaryImageReuse } from "./editorUx";
 import { useSiteTitleMode } from "./titleModePreference";
 
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean;aiProduct?:AICopyProduct;aiSaved?:Partial<ListingFields>};
@@ -23,6 +23,10 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const [editingImage,setEditingImage]=useState<number|null>(null);
   const [variantImageIndex,setVariantImageIndex]=useState<number|null>(null);
   const [variantImageUrlDraft,setVariantImageUrlDraft]=useState("");
+  const [reuseMode,setReuseMode]=useState<"bulk"|"single"|null>(null);
+  const [reuseSource,setReuseSource]=useState("");
+  const [reuseTargets,setReuseTargets]=useState<number[]>([]);
+  const [reuseMessage,setReuseMessage]=useState("");
   useEffect(()=>()=>predictionRequest.current?.abort(),[]);
   const chosenTitle=preferredTitle(value.titles);
   const legacyPurchase = Boolean(value.purchase_price && value.purchase_currency !== "CNY");
@@ -117,6 +121,50 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const updateVariant=(index:number,patch:Partial<ListingVariant>)=>{
     set("variants",variants.map((v,i)=>i===index?{...v,...patch}:v));
   };
+  const variantLabel=(v:ListingVariant,i:number)=>"变体 "+(i+1)+" · "+(v.seller_sku||Object.values(v.attributes).filter(Boolean).join(" / ")||"未命名");
+  const beginReuse=(mode:"bulk"|"single",target?:number)=>{
+    const index=variants.findIndex((v,i)=>i!==target&&v.image_urls.length>1);
+    setReuseMode(mode);setReuseSource(index<0?"":String(index));
+    setReuseTargets(mode==="single"&&target!==undefined?[target]:variants.map((_,i)=>i).filter(i=>i!==index));
+    setReuseMessage("");
+  };
+  const applyReuse=()=>{
+    if(disabled||reuseSource==="")return;
+    const sourceIndex=Number(reuseSource);
+    const source=variants[sourceIndex];
+    if(!source)return;
+    const plans=new Map(reuseTargets.filter(i=>i!==sourceIndex&&variants[i]).map(i=>[i,planSecondaryImageReuse(source.image_urls,variants[i].image_urls)] as const));
+    const changed=[...plans].filter(([,p])=>p.changed);
+    if(changed.some(([i])=>variants[i].image_urls.length>1)&&!window.confirm("将覆盖 "+changed.filter(([i])=>variants[i].image_urls.length>1).length+" 个变体已有副图，保留主图。是否继续？"))return;
+    if(changed.length)set("variants",variants.map((v,i)=>plans.get(i)?.changed?{...v,image_urls:plans.get(i)!.urls}:v));
+    const skipped=[...plans].filter(([,p])=>p.error).map(([i,p])=>variantLabel(variants[i],i)+"："+p.error);
+    setReuseMessage("已更新 "+changed.length+" 个变体；未变更 "+(plans.size-changed.length)+" 个。"+(skipped.length?" "+skipped.join("；"):""));
+  };
+  const reusePanel=reuseMode&&<div className="listing-variant-image-picker" aria-label="复用副图">
+    <strong>{reuseMode==="bulk"?"批量复用副图":"复用副图"}</strong>
+    <label>来源变体
+      <select disabled={disabled} value={reuseSource} onChange={e=>{
+        setReuseSource(e.target.value);
+        if(reuseMode==="bulk")setReuseTargets(variants.map((_,i)=>i).filter(i=>String(i)!==e.target.value));
+        setReuseMessage("");
+      }}>
+        <option value="">请选择</option>
+        {variants.map((v,i)=>(reuseMode!=="single"||!reuseTargets.includes(i))&&<option key={i} value={i} disabled={v.image_urls.length<2}>{variantLabel(v,i)}（{Math.max(0,v.image_urls.length-1)} 张副图）</option>)}
+      </select>
+    </label>
+    {reuseMode==="bulk"&&<>
+      <button type="button" disabled={disabled} onClick={()=>setReuseTargets(variants.map((_,i)=>i).filter(i=>String(i)!==reuseSource))}>全选其他变体</button>
+      <button type="button" disabled={disabled} onClick={()=>setReuseTargets([])}>清空选择</button>
+      {variants.map((v,i)=>String(i)!==reuseSource&&<label key={i}>
+        <input type="checkbox" disabled={disabled} checked={reuseTargets.includes(i)} onChange={e=>setReuseTargets(old=>e.target.checked?[...old,i]:old.filter(x=>x!==i))}/>
+        {variantLabel(v,i)}{v.image_urls.length?"":"（尚无主图，将跳过）"}
+      </label>)}
+    </>}
+    <small>仅复用来源第 2 张起的副图，目标主图不变。</small>
+    <button type="button" disabled={disabled||reuseSource===""||!reuseTargets.some(i=>String(i)!==reuseSource)} onClick={applyReuse}>应用复用副图</button>
+    <button type="button" onClick={()=>{setReuseMode(null);setReuseMessage("");}}>关闭</button>
+    {reuseMessage&&<p role="status">{reuseMessage}</p>}
+  </div>;
   const setOfficialSpec=(index:number,rule:CBTAttributeRule,entered:string,valueId?:string,unitId?:string)=>{
     const variant=variants[index];
     const history=(variant.category_attributes??[]).filter(a=>a.category_id!==value.category_id||a.id!==rule.id);
@@ -310,6 +358,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       <legend>图片管理</legend>
       <div className="listing-gallery-toolbar">
         <strong>{images.length} 张图片</strong>
+        <button type="button" disabled={disabled||variants.length<2||!variants.some(v=>v.image_urls.length>1)} onClick={()=>beginReuse("bulk")}>批量复用副图</button>
         <button type="button" disabled={disabled||duplicateCount===0}
           onClick={()=>{set("images",removeDuplicateGalleryLinks(images));setImagePreview(null);setEditingImage(null);}}>
           清理重复链接 {duplicateCount>0?"("+duplicateCount+")":""}
@@ -319,6 +368,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           + 添加图片链接
         </button>
       </div>
+      {reuseMode==="bulk"&&reusePanel}
       <div className="listing-gallery-wall">
         {images.map((im,i)=><article className="listing-gallery-tile" key={i}>
           <button type="button" className="listing-gallery-thumb" onClick={()=>setImagePreview(i)}
@@ -419,7 +469,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
               onChange={e=>updateVariant(i,{target_net_proceeds_usd:e.target.value})} placeholder="USD"/></td>
             <td><small>{v.price? v.price+" "+(v.currency||"币种未确认"):"—"}</small></td>
             <td><button type="button" className="listing-variant-images-button" disabled={disabled}
-                onClick={()=>{setVariantImageIndex(variantImageIndex===i?null:i);setVariantImageUrlDraft("");}}>
+                onClick={()=>{setVariantImageIndex(variantImageIndex===i?null:i);setVariantImageUrlDraft("");setReuseMode(null);setReuseMessage("");}}>
                 选择图片 ({v.image_urls.length})
               </button>
               <div className="listing-variant-mini-images">
@@ -428,7 +478,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
             </td>
             <td><button type="button" disabled={disabled} onClick={()=>{
               set("variants",variants.filter((_,j)=>j!==i));
-              setVariantImageIndex(null);
+              setVariantImageIndex(null);setReuseMode(null);setReuseMessage("");
             }}>删除</button></td>
           </tr>)}</tbody>
         </table>
@@ -437,7 +487,21 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       {variantImageIndex!==null&&variants[variantImageIndex]&&<section className="listing-variant-image-picker" aria-label={"变体 "+(variantImageIndex+1)+" 图片选择"}>
         <div className="listing-variant-image-picker-head">
           <strong>变体 {variantImageIndex+1} · 选择图片</strong>
-          <button type="button" onClick={()=>setVariantImageIndex(null)}>完成</button>
+          <button type="button" disabled={disabled||!variants[variantImageIndex].image_urls.length||!variants.some((v,i)=>i!==variantImageIndex&&v.image_urls.length>1)}
+            onClick={()=>beginReuse("single",variantImageIndex)}>复用副图</button>
+          <button type="button" onClick={()=>{setVariantImageIndex(null);setReuseMode(null);setReuseMessage("");}}>完成</button>
+        </div>
+        {reuseMode==="single"&&reusePanel}
+        <div className="listing-variant-url-row">
+          <label>变体主图
+            <select disabled={disabled||variants[variantImageIndex].image_urls.length===0}
+              value={variants[variantImageIndex].image_urls[0]??""}
+              onChange={e=>updateVariant(variantImageIndex,{image_urls:[e.target.value,...variants[variantImageIndex].image_urls.filter(url=>url!==e.target.value)]})}>
+              {!variants[variantImageIndex].image_urls.length&&<option value="">请先选择图片</option>}
+              {variants[variantImageIndex].image_urls.map((url,i)=><option key={url} value={url}>已选图片 {i+1}{i===0?"（主图）":""}</option>)}
+            </select>
+          </label>
+          {variants[variantImageIndex].image_urls[0]&&<img width={64} height={64} style={{objectFit:"contain"}} src={variants[variantImageIndex].image_urls[0]} alt="当前变体主图" referrerPolicy="no-referrer"/>}
         </div>
         <div className="listing-variant-image-options">
           {Array.from(new Set([...images.map(im=>im.url),...variants[variantImageIndex].image_urls]))
