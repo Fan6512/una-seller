@@ -14,7 +14,7 @@ func (s *Service) RefreshOneOrder(ctx context.Context, owner, store string, scop
 	if !validUUID(store) || !orderScopeValid(scope) || !orderNumber(id) {
 		return OrderRecord{}, ErrOrderNotFound
 	}
-	if _, err := s.GetOrder(ctx, owner, store, scope, id); err != nil {
+	if _, err := s.GetOrderSummary(ctx, owner, store, scope, id); err != nil {
 		return OrderRecord{}, err
 	}
 	auth, childID, err := s.RequireSiteConnection(ctx, owner, store, scope.Site, scope.Logistic)

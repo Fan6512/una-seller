@@ -252,6 +252,7 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 	// Explicit negative current status must not inherit a prior delivered date.
 	for _, status := range []string{"not_delivered", "cancelled"} {
 		reply.Store(&response{code: http.StatusOK, body: delivered, carrierCode: http.StatusOK,
+			carrierBody: `{"name":"Official Carrier"}`,
 			historyBody: `[{"status":"delivered","date":"2026-11-19T09:30:00-03:00"}]`})
 		if restored, err := s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true); err != nil ||
 			restored.Shipment == nil || restored.Shipment.DeliveredAt == nil {
@@ -264,11 +265,30 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 			t.Fatalf("negative status inherited obsolete delivery date: %+v, %v", reversed.Shipment, err)
 		}
 		reply.Store(&response{code: http.StatusOK, body: body, carrierCode: http.StatusOK,
+			carrierBody: `{"name":"Official Carrier"}`,
 			historyBody: `[{"status":"delivered","date":"2026-11-19T09:30:00-03:00"}]`})
 		reversed, err = s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true)
 		if err != nil || reversed.Shipment == nil || reversed.Shipment.DeliveredAt != nil ||
-			reversed.Shipment.Details == nil || len(reversed.Shipment.Details.History) != 1 {
+			reversed.Shipment.Details == nil || reversed.Shipment.Details.CarrierName != "Official Carrier" ||
+			len(reversed.Shipment.Details.History) != 1 {
 			t.Fatalf("negative status reused historical date or erased history: %+v, %v", reversed.Shipment, err)
+		}
+		// An explicit official date is still a historical fact, even in a negative state.
+		explicit := fmt.Sprintf(`{"id":987651234,"status":%q,"last_updated":"2026-11-20T08:07:00-03:00",
+ "status_history":{"date_delivered":"2026-11-19T09:30:00-03:00"}}`, status)
+		reply.Store(&response{code: http.StatusOK, body: explicit, carrierCode: http.StatusOK,
+			carrierBody: `{"name":"Official Carrier"}`,
+			historyBody: `[{"status":"delivered","date":"2026-11-19T09:30:00-03:00"}]`})
+		confirmed, err := s.RefreshOrderShipment(ctx, owner, store, scope, "10001", true)
+		if err != nil || confirmed.Shipment == nil || confirmed.Shipment.Status != status ||
+			confirmed.Shipment.DeliveredAt == nil || !confirmed.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) {
+			t.Fatalf("negative status lost explicit official delivery date: %+v, %v", confirmed.Shipment, err)
+		}
+		confirmed, err = s.GetOrderSummary(ctx, owner, store, scope, "10001")
+		if err != nil || confirmed.Shipment == nil || confirmed.Shipment.Status != status ||
+			confirmed.Shipment.DeliveredAt == nil || !confirmed.Shipment.DeliveredAt.Equal(*shipment.DeliveredAt) ||
+			confirmed.Shipment.Details != nil {
+			t.Fatalf("cached summary lost explicit historical delivery date: %+v, %v", confirmed.Shipment, err)
 		}
 	}
 	// With no prior confirmed delivery date, a substatus alone cannot create one.
