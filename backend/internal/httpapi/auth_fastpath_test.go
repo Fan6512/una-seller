@@ -262,7 +262,6 @@ func TestFastAuthJWKSValidClaimsAndRotation(t *testing.T) {
 	}
 }
 
-
 func TestFastAuthJWKSEmptySetPreservesKeysAndRecovers(t *testing.T) {
 	key1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
