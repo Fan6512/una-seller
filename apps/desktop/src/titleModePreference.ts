@@ -1,37 +1,48 @@
 import { useSyncExternalStore } from "react";
 
-// UI-only preference. Never used as Mercado Libre publishing authorization;
-// no secret or product data is stored with this preference.
+// UI-only, device-local preference. Never publishing authorization.
 export type SiteTitleMode = "platform_auto" | "localized";
 const storageKey = "una-seller:site-title-mode:v1";
 const changeEvent = "una-seller:site-title-mode-changed";
 let fallback: SiteTitleMode = "localized";
+let memoryOnly = false;
 
 export function getSiteTitleMode(): SiteTitleMode {
+  if (memoryOnly) return fallback;
   try {
     const value = window.localStorage.getItem(storageKey);
-    return value === "platform_auto" || value === "localized" ? value : fallback;
+    fallback = value === "platform_auto" || value === "localized" ? value : "localized";
   } catch {
-    return fallback;
+    // Keep the last usable preference when storage is unavailable.
   }
+  return fallback;
 }
 
 export function setSiteTitleMode(mode: SiteTitleMode): void {
+  if (mode !== "platform_auto" && mode !== "localized") return;
   fallback = mode;
   try {
     window.localStorage.setItem(storageKey, mode);
+    memoryOnly = false;
   } catch {
-    // Client may block localStorage; keep this session usable in memory.
+    // A failed write must not let an older readable value undo this selection.
+    memoryOnly = true;
   }
   window.dispatchEvent(new Event(changeEvent));
 }
 
-function subscribeSiteTitleMode(listener: () => void): () => void {
+export function subscribeSiteTitleMode(listener: () => void): () => void {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== storageKey && event.key !== null) return;
+    if (event.storageArea && event.storageArea !== window.localStorage) return;
+    memoryOnly = false;
+    listener();
+  };
   window.addEventListener(changeEvent, listener);
-  window.addEventListener("storage", listener);
+  window.addEventListener("storage", onStorage);
   return () => {
     window.removeEventListener(changeEvent, listener);
-    window.removeEventListener("storage", listener);
+    window.removeEventListener("storage", onStorage);
   };
 }
 

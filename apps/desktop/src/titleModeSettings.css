@@ -22,7 +22,7 @@
   font-weight: 600;
   background: var(--ui-surface, #fff);
 }
-.title-mode-option:has(input:checked) {
+.title-mode-option.is-selected {
   border-color: var(--ui-accent, #275db4);
   background: var(--ui-elevated, #f2f5f9);
 }

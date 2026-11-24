@@ -1,4 +1,5 @@
 import { setSiteTitleMode, useSiteTitleMode } from "./titleModePreference";
+import "./accountSettings.css";
 import "./titleModeSettings.css";
 
 export default function TitleModeSettingsPage() {
@@ -11,13 +12,13 @@ export default function TitleModeSettingsPage() {
       <h2>站点标题处理方式</h2>
       <fieldset className="title-mode-options">
         <legend>选择编辑样式</legend>
-        <label className="title-mode-option">
+        <label className={"title-mode-option"+(mode === "platform_auto" ? " is-selected" : "")}>
           <input type="radio" name="site-title-mode" value="platform_auto"
             checked={mode === "platform_auto"} onChange={() => setSiteTitleMode("platform_auto")} />
           <span>UP 平台自动生成站点标题（只填写英文主标题）</span>
         </label>
         <p className="title-mode-option-note">商品编辑器仅显示英文 Family Name / 主标题输入；西语、葡语商品描述仍可编辑。</p>
-        <label className="title-mode-option">
+        <label className={"title-mode-option"+(mode === "localized" ? " is-selected" : "")}>
           <input type="radio" name="site-title-mode" value="localized"
             checked={mode === "localized"} onChange={() => setSiteTitleMode("localized")} />
           <span>自定义站点标题（英语 EN / 墨西哥西语 MX / 巴西葡语 BR）</span>

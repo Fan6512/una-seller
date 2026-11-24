@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { getSiteTitleMode, setSiteTitleMode, subscribeSiteTitleMode } from "../src/titleModePreference.ts";
 import { moveGalleryImage, removeDuplicateGalleryLinks, renameVariantAttribute, toggleVariantImage } from "../src/editorUx.ts";
 
 test("gallery reordering retains links and renormalizes the main image",()=>{
@@ -67,4 +69,69 @@ test("gallery can move an image directly to any position without mutating the so
     "https://cdn.example/1.jpg","https://cdn.example/2.jpg",
     "https://cdn.example/3.jpg","https://cdn.example/4.jpg",
   ]);
+});
+
+test("site title preference defaults safely, persists, survives a failed write, and syncs across windows",t=>{
+  const key="una-seller:site-title-mode:v1";
+  const values=new Map();
+  let failRead=false,failWrite=false;
+  const browser=new EventTarget();
+  browser.localStorage={
+    getItem(k){if(failRead)throw new Error("blocked");return values.get(k)??null;},
+    setItem(k,v){if(failWrite)throw new Error("quota");values.set(k,v);},
+  };
+  const previous=Object.getOwnPropertyDescriptor(globalThis,"window");
+  Object.defineProperty(globalThis,"window",{configurable:true,value:browser});
+  t.after(()=>{
+    if(previous)Object.defineProperty(globalThis,"window",previous);
+    else delete globalThis.window;
+  });
+  assert.equal(getSiteTitleMode(),"localized");
+  values.set(key,"invalid");
+  assert.equal(getSiteTitleMode(),"localized");
+  const observed=[];
+  const unsubscribe=subscribeSiteTitleMode(()=>observed.push(getSiteTitleMode()));
+  t.after(unsubscribe);
+  setSiteTitleMode("platform_auto");
+  assert.equal(values.get(key),"platform_auto");
+  assert.deepEqual(observed,["platform_auto"]);
+  failWrite=true;
+  setSiteTitleMode("localized");
+  assert.equal(values.get(key),"platform_auto");
+  assert.equal(getSiteTitleMode(),"localized");
+  failRead=true;
+  assert.equal(getSiteTitleMode(),"localized");
+  failRead=false;
+  failWrite=false;
+  const dispatchStorage=(changedKey,storageArea=browser.localStorage)=>{
+    const event=new Event("storage");
+    Object.defineProperties(event,{key:{value:changedKey},storageArea:{value:storageArea}});
+    browser.dispatchEvent(event);
+  };
+  dispatchStorage("unrelated");
+  assert.deepEqual(observed,["platform_auto","localized"]);
+  dispatchStorage(key);
+  assert.equal(getSiteTitleMode(),"platform_auto");
+  assert.deepEqual(observed,["platform_auto","localized","platform_auto"]);
+  values.delete(key);
+  dispatchStorage(null);
+  assert.equal(getSiteTitleMode(),"localized");
+  unsubscribe();
+  setSiteTitleMode("platform_auto");
+  assert.deepEqual(observed,["platform_auto","localized","platform_auto","localized"]);
+  setSiteTitleMode("localized");
+});
+
+test("auto title editor has an independent English field above description-only tabs",()=>{
+  const source=readFileSync(new URL("../src/ListingFieldsEditor.tsx",import.meta.url),"utf8");
+  const auto=source.slice(source.indexOf('<fieldset key="platform-auto-title"'),
+    source.indexOf('<fieldset key="localized-title-description"'));
+  const title=auto.indexOf('{renderTitle("en",');
+  const desc=auto.indexOf('<fieldset key="platform-auto-description"');
+  const tabs=auto.indexOf("{languageTabs}");
+  assert.ok(title>=0 && desc>title && tabs>desc);
+  assert.ok(auto.indexOf("{descriptionEditor}")>tabs);
+  assert.doesNotMatch(auto.slice(0,desc),/\{languageTabs\}|renderTitle\(activeLanguage/);
+  assert.match(source,/key=\{siteTitleMode\+":"\+lang\}/);
+  assert.match(source,/renderTitle\(activeLanguage,selectedLanguage.full\)/);
 });
