@@ -35,6 +35,9 @@ var ownProductsSQL string
 //go:embed 0009_listing_editor_fields.sql
 var listingEditorFieldsSQL string
 
+//go:embed 0010_order_shipment_snapshot.sql
+var orderShipmentSnapshotSQL string
+
 //go:embed 0011_user_service_credentials.sql
 var userServiceCredentialsSQL string
 
@@ -83,6 +86,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, listingEditorFieldsSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply listing editor fields schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, orderShipmentSnapshotSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply order shipment snapshot schema: %w", err)
 	}
 	_, err = conn.Conn().PgConn().Exec(ctx, userServiceCredentialsSQL).ReadAll()
 	if err != nil {

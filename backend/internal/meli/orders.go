@@ -57,21 +57,22 @@ type OrderLine struct {
 }
 
 type OrderRecord struct {
-	ID                     string      `json:"order_id"`
-	PackID                 string      `json:"pack_id,omitempty"`
-	Status                 string      `json:"status"`
-	CurrencyID             string      `json:"currency_id"`
-	TotalAmount            string      `json:"total_amount"`
-	DateCreated            time.Time   `json:"date_created"`
-	LastUpdated            time.Time   `json:"last_updated"`
-	ShipmentID             string      `json:"shipment_id,omitempty"`
-	Items                  []OrderLine `json:"order_items"`
-	PurchaseOrderID        string      `json:"purchase_order_id,omitempty"`
-	PurchaseCostCNY        *string     `json:"purchase_cost_cny,omitempty"`
-	PurchaseTrackingNumber string      `json:"purchase_tracking_number,omitempty"`
-	DispatchDeadline       *time.Time  `json:"dispatch_deadline,omitempty"`
-	DispatchSLAStatus      string      `json:"dispatch_sla_status,omitempty"`
-	DispatchCheckedAt      *time.Time  `json:"dispatch_checked_at,omitempty"`
+	ID                     string         `json:"order_id"`
+	PackID                 string         `json:"pack_id,omitempty"`
+	Status                 string         `json:"status"`
+	CurrencyID             string         `json:"currency_id"`
+	TotalAmount            string         `json:"total_amount"`
+	DateCreated            time.Time      `json:"date_created"`
+	LastUpdated            time.Time      `json:"last_updated"`
+	ShipmentID             string         `json:"shipment_id,omitempty"`
+	Shipment               *OrderShipment `json:"shipment,omitempty"`
+	Items                  []OrderLine    `json:"order_items"`
+	PurchaseOrderID        string         `json:"purchase_order_id,omitempty"`
+	PurchaseCostCNY        *string        `json:"purchase_cost_cny,omitempty"`
+	PurchaseTrackingNumber string         `json:"purchase_tracking_number,omitempty"`
+	DispatchDeadline       *time.Time     `json:"dispatch_deadline,omitempty"`
+	DispatchSLAStatus      string         `json:"dispatch_sla_status,omitempty"`
+	DispatchCheckedAt      *time.Time     `json:"dispatch_checked_at,omitempty"`
 }
 
 type OrderPage struct {
@@ -579,6 +580,7 @@ ON CONFLICT (store_id,site_id,logistic_type,seller_id,order_id) DO UPDATE
 SET pack_id=EXCLUDED.pack_id,status=EXCLUDED.status,currency_id=EXCLUDED.currency_id,
 total_amount=EXCLUDED.total_amount,date_created=EXCLUDED.date_created,
 last_updated=EXCLUDED.last_updated,shipment_id=EXCLUDED.shipment_id,
+shipment_snapshot=CASE WHEN meli_orders.shipment_id=EXCLUDED.shipment_id THEN meli_orders.shipment_snapshot END,
 order_items=EXCLUDED.order_items,updated_at=now()
 WHERE app.meli_orders.last_updated<=EXCLUDED.last_updated`,
 			store, scope.Site, scope.Logistic, childSeller, rec.ID, rec.PackID, rec.Status,
@@ -783,9 +785,9 @@ func (s *Service) authorizeOrderRead(ctx context.Context, owner, store string, s
 }
 
 // Recheck the current mapping in the same statement that reads cached orders.
-// Shared 15-column projection used by both local and cross-store cached order reads.
+// Shared projection used by both local and cross-store cached order reads.
 // Keep scanOrder's destinations in this same column order.
-const orderColumns = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
+const orderColumnsBase = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
  trim_scale(o.total_amount)::text,o.date_created,o.last_updated,COALESCE(o.shipment_id,''),
  COALESCE((
    SELECT jsonb_agg(line.value ||
@@ -806,10 +808,15 @@ const orderColumns = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
  COALESCE(p.purchase_order_id,''),
  CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
  COALESCE(p.purchase_tracking_number,''),
- COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at`
+ COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at,`
 
-const orderSelect = `WITH connection AS (` + orderConnection + `)
- SELECT ` + orderColumns + `
+// List and cross-store search never return the potentially large history array.
+const orderColumns = orderColumnsBase + ` CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id THEN o.shipment_snapshot-'details' END`
+const orderDetailColumns = orderColumnsBase + ` CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id THEN o.shipment_snapshot END`
+
+const orderSelectPrefix = `WITH connection AS (` + orderConnection + `)
+ SELECT `
+const orderSelectFrom = `
  FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  LEFT JOIN app.meli_order_purchases p
@@ -821,6 +828,9 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
    AND sla.shipment_id=o.shipment_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4`
 
+const orderSelect = orderSelectPrefix + orderColumns + orderSelectFrom
+const orderDetailSelect = orderSelectPrefix + orderDetailColumns + orderSelectFrom
+
 func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	var o OrderRecord
 	var items []byte
@@ -828,7 +838,7 @@ func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	var deadline, checked sql.NullTime
 	destinations := []any{&o.ID, &o.PackID, &o.Status, &o.CurrencyID, &o.TotalAmount,
 		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost,
-		&o.PurchaseTrackingNumber, &o.DispatchSLAStatus, &deadline, &checked}
+		&o.PurchaseTrackingNumber, &o.DispatchSLAStatus, &deadline, &checked, &o.Shipment}
 	err := rows.Scan(append(destinations, extra...)...)
 	if deadline.Valid {
 		o.DispatchDeadline = &deadline.Time
@@ -904,13 +914,29 @@ func (s *Service) ListOrders(ctx context.Context, owner, store string,
 
 func (s *Service) GetOrder(ctx context.Context, owner, store string,
 	scope OrderScope, id string) (OrderRecord, error) {
+	return s.getOrder(ctx, owner, store, scope, id, true)
+}
+
+// GetOrderSummary reads the same scoped cached order without shipment details.
+// Use for non-detail consumers such as title translation and image refresh.
+func (s *Service) GetOrderSummary(ctx context.Context, owner, store string,
+	scope OrderScope, id string) (OrderRecord, error) {
+	return s.getOrder(ctx, owner, store, scope, id, false)
+}
+
+func (s *Service) getOrder(ctx context.Context, owner, store string,
+	scope OrderScope, id string, withDetails bool) (OrderRecord, error) {
 	if !orderScopeValid(scope) || !orderNumber(id) {
 		return OrderRecord{}, ErrOrderNotFound
 	}
 	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
 		return OrderRecord{}, err
 	}
-	rows, err := s.db.Query(ctx, orderSelect+` AND o.order_id=$5 LIMIT 1`,
+	query := orderSelect
+	if withDetails {
+		query = orderDetailSelect
+	}
+	rows, err := s.db.Query(ctx, query+` AND o.order_id=$5 LIMIT 1`,
 		store, owner, scope.Site, scope.Logistic, id)
 	if err != nil {
 		return OrderRecord{}, err
