@@ -148,3 +148,19 @@ test("AI copy UI hides regional candidates and translation in English-only mode"
   assert.match(source,/!englishOnly && <button[^>]+!savedEnglish\.trim\(\)/);
   assert.match(source,/!englishOnly && language !== "en" && regional/);
 });
+
+test("workbench keeps one editable selling-points area at the bottom and preserves historical descriptions",()=>{
+  const source=readFileSync(new URL("../src/ListingFieldsEditor.tsx",import.meta.url),"utf8");
+  assert.doesNotMatch(source,/卖点与分类属性|采购成本（人民币 CNY）/);
+  assert.match(source,/<legend>附加属性<\/legend>/);
+  assert.equal((source.match(/<legend>商品卖点<\/legend>/g)||[]).length,1);
+  assert.equal((source.match(/value=\{\(value\.bullet_points\?\?\[\]\)\.join/g)||[]).length,1);
+  assert.ok(source.indexOf("<legend>商品卖点</legend>")>source.indexOf("<legend>变体 SKU</legend>"));
+  assert.match(source,/set\("bullet_points",points\)/);
+  const own=readFileSync(new URL("../src/OwnProductsPage.tsx",import.meta.url),"utf8");
+  assert.doesNotMatch(own,/旧版商品描述（历史参考，非默认刊登）/);
+  assert.match(own,/description:p\.description/);
+  assert.match(own,/updateOwnProduct\(product\.id,\{\.\.\.fields,revision:product\.revision\}/);
+  const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
+  assert.match(app,/product\.own_product_id && product\.bullet_points\.length > 0/);
+});
