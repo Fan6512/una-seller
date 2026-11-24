@@ -94,6 +94,10 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
     charge.detail_id !== shipping.seller_charge_detail_id) ?? [];
   const otherGroups = billing?.charge_groups?.filter(group => !shipping?.seller_charge_detail_id ||
     group.type !== "CHARGE" || group.subtype !== "CCSI" || group.currency !== "USD") ?? [];
+  // The upstream subtotal includes the shipping debit shown above. Do not
+  // silently hide other debits in that same group or subtract rounded values.
+  const hasAdditionalShippingCharges = Boolean(shipping?.seller_charge_detail_id && otherCharges.some(charge =>
+    charge.type === "CHARGE" && charge.subtype === "CCSI" && charge.currency === "USD"));
 
   return <section className="orders-detail-block" aria-label="订单账单与利润">
     <div className="orders-detail-block-title">
@@ -129,7 +133,8 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
           <dd>{group.currency === "USD" ? signedUSD(group.original_total) : "USD 待核实"}</dd>
         </div>)}
       </dl>}
-      {(otherCharges.length > 0 || billing.taxes.length > 0) && <details>
+      {hasAdditionalShippingCharges && <p className="orders-muted">其他同类物流扣项逐项展示；原小计包含上方已展示的运费，不再显示混合小计。</p>}
+      {(otherCharges.length > 0 || billing.taxes.length > 0) && <details open={hasAdditionalShippingCharges || undefined}>
         <summary>查看官方项目</summary>
         <ul>{otherCharges.map((charge, index) => <li key={charge.detail_id ?? "charge-" + index}>
           {[charge.description, charge.type, charge.subtype, charge.status].filter(Boolean).join(" · ")}
