@@ -228,7 +228,7 @@ func TestCollectionSaveVariantImageBatchFailureRollsBack(t *testing.T) {
 	if got.Title != "Before variant overflow" || len(got.Images) != 1 || got.Images[0].URL != "https://example.com/main-original.jpg" {
 		t.Fatalf("variant batch failure did not roll back product/main images: %+v", got)
 	}
-	if len(got.Variants) != 1 || got.Variants[0].Price == nil || *got.Variants[0].Price != "1.00" || len(got.Variants[0].ImageURLs) != 1 || got.Variants[0].ImageURLs[0] != "https://example.com/variant-original.jpg" {
+	if len(got.Variants) != 1 || got.Variants[0].Price == nil || *got.Variants[0].Price != "1.0000" || len(got.Variants[0].ImageURLs) != 1 || got.Variants[0].ImageURLs[0] != "https://example.com/variant-original.jpg" {
 		t.Fatalf("variant batch failure did not roll back variant and images: %+v", got.Variants)
 	}
 }
