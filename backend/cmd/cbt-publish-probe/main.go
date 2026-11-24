@@ -29,6 +29,8 @@ var (
 
 type accountEvidence struct {
 	SiteID            string                `json:"site_id"`
+	PublicationMode   string                `json:"publication_mode"`
+	ModeEvidenceLevel string                `json:"mode_evidence_level"`
 	UserProductSeller string                `json:"user_product_seller"`
 	GlobalSeller      string                `json:"global_seller"`
 	WarehouseAccess   string                `json:"warehouse_management"`
@@ -121,7 +123,49 @@ func probe(client *http.Client, base, token string) (accountEvidence, error) {
 			UserProduct:   capabilityStatus(entry.UserProduct),
 		})
 	}
+	result.PublicationMode = inferPublicationMode(result)
+	result.ModeEvidenceLevel = "c0_read_only_not_publish_approved"
 	return result, nil
+}
+
+// inferPublicationMode is a conservative suggestion for Una Seller routing,
+// not evidence of API write access. Legacy eligibility cannot be proven
+// solely from an absent User Product tag.
+func inferPublicationMode(e accountEvidence) string {
+	if e.SellAllowed != "enabled" || len(e.Marketplaces) == 0 {
+		return "undetermined"
+	}
+	managed := false
+	unknown := false
+	userProductDisabled := false
+	userProductEnabled := false
+	for _, site := range e.Marketplaces {
+		if site.BusinessModel == "CBT CN Fulfillment Managed" {
+			managed = true
+		} else if strings.HasPrefix(site.BusinessModel, "unrecognized") {
+			unknown = true
+		}
+		if site.UserProduct == "disabled" {
+			userProductDisabled = true
+		} else if site.UserProduct == "enabled" {
+			userProductEnabled = true
+		}
+	}
+	// Official Fully Managed guidance identifies the whole CBT seller when
+	// ANY child marketplace has the precise managed business_model.
+	if managed {
+		return "fully_managed"
+	}
+	if unknown {
+		return "undetermined"
+	}
+	if e.UserProductSeller == "present" && !userProductDisabled {
+		return "standard_up"
+	}
+	if e.UserProductSeller == "absent" && !userProductEnabled {
+		return "legacy_candidate"
+	}
+	return "undetermined"
 }
 
 func capabilityStatus(enabled *bool) string {

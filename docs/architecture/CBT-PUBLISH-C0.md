@@ -15,6 +15,19 @@
 | 图片 | 官方上传是 `POST /pictures/items/upload`，用 multipart 字段 `file` 取得官方图片 ID。UP 创建用 `pictures[].id`。格式与大小按官方规则及目标类目确认。 [图片] [User Products] | `UNVERIFIED` · 获批账号上传权限、处理状态、图片 ID 的复用范围。 |
 | 预检与错误 | `GET /categories/{id}`、`GET /categories/{id}/attributes`、`GET /marketplace/users/cap` 可检查类目、属性和站点额度。全托管文档把 `POST /global/items/validate` 标为仅 staging。发布验证错误含 `error`、`status`、`cause[]`，各 cause 可带 `cause_id/type/code/references/message`。公开示例显示顶层 200 可同时含成功和失败的 `site_items[]`。 [验证] [Legacy] [全托管] [站点结果] | `UNVERIFIED` · 获批测试环境中可用的无创建副作用预检端点、匹配当前账号的错误样本。 |
 
+## C0 模式识别与店铺映射边界（2026-11-24）
+
+探针现会在脱敏 JSON 中输出 `publication_mode` 与 `mode_evidence_level`，供后续 UNA Seller 店铺模式配置使用：
+
+- `fully_managed`：任何获准子站点明确返回 `business_model = "CBT CN Fulfillment Managed"`，且主账号允许销售。
+- `standard_up`：主账号启用 `user_product_seller`，没有全托管指示、没有矛盾的子站点 UP 标记，且账号允许销售。
+- `legacy_candidate`：账号没有 UP 标签，也未返回已启用的子站点 UP；**仅是待确认的旧版候选，不能据此使用 Legacy POST**。
+- `undetermined`：标签缺失、业务模式未知或矛盾、账号销售状态不明等；必须人工确认，不能按默认模型发布。
+
+`mode_evidence_level = c0_read_only_not_publish_approved` 始终表明只是发布模型只读识别，**不等于具备创建或图片上传权限**。模式名称只用于 UNA Seller 内部适配，绝不修改 Mercado Libre 官方账号类别。没有真实账号脱敏输出前，不得将当前已连接店铺设成任何确定模式。
+
+实际执行必须在持有有效授权、可安全刷新 OAuth Token 的受控环境中进行；不得读取 Supabase 存放的加密 Token 并尝试绕过 Go 解密，也不得把 Token 发到 GitHub Issues、聊天或日志。完成真实三次 GET 后，以官方证据将店铺按 `publication_mode` 分类，并额外核对官方可写接口权限；后续店铺模式持久化和客户端展示在独立小型 Draft PR 中实施，未经实证不提前写入生产数据库。
+
 ## 负责人只读验证
 
 在获批的 CBT 测试账号环境运行。PowerShell 7，从仓库根目录构建到本地临时目录，使用 Go 1.26。
