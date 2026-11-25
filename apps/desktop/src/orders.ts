@@ -313,6 +313,15 @@ export function refreshOneOrder(scope: OrderScope, id: string, signal?: AbortSig
     signal ? AbortSignal.any([signal, AbortSignal.timeout(25_000)]) : AbortSignal.timeout(25_000),
     false, undefined, orderErrorLabel);
 }
+export async function listShipmentRefreshCandidates(scope: OrderScope, signal?: AbortSignal) {
+  const result = await orderRead<{order_ids:string[];has_more:boolean}>(pathWithTail(scope, "shipment-refresh-candidates"), signal);
+  if (!Array.isArray(result.order_ids) || result.order_ids.length > 10 ||
+      result.order_ids.some(id => typeof id !== "string" || !/^\d{1,30}$/.test(id)) ||
+      new Set(result.order_ids).size !== result.order_ids.length || typeof result.has_more !== "boolean") {
+    throw new Error("待更新物流订单列表无效");
+  }
+  return result;
+}
 export function getOrderSyncState(scope: OrderScope, signal?: AbortSignal) {
   return orderRead<OrderSyncState>(pathWithTail(scope, "sync-state"), signal);
 }

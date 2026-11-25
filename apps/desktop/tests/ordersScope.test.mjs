@@ -51,6 +51,10 @@ let slaFetchCount = 0;
 let billingFetches = 0;
 let billingRateLimited = false;
 let shipmentFetchCount = 0;
+let dueShipmentIDs = [];
+let dueReads = 0;
+let shipmentRateLimited = false;
+let refreshPaid = false;
 let shipmentDetailsCount = 0;
 let cachedShipmentDetails;
 const pendingShipmentDetails = [];
@@ -78,8 +82,13 @@ window.fetch = (path, options) => {
     assert(searchParams.get("details") === "1", "selected order must request detail mode");
     return new Promise((resolve) => pendingShipmentDetails.push({ resolve, path, signal: options.signal }));
   }
+  if (pathname.endsWith("/orders/shipment-refresh-candidates")) {
+    dueReads++;
+    return Promise.resolve(Response.json({order_ids:dueShipmentIDs,has_more:false}));
+  }
   if (pathname.endsWith("/orders/102/shipment")) {
     shipmentFetchCount++;
+    if(shipmentRateLimited)return Promise.resolve(Response.json({error:"order_rate_limited"},{status:429}));
     if (searchParams.get("details") === "1") {
       shipmentDetailsCount++;
       cachedShipmentDetails = shipmentDetails;
@@ -130,7 +139,7 @@ window.fetch = (path, options) => {
   }
   if (pathname.endsWith("/orders/102/refresh")) {
     if (pauseOrderRefresh) return new Promise(resolve => pausedRefreshes.push(resolve));
-    order.status = "partially_refunded";
+    order.status = refreshPaid ? "paid" : "partially_refunded";
     return Promise.resolve(Response.json(order));
   }
   if (pathname.endsWith("/orders/search")) {
@@ -395,7 +404,19 @@ try {
   await waitFor(() => slaFetchCount === 1 &&
     document.querySelector(".orders-dispatch")?.textContent.includes("剩余"),
     "manual SLA refresh did not update list");
-  assert(shipmentFetchCount === 0, "logistics refresh must be manual");
+  assert(shipmentFetchCount === 0, "opening/listing must not trigger logistics refresh");
+  // Even a zero-new-order sync must refresh the server-selected stale shipment.
+  dueShipmentIDs=["102"]; order.shipment={shipment_id:order.shipment_id,status:"ready_to_ship",substatus:"printed",checked_at:"2026-11-24T00:00:00Z"};
+  const beforeDue=dueReads;
+  (await start()).resolve(Response.json({...progress,saved:0,has_more:false}));
+  await waitFor(()=>dueReads===beforeDue+1&&shipmentFetchCount===1&&document.querySelector(".orders-status")?.textContent.includes("运输中"),"zero-new-order sync failed to refresh stale logistics");
+  assert(shipmentDetailsCount===0,"sync must not read full history");
+  dueShipmentIDs=["102","999"]; shipmentRateLimited=true;
+  (await start()).resolve(Response.json({...progress,saved:0,has_more:false}));
+  await waitFor(()=>document.querySelector(".orders-notice")?.textContent.includes("已停止")&&shipmentFetchCount===2,"rate limit did not stop sync logistics pass");
+  assert(document.querySelector(".orders-notice").textContent.includes("未更新 2 笔"),"partial logistics result not reported");
+  dueShipmentIDs=[]; shipmentRateLimited=false;
+  shipmentFetchCount=0;
   const batchShipment = [...document.querySelectorAll(".orders-tabs button")]
     .find((item) => item.textContent === "更新本页物流");
   flushSync(() => batchShipment.click());
@@ -408,7 +429,7 @@ try {
   flushSync(() => stateFilter("运输中").click());
   await waitFor(() => statusReads.at(-1) === "fulfillment_in_transit" && document.querySelectorAll(".orders-id").length === 1,
     "server transport filter did not select the expected order");
-  const transportReads = statusReads.length;
+  let transportReads = statusReads.length;
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "real order detail modal did not open after purchase modal closed");
@@ -417,6 +438,12 @@ try {
   await waitFor(() => shipmentButton() && !shipmentButton().disabled, "order shipment button unavailable");
   assert(shipmentDetailsCount === 0 && shipmentFetchCount === 1,
     "batch/automatic order opening must not load tracking details");
+  refreshPaid=true;
+  flushSync(()=>document.querySelector(".orders-detail-refresh").click());
+  await waitFor(()=>shipmentFetchCount===2&&!document.querySelector(".orders-detail-refresh").disabled,"single order status refresh did not read shipment summary");
+  assert(shipmentDetailsCount===0,"single combined refresh must not read history");
+  refreshPaid=false;
+  transportReads=statusReads.length;
   flushSync(() => shipmentButton().click());
   await waitFor(() => shipmentDetailsCount === 1 &&
     document.querySelector(".orders-detail-fields time")?.dateTime === shipmentDetails.shipped_at &&

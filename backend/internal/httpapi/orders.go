@@ -88,6 +88,13 @@ func (a storeAPI) orders(w http.ResponseWriter, r *http.Request, store, tail str
 			writeJSON(w, http.StatusOK, result)
 			return
 		}
+	case tail == "shipment-refresh-candidates" && r.Method == http.MethodGet:
+		var candidates meli.ShipmentRefreshCandidates
+		candidates, err = a.service.ListShipmentRefreshCandidates(r.Context(), owner, store, scope)
+		if err == nil {
+			writeJSON(w, http.StatusOK, candidates)
+			return
+		}
 	case tail == "sync-state" && r.Method == http.MethodGet:
 		var state meli.OrderSyncState
 		state, err = a.service.GetOrderSyncState(r.Context(), owner, store, scope)
