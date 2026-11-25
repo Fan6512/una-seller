@@ -7,7 +7,7 @@
 - 订单通知只将 resource 里的订单 ID 用作官方 GET 提示，读取 `/marketplace/orders/{id}`；不将 pack_id 当作订单 ID。保留 pack 关联。
 - [官方订单文档](https://global-selling.mercadolibre.com/devsite/manage-orders-cbt)。
 - [官方货件文档](https://global-selling.mercadolibre.com/devsite/en_us/validations-cbt/manage-shipments) 说明新版货件资源不再保证 order_id；货件先到时调用 `GET /shipments/{id}/orders`，要求 `X-New-Domain: true`，再逐一回读订单。货件详情继续使用 `/marketplace/shipments/{id}` 与 `x-format-new: true`。
-- 本轮根据官方文档索引与现有接口实现；实际 CBT 权限、字段变体、混合卖家货件及新版关联接口未做真实取证。
+- 2026-11-25 生产实测：货件仍返回 `order_id`/`external_reference`，但没有 `site_id`、`sender_id` 为 0；`/shipments/{id}/orders` 对该应用返回 401。实现改为关联接口优先、单个 `order_id` 兜底，详见「真实 CBT 只读取证」。多订单货件与真实权限范围仍未取证。
 
 ## 数据与执行边界
 
