@@ -41,3 +41,20 @@ export function renameVariantAttribute(
   return Object.fromEntries(Object.entries(attributes).map(([key, value]) =>
     key === oldKey ? [newKey, value] : [key, value]));
 }
+
+export function planSecondaryImageReuse(source: readonly string[], target: readonly string[]): { urls: string[]; error?: string; changed: boolean } {
+  const valid = (url: string | undefined) => Boolean(url && /^https:\/\/[^\s]+$/i.test(url) && url.length <= 2000);
+  const unchanged = (error: string) => ({ urls: [...target], error, changed: false });
+  if (!valid(target[0])) return unchanged("目标变体尚未设置有效主图");
+  if (!valid(source[0]) || source.length < 2 || source.slice(1).some(url => !valid(url))) return unchanged("来源变体没有有效副图");
+  const seen = new Set([target[0], source[0]]);
+  const urls = [target[0]];
+  for (const url of source.slice(1)) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  if (urls.length === 1) return unchanged("没有可复用的不同副图");
+  if (urls.length > 30) return unchanged("超过变体 30 张图片上限");
+  return { urls, changed: urls.length !== target.length || urls.some((url, i) => url !== target[i]) };
+}

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { getSiteTitleMode, setSiteTitleMode, subscribeSiteTitleMode } from "../src/titleModePreference.ts";
-import { moveGalleryImage, removeDuplicateGalleryLinks, renameVariantAttribute, toggleVariantImage } from "../src/editorUx.ts";
+import { moveGalleryImage, removeDuplicateGalleryLinks, renameVariantAttribute, toggleVariantImage, planSecondaryImageReuse } from "../src/editorUx.ts";
 
 test("gallery reordering retains links and renormalizes the main image",()=>{
   const original=[
@@ -147,4 +147,43 @@ test("AI copy UI hides regional candidates and translation in English-only mode"
   assert.match(source,/!englishOnly && <div className="listing-language-tabs"/);
   assert.match(source,/!englishOnly && <button[^>]+!savedEnglish\.trim\(\)/);
   assert.match(source,/!englishOnly && language !== "en" && regional/);
+});
+
+test("workbench keeps one editable selling-points area at the bottom and preserves historical descriptions",()=>{
+  const source=readFileSync(new URL("../src/ListingFieldsEditor.tsx",import.meta.url),"utf8");
+  assert.doesNotMatch(source,/卖点与分类属性|采购成本（人民币 CNY）/);
+  assert.match(source,/<legend>附加属性<\/legend>/);
+  assert.equal((source.match(/<legend>商品卖点<\/legend>/g)||[]).length,1);
+  assert.equal((source.match(/value=\{\(value\.bullet_points\?\?\[\]\)\.join/g)||[]).length,1);
+  assert.ok(source.indexOf("<legend>商品卖点</legend>")>source.indexOf("<legend>变体 SKU</legend>"));
+  assert.match(source,/set\("bullet_points",points\)/);
+  const own=readFileSync(new URL("../src/OwnProductsPage.tsx",import.meta.url),"utf8");
+  assert.doesNotMatch(own,/旧版商品描述（历史参考，非默认刊登）/);
+  assert.match(own,/legacyDescriptionOversize&&<details/);
+  assert.match(own,/清空超长历史描述/);
+  assert.match(own,/window\.confirm\("确认清空超长历史描述/);
+  assert.match(own,/description:p\.description/);
+  assert.match(own,/updateOwnProduct\(product\.id,\{\.\.\.fields,revision:product\.revision\}/);
+  const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
+  assert.match(app,/product\.own_product_id && product\.bullet_points\.length > 0/);
+});
+
+test("secondary reuse preserves target main, copies order, deduplicates, and leaves input untouched",()=>{
+  const source=["https://cdn.example/black","https://cdn.example/b","https://cdn.example/c","https://cdn.example/b","https://cdn.example/white"];
+  const target=["https://cdn.example/white","https://cdn.example/old"];
+  const plan=planSecondaryImageReuse(source,target);
+  assert.deepEqual(plan,{urls:[target[0],source[1],source[2]],changed:true});
+  assert.deepEqual(target,["https://cdn.example/white","https://cdn.example/old"]);
+  assert.equal(source.length,5);
+  assert.equal(planSecondaryImageReuse(source,plan.urls).changed,false);
+  assert.notEqual(planSecondaryImageReuse(source,target).urls,plan.urls);
+});
+test("secondary reuse skips missing main, invalid and empty source without deleting existing pictures",()=>{
+  const target=["https://cdn.example/a","https://cdn.example/b"];
+  for(const source of [[],["https://cdn.example/a"],["https://cdn.example/a","http://bad.example/a"],["https://cdn.example/a","https://cdn.example/a"]]){
+    const plan=planSecondaryImageReuse(source,target);
+    assert.ok(plan.error);assert.deepEqual(plan.urls,target);assert.equal(plan.changed,false);
+  }
+  assert.ok(planSecondaryImageReuse(target,[]).error);
+  assert.ok(planSecondaryImageReuse(["https://cdn.example/a",...Array.from({length:30},(_,i)=>"https://cdn.example/"+i)],target).error);
 });

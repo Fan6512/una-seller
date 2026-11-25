@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -84,6 +86,7 @@ type ListingFields struct {
 	GTIN                   string                      `json:"gtin"`
 	PurchasePrice          string                      `json:"purchase_price"`
 	PurchaseCurrency       string                      `json:"purchase_currency"`
+	TargetNetProceedsUSD   *string                     `json:"target_net_proceeds_usd,omitempty"`
 	WeightG                string                      `json:"weight_g"`
 	LengthCM               string                      `json:"length_cm"`
 	WidthCM                string                      `json:"width_cm"`
@@ -110,11 +113,14 @@ type ListingCategoryAttribute struct {
 var listingCategoryAttributeID = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,79}$`)
 
 type ListingVariant struct {
-	SellerSKU  string            `json:"seller_sku"`
-	Attributes map[string]string `json:"attributes"`
-	Price      string            `json:"price"`
-	Currency   string            `json:"currency"`
-	ImageURLs  []string          `json:"image_urls"`
+	SellerSKU            string                      `json:"seller_sku"`
+	Attributes           map[string]string           `json:"attributes"`
+	Price                string                      `json:"price"`
+	Currency             string                      `json:"currency"`
+	ImageURLs            []string                    `json:"image_urls"`
+	PurchaseCostCNY      *string                     `json:"purchase_cost_cny,omitempty"`
+	TargetNetProceedsUSD *string                     `json:"target_net_proceeds_usd,omitempty"`
+	CategoryAttributes   *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
 }
 
 func allNumeric(value string) bool {
@@ -134,6 +140,10 @@ func listingMoney(value string) bool {
 		return true
 	}
 	return moneyPattern.MatchString(value)
+}
+
+func optionalListingMoney(value *string) bool {
+	return value == nil || listingMoney(*value)
 }
 func listingDecimal(value string, max float64, integer bool) bool {
 	if value == "" {
@@ -177,13 +187,148 @@ func (f ListingFields) normalizedCopy() *ListingFields {
 }
 
 func (f ListingFields) needsPrevious() bool {
-	return f.Descriptions != nil || f.Titles.NFC().exceedsRegionalLimits()
+	return f.Descriptions != nil || f.Titles.NFC().exceedsRegionalLimits() ||
+		(f.Variants != nil && slices.ContainsFunc(*f.Variants, ListingVariant.omitsWorkbenchFields))
+}
+
+func (v ListingVariant) omitsWorkbenchFields() bool {
+	return v.PurchaseCostCNY == nil || v.TargetNetProceedsUSD == nil || v.CategoryAttributes == nil
+}
+
+// Old clients have no immutable variant identity or workbench metadata fields.
+// Reject ambiguous legacy edits explicitly instead of guessing financial ownership.
+var ErrVariantUpgradeRequired = errors.New("请升级支持新版变体编辑的客户端，再修改变体 SKU、规格或删除替换变体；本次未保存")
+
+func (v ListingVariant) hasWorkbenchFields() bool {
+	return (v.PurchaseCostCNY != nil && *v.PurchaseCostCNY != "") ||
+		(v.TargetNetProceedsUSD != nil && *v.TargetNetProceedsUSD != "") ||
+		(v.CategoryAttributes != nil && len(*v.CategoryAttributes) > 0)
+}
+
+func sameLegacyVariant(a, b ListingVariant) bool {
+	return a.SellerSKU == b.SellerSKU && maps.Equal(a.Attributes, b.Attributes) &&
+		a.Price == b.Price && a.Currency == b.Currency && slices.Equal(a.ImageURLs, b.ImageURLs)
+}
+
+// Reordering unchanged legacy projections is safe even without a unique SKU.
+// Compare a multiset, not array positions; each old row can be consumed once.
+func sameLegacySKUGroup(current, previous []ListingVariant, sku string) bool {
+	used := make([]bool, len(previous))
+	for _, v := range current {
+		if v.SellerSKU != sku {
+			continue
+		}
+		found := false
+		for j, old := range previous {
+			if !used[j] && sameLegacyVariant(v, old) {
+				used[j], found = true, true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	for j, old := range previous {
+		if old.SellerSKU == sku && !used[j] {
+			return false
+		}
+	}
+	return true
+}
+
+func preserveVariantFields(current, previous []ListingVariant) ([]ListingVariant, error) {
+	original := current
+	current = slices.Clone(current)
+	if !slices.ContainsFunc(previous, ListingVariant.hasWorkbenchFields) {
+		return current, nil
+	}
+	oldCounts, newCounts := make(map[string]int), make(map[string]int)
+	for _, row := range previous {
+		oldCounts[row.SellerSKU]++
+	}
+	for _, row := range current {
+		newCounts[row.SellerSKU]++
+	}
+	// A unique named SKU plus unchanged attributes allows ordinary price/image
+	// edits. Otherwise require the entire same-SKU group to be an unchanged
+	// multiset, and each full legacy projection to identify exactly one row.
+	// Indistinguishable duplicates still require an explicit modern payload.
+	unchangedGroups := make(map[string]bool)
+	used := make([]bool, len(previous))
+	for i, v := range current {
+		if !v.omitsWorkbenchFields() {
+			continue
+		}
+		uniqueSKU := v.SellerSKU != "" && oldCounts[v.SellerSKU] == 1 && newCounts[v.SellerSKU] == 1
+		if !uniqueSKU {
+			unchanged, checked := unchangedGroups[v.SellerSKU]
+			if !checked {
+				unchanged = sameLegacySKUGroup(current, previous, v.SellerSKU)
+				unchangedGroups[v.SellerSKU] = unchanged
+			}
+			if !unchanged {
+				return nil, ErrVariantUpgradeRequired
+			}
+		}
+		candidate, count := -1, 0
+		for j, old := range previous {
+			match := sameLegacyVariant(v, old)
+			if uniqueSKU {
+				match = v.SellerSKU == old.SellerSKU && maps.Equal(v.Attributes, old.Attributes)
+			}
+			if match {
+				candidate, count = j, count+1
+			}
+		}
+		if count != 1 || used[candidate] {
+			return nil, ErrVariantUpgradeRequired
+		}
+		old := previous[candidate]
+		used[candidate] = true
+		if current[i].PurchaseCostCNY == nil {
+			current[i].PurchaseCostCNY = old.PurchaseCostCNY
+		}
+		if current[i].TargetNetProceedsUSD == nil {
+			current[i].TargetNetProceedsUSD = old.TargetNetProceedsUSD
+		}
+		if current[i].CategoryAttributes == nil {
+			current[i].CategoryAttributes = old.CategoryAttributes
+		}
+	}
+	// A mixed legacy/explicit array must not silently delete protected rows.
+	// Match remaining protected rows to originally explicit rows one-to-one;
+	// a single explicit row cannot stand for multiple historical rows.
+	explicitUsed := make([]bool, len(current))
+	for j, old := range previous {
+		if used[j] || !old.hasWorkbenchFields() {
+			continue
+		}
+		found := false
+		for i, v := range current {
+			if !explicitUsed[i] && !original[i].omitsWorkbenchFields() && sameLegacyVariant(v, old) {
+				explicitUsed[i], found = true, true
+				break
+			}
+		}
+		if !found {
+			return nil, ErrVariantUpgradeRequired
+		}
+	}
+	return current, nil
 }
 
 func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, error) {
 	next := f.normalizedCopy()
 	if err := next.Titles.validateRegionalLimits(previous.Titles.NFC()); err != nil {
 		return nil, err
+	}
+	if next.Variants != nil && previous.Variants != nil && slices.ContainsFunc(*next.Variants, ListingVariant.omitsWorkbenchFields) {
+		variants, err := preserveVariantFields(*next.Variants, *previous.Variants)
+		if err != nil {
+			return nil, err
+		}
+		next.Variants = &variants
 	}
 	if next.Descriptions == nil {
 		if next.DescriptionTranslation != nil {
@@ -246,7 +391,7 @@ func (f ListingFields) Validate() error {
 		!validListingText(f.CategoryPath, 400) || !validListingText(f.Brand, 120) ||
 		!validListingText(f.Model, 120) || !validListingText(f.SellerSKU, 120) ||
 		!validListingText(f.GTIN, 50) ||
-		!listingMoney(f.PurchasePrice) ||
+		!listingMoney(f.PurchasePrice) || !optionalListingMoney(f.TargetNetProceedsUSD) ||
 		!listingDecimal(f.WeightG, 1000000, true) ||
 		!listingDecimal(f.LengthCM, 10000, false) ||
 		!listingDecimal(f.WidthCM, 10000, false) ||
@@ -282,19 +427,8 @@ func (f ListingFields) Validate() error {
 		}
 	}
 	if f.CategoryAttributes != nil {
-		if len(*f.CategoryAttributes) > 180 {
-			return errors.New("too many category attribute fields")
-		}
-		seen := make(map[[2]string]bool)
-		for _, field := range *f.CategoryAttributes {
-			key := [2]string{field.CategoryID, field.ID}
-			if !strings.HasPrefix(field.CategoryID, "CBT") || !allNumeric(strings.TrimPrefix(field.CategoryID, "CBT")) ||
-				!listingCategoryAttributeID.MatchString(field.ID) || seen[key] ||
-				!validListingText(field.Value, 500) || !validListingText(field.ValueID, 80) ||
-				!validListingText(field.UnitID, 80) || (field.ValueID != "" && strings.TrimSpace(field.Value) == "") {
-				return errors.New("invalid category attribute field")
-			}
-			seen[key] = true
+		if err := validateListingCategoryAttributes(*f.CategoryAttributes, 180); err != nil {
+			return err
 		}
 	}
 	if f.Images != nil {
@@ -313,7 +447,7 @@ func (f ListingFields) Validate() error {
 		}
 		for _, v := range *f.Variants {
 			if !validListingText(v.SellerSKU, 120) || len(v.Attributes) > 12 ||
-				!listingMoney(v.Price) || (v.Currency != "" && !currencyPattern.MatchString(v.Currency)) ||
+				!listingMoney(v.Price) || !optionalListingMoney(v.PurchaseCostCNY) || !optionalListingMoney(v.TargetNetProceedsUSD) || (v.Currency != "" && !currencyPattern.MatchString(v.Currency)) ||
 				len(v.ImageURLs) > 30 {
 				return errors.New("invalid variant fields")
 			}
@@ -322,12 +456,35 @@ func (f ListingFields) Validate() error {
 					return errors.New("invalid variant attribute")
 				}
 			}
+			if v.CategoryAttributes != nil {
+				if err := validateListingCategoryAttributes(*v.CategoryAttributes, 12); err != nil {
+					return err
+				}
+			}
 			for _, u := range v.ImageURLs {
 				if !validImageURL(u) {
 					return errors.New("invalid variant image")
 				}
 			}
 		}
+	}
+	return nil
+}
+
+func validateListingCategoryAttributes(fields []ListingCategoryAttribute, limit int) error {
+	if len(fields) > limit {
+		return errors.New("too many category attribute fields")
+	}
+	seen := make(map[[2]string]bool)
+	for _, field := range fields {
+		key := [2]string{field.CategoryID, field.ID}
+		if !strings.HasPrefix(field.CategoryID, "CBT") || !allNumeric(strings.TrimPrefix(field.CategoryID, "CBT")) ||
+			!listingCategoryAttributeID.MatchString(field.ID) || seen[key] ||
+			!validListingText(field.Value, 500) || !validListingText(field.ValueID, 80) ||
+			!validListingText(field.UnitID, 80) || (field.ValueID != "" && strings.TrimSpace(field.Value) == "") {
+			return errors.New("invalid category attribute field")
+		}
+		seen[key] = true
 	}
 	return nil
 }

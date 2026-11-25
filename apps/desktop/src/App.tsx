@@ -199,7 +199,7 @@ function ProductDetail({ product, onDelete, deleting, deleteError, onDraftDirtyC
         </section>
       )}
 
-      {product.bullet_points.length > 0 && (
+      {product.own_product_id && product.bullet_points.length > 0 && (
         <section className="detail-section">
           <h3>商品卖点 <span className="section-count">{product.bullet_points.length}</span></h3>
           <ol className="bullet-list">{product.bullet_points.map((text, index) => <li key={index}>{text}</li>)}</ol>

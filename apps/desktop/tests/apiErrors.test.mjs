@@ -23,3 +23,9 @@ test("HTML or oversized remote errors cannot replace bounded fallback",async()=>
   const tooLong=await readAPIError(new Response(JSON.stringify({error:"x".repeat(1000)}),{status:500}),"服务器失败");
   assert.equal(tooLong.message,"服务器失败");
 });
+
+test("variant upgrade rejection gives actionable guidance through shared API errors",async()=>{
+  const result=await readAPIError(new Response(JSON.stringify({code:"VARIANT_CLIENT_UPGRADE_REQUIRED"}),{status:422}),"HTTP 422");
+  assert.equal(result.code,"VARIANT_CLIENT_UPGRADE_REQUIRED");
+  assert.match(result.message,/复制未保存的修改.*升级.*本次未写入/);
+});

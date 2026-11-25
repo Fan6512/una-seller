@@ -21,7 +21,8 @@ const pkg=JSON.parse(files.packageJSON);
 const lock=JSON.parse(files.npmLock);
 const tauri=JSON.parse(files.tauri);
 const cargoVersion=/^version = "([^"]+)"$/m.exec(files.cargo)?.[1];
-const cargoLockVersion=/\[\[package\]\]\nname = "una-seller"\nversion = "([^"]+)"/.exec(files.cargoLock)?.[1];
+const cargoLockEntries=[...files.cargoLock.matchAll(/\[\[package\]\]\r?\nname = "una-seller"\r?\nversion = "([^"]+)"/g)];
+const cargoLockVersion=cargoLockEntries[0]?.[1];
 const versions=[pkg.version,lock.version,lock.packages[""].version,tauri.version,cargoVersion,cargoLockVersion];
 const versionFormat=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 if(!versions.every(x=>x===versions[0]&&versionFormat.test(x)&&x.endsWith(".0")))
@@ -51,9 +52,9 @@ const changeJSON=(original,keys)=>{
   return JSON.stringify(copy,null,2)+"\n";
 };
 const cargoName=files.cargo.replace(/^version = "[^"]+"$/m, 'version = "'+target+'"');
-const oldLock='[[package]]\nname = "una-seller"\nversion = "'+current+'"';
-if(files.cargoLock.split(oldLock).length!==2)throw new Error("Cargo.lock project package not unique");
-const cargoLocked=files.cargoLock.replace(oldLock,'[[package]]\nname = "una-seller"\nversion = "'+target+'"');
+if(cargoLockEntries.length!==1)throw new Error("Cargo.lock project package not unique");
+const oldLock=cargoLockEntries[0][0];
+const cargoLocked=files.cargoLock.replace(oldLock,oldLock.replace(/version = "[^"]+"$/,'version = "'+target+'"'));
 const edits={
   packageJSON:changeJSON(files.packageJSON,[["version"]]),
   npmLock:changeJSON(files.npmLock,[["version"],["packages","","version"]]),

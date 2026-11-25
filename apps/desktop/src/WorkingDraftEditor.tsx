@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import ListingFieldsEditor from "./ListingFieldsEditor";
 import { initialListingFields, listingTextCount, preferredTitle, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
-import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
+import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, isVariantUpgradeRequired, saveWorkingDraft, type WorkingDraftInput } from "./collections";
 
 type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes"> & {listing_fields: ListingFields};
 type LoadState = "loading" | "ready" | "error";
@@ -114,6 +114,8 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
           ? "商品已在另一窗口转入产品箱，原工作稿停止编辑。请先复制当前修改，再到「工作台 → 产品箱」编辑商品。"
           : isDraftConflict(e)
           ? "工作稿已被其他窗口或上一次提交修改（409），本次没有覆盖服务器内容。请复制需要保留的文本，再重新加载。"
+          : isVariantUpgradeRequired(e)
+            ? "旧版变体编辑无法安全保存，请先复制未保存的修改，再升级支持新版变体字段的客户端。本次未写入。"
           : isDraftRejected(e)
             ? "服务器拒绝保存（请求格式或长度不符合要求），内容没有写入。请修改后重新保存。"
             : (e instanceof Error ? e.message : "保存失败") + "。保存状态未确认，请重新加载后再试。");

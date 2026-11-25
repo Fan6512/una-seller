@@ -98,7 +98,8 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
       if(productSaveNeedsReadback(code))setUnknown(true);
     } finally {setSaving(false);}
   };
-  const validation = count(fields.description) > 20000 ? "商品描述不能超过 20000 字符"
+  const legacyDescriptionOversize = count(fields.description) > 20000;
+  const validation = legacyDescriptionOversize ? "历史描述超过 20000 字符，请先在下方处理历史数据"
     : count(fields.notes) > 5000 ? "整理备注不能超过 5000 字符"
     : listingTextCount(fields.title) > 500 ? "商品标题不能超过 500 字符"
     : validateListingFields(fields.listing_fields, product?.listing_fields.titles);
@@ -151,8 +152,15 @@ export default function OwnProductsPage({ onDirtyChange }: { onDirtyChange?: (di
             <ListingFieldsEditor key={product.id} value={fields.listing_fields} disabled={saving||unknown}
               aiProduct={{own_product_id:product.id,expected_revision:product.revision}} aiSaved={product.listing_fields}
               onChange={listing_fields=>setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}))}/>
-            <label>旧版商品描述（历史参考，非默认刊登）<textarea rows={8} value={fields.description} onChange={e=>setFields(v=>({...v,description:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.description)} / 20000</small></label>
-            <label>内部整理备注<textarea rows={4} value={fields.notes} onChange={e=>setFields(v=>({...v,notes:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.notes)} / 5000</small></label>
+            {legacyDescriptionOversize&&<details className="listing-fields-note">
+               <summary>历史描述过长 · 查看及处理（非刊登描述）</summary>
+               <textarea readOnly rows={4} value={fields.description} aria-label="超长历史描述，只读"/>
+               <p>请先复制需要保留的历史文本。清空仅修改本地工作稿，保存后才写入；正常历史描述不会显示或被删除。</p>
+               <button type="button" disabled={saving||unknown} onClick={()=>{
+                 if(window.confirm("确认清空超长历史描述？正式多语言商品描述不受影响。"))setFields(v=>({...v,description:""}));
+               }}>清空超长历史描述</button>
+             </details>}
+             <label>内部整理备注<textarea rows={4} value={fields.notes} onChange={e=>setFields(v=>({...v,notes:e.target.value}))} disabled={saving||unknown}/><small>{count(fields.notes)} / 5000</small></label>
             {validation && <p className="working-draft-error" role="alert">{validation}</p>}
             <div className="own-editor-actions">
               <span>{dirty?"有未保存修改":"内容已保存"} · 修订 {product.revision}</span>

@@ -153,3 +153,38 @@ test("optional localized descriptions round-trip independently as multiline plai
   assert.match(validateListingFields(fields), /20000/);
   assert.equal(stored.pt.length, 40000);
 });
+
+test("target amounts and official variant fields round-trip without changing source price",()=>{
+  const f=initialListingFields(null,undefined,"Glass jar");
+  assert.equal(f.target_net_proceeds_usd,"");
+  f.category_id="CBT123";
+  f.target_net_proceeds_usd="8.25";
+  f.variants=[{seller_sku:"BK",attributes:{},price:"89.90",currency:"BRL",purchase_cost_cny:"20.125",target_net_proceeds_usd:"9.00",image_urls:[],
+    category_attributes:[{category_id:"CBT123",id:"COLOR",value_id:"1",value:"Black"}]}];
+  assert.equal(validateListingFields(f),"");
+  const reload=initialListingFields(JSON.parse(JSON.stringify(f)));
+  assert.equal(reload.variants[0].price,"89.90");
+  assert.equal(reload.variants[0].currency,"BRL");
+  assert.equal(reload.variants[0].target_net_proceeds_usd,"9.00");
+  assert.equal(reload.variants[0].category_attributes[0].value_id,"1");
+  reload.category_id="";
+  assert.equal(validateListingFields(reload),"","changing category must retain historical official-only variants");
+  reload.variants[0].category_attributes[0].value="White";
+  assert.equal(f.variants[0].category_attributes[0].value,"Black");
+  reload.variants[0].purchase_cost_cny="12.12345";
+  assert.match(validateListingFields(reload),/变体/);
+  reload.variants[0].purchase_cost_cny="";
+  reload.target_net_proceeds_usd="-1";
+  assert.match(validateListingFields(reload),/净收益/);
+});
+
+test("old JSONB variants with null image arrays load with explicit clearable workbench fields", () => {
+  const fields = initialListingFields({
+    variants: [{ seller_sku: "SKU", attributes: { Color: "Black" }, price: "", currency: "", image_urls: null }],
+  }, undefined, "Historical glass jar");
+  assert.deepEqual(fields.variants[0].image_urls, []);
+  assert.deepEqual(fields.variants[0].category_attributes, []);
+  assert.equal(fields.variants[0].purchase_cost_cny, "");
+  assert.equal(fields.variants[0].target_net_proceeds_usd, "");
+  assert.equal(validateListingFields(fields), "");
+});
