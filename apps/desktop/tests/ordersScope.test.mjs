@@ -108,7 +108,7 @@ window.fetch = (path, options) => {
     const q = new URL(path, location.href).searchParams;
     assert(q.get("site") === "MLB" && q.get("logistic_type") === "remote", "billing used the wrong scope");
     assert(JSON.parse(options.body).order_ids.join(",") === "102", "billing requested the wrong order");
-    if (billingRateLimited) return Promise.resolve(Response.json({ error: "order_rate_limited" }, { status: 429 }));
+    if (billingRateLimited) return Promise.resolve(Response.json({ error: "order_rate_limited" }, { status: 429, headers:{"Retry-After":"120"} }));
     return Promise.resolve(Response.json({ net_income_usd: null, items: [{ order_id: "102", available: true,
       payments: [{ status: "approved", money_release_status: "pending" }], taxes: [],
       charges: [
@@ -440,6 +440,17 @@ try {
     trackingActions.some(button => button.textContent === "复制地址") &&
     opened[0]?.[0] === shipmentDetails.details.tracking_url && opened[0]?.[2] === "noopener,noreferrer",
     "carrier actions must offer popup, clipboard and safe browser fallback");
+  const providerSelect = detailsFields.querySelector('select[aria-label="物流查询平台"]');
+  assert(providerSelect?.value === "track718","Track718 must be the default query provider");
+  const providerBrowser = trackingActions.find(button=>button.textContent==="浏览器查询");
+  providerBrowser.click();
+  assert(opened.at(-1)?.[0]==="https://www.track718.com/zh-CN","Track718 destination changed");
+  flushSync(()=>{providerSelect.value="17track";providerSelect.dispatchEvent(new Event("change",{bubbles:true}));});
+  providerBrowser.click();
+  assert(opened.at(-1)?.[0]==="https://t.17track.net/zh-cn","17TRACK destination changed");
+  const beforePopup = opened.length;
+  flushSync(()=>trackingActions.find(button=>button.textContent==="独立窗口查询").click());
+  assert(opened.length===beforePopup&&detailsFields.textContent.includes("无法打开客户端独立窗口"),"popup must not silently open a browser tab");
   assert(officialTrackingURL("file:///tmp/example") === "" &&
     officialTrackingURL("https://10.0.0.1/track") === "" &&
     officialTrackingURL("https://u@jtexpress.com.br/track") === "", "unsafe tracking address accepted");
@@ -508,6 +519,11 @@ try {
     profit().querySelector("button").textContent === "限流冷却中" && profit().textContent.includes("平台暂时限流"),
     "rate limit must stop manual billing retries");
   assert(profit().textContent.includes("-USD 3.38"), "rate limited read must retain prior scoped bill");
+  assert(profit().textContent.includes("120 秒")||profit().textContent.includes("119 秒"),"server Retry-After ignored");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(()=>profit()?.querySelector("button").textContent==="限流冷却中","reopening bypassed shared billing cooldown");
+  assert(billingFetches===2&&profit().querySelector("button").disabled,"reopening triggered an upstream call");
   billingRateLimited = false;
 
   // Issue #53: numeric Order ID crosses sites; title searches respect selected site.

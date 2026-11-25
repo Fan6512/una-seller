@@ -34,12 +34,13 @@ function signedUSD(value: string | undefined, sign = "") {
   return (cents === 0n ? "" : negative ? "-" : sign) + amount;
 }
 
-export default function OrderProfitCard({ order, scope, disabled, cache, cacheKey }: {
+export default function OrderProfitCard({ order, scope, disabled, cache, cacheKey, rateLimit }: {
   order: OrderRecord;
   scope: OrderScope | null;
   disabled: boolean;
   cache: OrderBillingCache;
   cacheKey: string;
+  rateLimit: {until:number};
 }) {
   const [preview, setPreview] = useState(() => {
     const entry = cache.get(cacheKey);
@@ -48,17 +49,25 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
   const billing = preview?.value;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [cooldown, setCooldown] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(()=>rateLimit.until);
+  const [remaining, setRemaining] = useState(()=>Math.max(0,Math.ceil((rateLimit.until-Date.now())/1000)));
+  const cooldown = remaining > 0;
   useEffect(() => {
-    if (!cooldown) return;
-    const timer = window.setTimeout(() => setCooldown(false), 60_000);
-    return () => window.clearTimeout(timer);
-  }, [cooldown]);
+    const remainingSeconds = () => Math.max(0,Math.ceil((cooldownUntil-Date.now())/1000));
+    setRemaining(remainingSeconds());
+    if (cooldownUntil <= Date.now()) return;
+    const timer = window.setInterval(()=>{
+      const seconds=remainingSeconds();
+      setRemaining(seconds);
+      if (!seconds) window.clearInterval(timer);
+    },1000);
+    return () => window.clearInterval(timer);
+  }, [cooldownUntil]);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
 
   async function readBilling() {
-    if (!scope || disabled || cooldown || active.current) return;
+    if (!scope || disabled || cooldown || rateLimit.until>Date.now() || active.current) return;
     const request = new AbortController();
     active.current = request;
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(22_000)]);
@@ -88,7 +97,14 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
       setPreview(entry);
     } catch (problem) {
       if (!request.signal.aborted) {
-        if (problem instanceof StoreRequestError && problem.status === 429) setCooldown(true);
+        if (problem instanceof StoreRequestError && problem.status === 429) {
+          const header=problem.retryAfter?.trim()??"";
+          const delay=/^\d+$/.test(header)?Number(header)*1000:Date.parse(header)-Date.now();
+          const until=Date.now()+(Number.isFinite(delay)&&delay>0?delay:60_000);
+          rateLimit.until=Math.max(rateLimit.until,until);
+          setCooldownUntil(rateLimit.until);
+          setRemaining(Math.max(1,Math.ceil((rateLimit.until-Date.now())/1000)));
+        }
         setError(signal.aborted ? "查询账单超时，请稍后手动读取" :
           problem instanceof Error ? problem.message : "查询账单失败");
       }
@@ -119,6 +135,7 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
       <button type="button" className="orders-table-action" disabled={busy || cooldown || disabled || !scope}
         onClick={() => void readBilling()}>{busy ? "读取中…" : cooldown ? "限流冷却中" : "读取官方账单"}</button>
     </div>
+    {cooldown && <p className="orders-muted" role="status">账单冷却剩余约 {remaining} 秒，不会自动重试。</p>}
     {error && <p className="orders-alert" role="alert">{error}{billing && "。下方显示上一次读取的账单。"}</p>}
     <dl className="orders-detail-fields">
       <dt>商品价格</dt><dd>{orderUSD(order.sales_amount_usd)}</dd>
