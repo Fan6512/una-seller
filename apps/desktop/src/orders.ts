@@ -220,7 +220,10 @@ export function officialTrackingURL(value?: string) {
 export function orderUSD(value?: string) {
   if (!value || !/^\d+(\.\d+)?$/.test(value)) return "待核实";
   const [whole, fraction = ""] = value.split(".");
-  return "USD " + whole + "." + fraction.padEnd(2, "0");
+  const padded = fraction.padEnd(3, "0");
+  // Display cents, preserving the exact decimal string in the order record.
+  const cents = BigInt(whole) * 100n + BigInt(padded.slice(0, 2)) + (padded[2] >= "5" ? 1n : 0n);
+  return "USD " + (cents / 100n).toString() + "." + (cents % 100n).toString().padStart(2, "0");
 }
 export function orderMoney(value: string, currency: string) {
   const symbols: Record<string, string> = {

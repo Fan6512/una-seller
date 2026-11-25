@@ -37,9 +37,9 @@
     }
     return (action === "updated" ? "已更新采集箱记录，" : "已保存到采集箱，") + missingText(product);
   }
-  function createControl(url) {
+  function createControl(url, context = "card") {
     const wrapper = document.createElement("div");
-    wrapper.className = "una-collector-wrapper";
+    wrapper.className = "una-collector-wrapper una-collector-" + context;
     wrapper.setAttribute("data-una-product", url);
     const button = document.createElement("button");
     button.type = "button";
@@ -124,11 +124,21 @@
     }
   }
   function scanDetail() {
-    if (!document.querySelector("#productTitle")) return;
-    const holder = document.querySelector("#titleSection") || document.querySelector("#dp-container");
-    if (!holder || holder.querySelector(BUTTON)) return;
+    const title = document.querySelector("#productTitle");
+    // Only mount inside the known title section, never the entire detail grid.
+    const holder = title?.closest("#titleSection");
     const url = core.canonicalAmazonURL(location.href);
-    if (url) holder.appendChild(createControl(url));
+    let existing = null;
+    for (const control of document.querySelectorAll(".una-collector-detail")) {
+      if (!existing && holder && url && control.parentElement === holder &&
+          control.getAttribute("data-una-product") === url) {
+        existing = control;
+      } else {
+        control.remove();
+      }
+    }
+    if (!holder || !url || existing) return;
+    holder.appendChild(createControl(url, "detail"));
   }
   function scan() {
     pending = false;

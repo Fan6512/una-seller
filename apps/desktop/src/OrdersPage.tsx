@@ -979,9 +979,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       orderRecordKey(order, scope) === [selectedRowScope?.storeId ?? scope?.storeId ?? "",
                         selectedRowScope?.site ?? scope?.site ?? "",
                         selectedRowScope?.logistic ?? scope?.logistic ?? "", selectedId].join("|") ? "selected" : ""}>
-                    <td><button type="button" className="orders-id" onClick={() =>
+                    <td><button type="button" className="orders-id" title={order.pack_id ? "销售订单号" : "内部 Order ID"} onClick={() =>
                         openOrder(order.order_id, orderRecordScope(order, scope))}>{order.pack_id || order.order_id}</button>
-                      <small className="orders-subline">{order.pack_id ? "内部 Order ID：" + order.order_id : "内部 Order ID"}</small>
+                      {order.pack_id && <small className="orders-subline">内部 Order ID：{order.order_id}</small>}
                       <span className="orders-subline">{(
                         stores.find((item) => item.id === (order.store_id ?? scope?.storeId))?.nickname ||
                         store?.nickname || "店铺").trim().slice(0, 12)}（{
@@ -1005,7 +1005,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                         </div>
                       </div>
                     </td>
-                    <td className="orders-money-cell"><strong className="orders-money">{orderUSD(order.sales_amount_usd)}</strong>
+                    <td className="orders-money-cell"><strong className="orders-money" title={order.sales_amount_usd ? "精确金额 USD " + order.sales_amount_usd : undefined}>{orderUSD(order.sales_amount_usd)}</strong>
                       <small title="净收益待官方结算费用数据，尚未核算">净收益：待核账</small>
                       <small title="利润待实际采购成本、费用和汇率核算">利润：待核算</small>
                     </td>
@@ -1061,7 +1061,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
               <div className="orders-detail-summary">
                 <span className={"orders-status " + safeOrderStatus(orderFulfillmentStatus(detail))}>{displayOrderStatus(detail)}</span>
                 {hasProcurement(detail) && <small className="orders-purchase-badge">已采购</small>}
-                <strong>{orderUSD(detail.sales_amount_usd)}</strong>
+                <strong title={detail.sales_amount_usd ? "精确金额 USD " + detail.sales_amount_usd : undefined}>{orderUSD(detail.sales_amount_usd)}</strong>
                 <small>下单：{orderDate(detail.date_created)}</small>
                 <small>更新：{orderDate(detail.last_updated)}</small>
               </div>
@@ -1076,7 +1076,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <TranslatedOrderTitle title={line.title || line.item_id} translated={translatedTitles.get(line.title)} detail />
                       <small>商品 ID：{line.item_id}</small>
                       {line.variation_id && <small>变体 ID：{line.variation_id}</small>}
-                      <span>{orderUSD(line.currency_id === "USD" ? line.unit_price : undefined)} × {line.quantity}</span>
+                      <span title={line.currency_id === "USD" && line.unit_price ? "精确单价 USD " + line.unit_price : undefined}>{orderUSD(line.currency_id === "USD" ? line.unit_price : undefined)} × {line.quantity}</span>
                     </div>
                   </div>)}
               </section>

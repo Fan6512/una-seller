@@ -438,7 +438,8 @@ try {
   assert(officialTrackingURL("file:///tmp/example") === "" &&
     officialTrackingURL("https://10.0.0.1/track") === "" &&
     officialTrackingURL("https://u@jtexpress.com.br/track") === "", "unsafe tracking address accepted");
-  assert(orderUSD("11.28") === "USD 11.28" && orderUSD() === "待核实", "USD display must fail closed");
+  assert(orderUSD("11.28") === "USD 11.28" && orderUSD() === "待核实" &&
+    orderUSD("22.59000003") === "USD 22.59" && orderUSD("9.995") === "USD 10.00", "USD display must round exactly and fail closed");
   const timeline = [...document.querySelectorAll(".orders-detail-block h3")]
     .find(item => item.textContent === "官方物流时间轴");
   assert(timeline?.parentElement.querySelectorAll("time").length === 2 &&
@@ -629,6 +630,56 @@ try {
     "image batch did not stop after rate limit");
   await new Promise(resolve => setTimeout(resolve, 500));
   assert(imageRequests.length === 0, "rate-limited automatic batch retried itself");
+  // Exercise actual layout and the visible money / Pack / review fields.
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  const tabs = document.querySelector(".orders-tabs");
+  const originalWidth = tabs.style.width;
+  for (const width of [1024, 1280, 1440]) {
+    tabs.style.width = width + "px";
+    const bounds = tabs.getBoundingClientRect();
+    assert(getComputedStyle(tabs).flexWrap === "wrap" &&
+      [...tabs.querySelectorAll("button")].every(btn => {
+        const rect = btn.getBoundingClientRect();
+        return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
+      }), "order status toolbar overflow at " + width);
+  }
+  tabs.style.width = originalWidth;
+  exerciseImages = false;
+  order.pack_id = "920";
+  order.sales_amount_usd = "22.59000003";
+  order.order_items = [{ ...order.order_items[0], quantity: 2, image_url: testingThumbnail }];
+  flushSync(() => [...document.querySelectorAll(".orders-heading-actions button")].find(btn => btn.textContent === "刷新订单").click());
+  await waitFor(() => document.querySelectorAll(".orders-id").length === 2 &&
+    [...document.querySelectorAll(".orders-id")].every(btn => btn.textContent === "920") &&
+    document.querySelector(".orders-money")?.textContent === "USD 22.59", "Pack ID or rounded list sale missing");
+  const packRows = [...document.querySelectorAll(".orders-id")].map(btn => btn.closest("tr"));
+  assert(packRows[0].textContent.includes("内部 Order ID：102") && packRows[1].textContent.includes("内部 Order ID：103") &&
+    packRows[0].querySelector(".orders-product-meta").textContent.includes("2 件") &&
+    packRows[0].querySelector(".orders-money").title.includes("22.59000003"), "Pack rows, exact sale tooltip or count incorrect");
+  flushSync(() => packRows[0].querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector("#orders-detail-title")?.textContent === "920" &&
+    document.querySelector(".orders-detail-summary strong")?.textContent === "USD 22.59" &&
+    [...document.querySelectorAll(".orders-detail-fields button")].some(btn => btn.textContent.includes("102") && btn.textContent.includes("复制")),
+    "detail must expose Pack and internal Order ID copy");
+  assert(document.querySelector(".orders-detail-summary strong").title.includes("22.59000003"), "detail exact sale missing");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  delete order.sales_amount_usd;
+  order.order_items_review_required = true;
+  order.order_items = [...order.order_items, { ...order.order_items[0] },
+    { ...order.order_items[0], item_id: "MLB703", unit_price: "" }];
+  flushSync(() => [...document.querySelectorAll(".orders-heading-actions button")].find(btn => btn.textContent === "刷新订单").click());
+  await waitFor(() => document.querySelector(".orders-money")?.textContent === "待核实" &&
+    document.querySelector(".orders-product-meta")?.textContent.includes("件数待核实"), "legacy review list must not show unverified total");
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-detail-summary strong")?.textContent === "待核实" &&
+    document.querySelector(".orders-detail-block h3")?.textContent.includes("件数待核实") &&
+    document.querySelector(".orders-alert")?.textContent.includes("无法确认是否重复") &&
+    document.querySelectorAll(".orders-line-item").length === 3, "legacy review detail must retain all lines and withhold totals");
+  const missingPrice = [...document.querySelectorAll(".orders-line-content span")]
+    .find(span => span.textContent.includes("待核实 ×"));
+  assert(missingPrice && !missingPrice.hasAttribute("title") &&
+    !document.querySelector(".orders-detail-summary strong").hasAttribute("title"),
+    "missing monetary values must not show an empty exact-money tooltip");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";
