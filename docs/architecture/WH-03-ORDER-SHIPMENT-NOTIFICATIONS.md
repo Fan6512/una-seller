@@ -24,7 +24,9 @@
 
 ## 验收结果
 
-本地门禁：Go 1.26.11 + 隔离 PostgreSQL 17.6（独立数据目录、127.0.0.1:55432、空库 `una_seller_test`）。`gofmt -l` 无输出，`go vet ./...`、`go build ./...` 通过，`go test -p 1 -count=1 ./...` 全部通过（meli 38.1s、notifications 3.1s）。CI 仍为新 HEAD 的最终门禁。`TestNotificationPostgresRestart` 需真实停库/起库，只在 CI 的 persistence 阶段执行；本机为 SKIP，未冒充通过。
+本地门禁：Go 1.26.11 + 隔离 PostgreSQL 17.6（独立数据目录、127.0.0.1:55432、空库 `una_seller_test`）。`gofmt -l` 无输出，`go vet ./...`、`go build ./...` 通过，`go test -p 1 -count=1 ./...` 全部通过（meli 38.1s、notifications 3.1s）。新 HEAD CI：Go Backend 1m37s 通过，`internal/meli` 30.2s、`internal/notifications` 1.4s。
+
+`TestNotificationPostgresRestart` 需要真实停库/起库，本轮在本机隔离实例按 before → 停库 → down → 起库 → after 三阶段实跑通过（停库期间 ACK 为 503，重启后租约与冷却保留、任务继续）。CI 的 persistence 阶段只在 `backend/migrations/*` 或 `internal/collections/*` 变更时触发，本次改动不会触发它，因此不以 CI 里的 SKIP 充当通过。
 
 | 场景 | 证据 | 结果 |
 | --- | --- | --- |
@@ -44,6 +46,7 @@
 | 429 双向阻断 | `TestNotificationSharesManualOrderLimit` | 通知 429 → 人工读取不再发请求；人工 429 → Worker 读取不再发请求 |
 | 队列冷却边界 | `TestNotificationCooldownBoundaryPostgres` | 冷却跨 topic 保护同一店铺、不波及其他店铺、到期即释放 |
 | 回滚与 fencing | `TestNotificationPostgresWorker` | 失效租约的写入整体回滚 |
+| 执行超时 | `TestNotificationTimeoutKeepsLeasePostgres` | 超预算不提交、不丢任务；租约到期后同一回执被重新处理 |
 
 官方合同核对（`GET /shipments/{id}/orders`，据官方 CBT 文档）：
 

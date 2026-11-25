@@ -536,3 +536,37 @@ func TestNotificationCooldownBoundaryPostgres(t *testing.T) {
 	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
 		WHERE store_id=$1 AND resource_id='997' AND last_failure='rate_limited' AND dead_at IS NULL`, testStoreA)
 }
+
+// A handler that outlives its budget must not commit or lose the job: the lease
+// expires and the next worker pass retries the same delivery.
+func TestNotificationTimeoutKeepsLeasePostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, testOrder, "995", testChildA, "timeout")
+	blocked := NewWorker(p, testApp, map[string]Prepare{testOrder: func(ctx context.Context, _ Job) (VerifiedResource, error) {
+		<-ctx.Done()
+		return VerifiedResource{}, ctx.Err()
+	}})
+	short, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if err := blocked.runOnce(short); err == nil {
+		t.Fatal("expired handler budget reported as success")
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+		WHERE store_id=$1 AND resource_id='995' AND attempts=1 AND lease_until > now() AND dead_at IS NULL`, testStoreA)
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_cooldowns WHERE store_id=$1`, testStoreA)
+
+	mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET lease_until=now()-interval '1 second'
+		WHERE store_id=$1 AND resource_id='995'`, testStoreA)
+	var applied int
+	recovered := NewWorker(p, testApp, map[string]Prepare{testOrder: func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID,
+			Apply: func(context.Context, LocalWriter) error { applied++; return nil }}, nil
+	}})
+	if err := recovered.runOnce(ctx); err != nil || applied != 1 {
+		t.Fatalf("expired lease was not retried: applied=%d err=%v", applied, err)
+	}
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND resource_id='995'`, testStoreA)
+}
