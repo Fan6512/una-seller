@@ -26,10 +26,14 @@ CREATE TABLE IF NOT EXISTS app.meli_claim_notifications (
     stage text NOT NULL,
     claim_type text NOT NULL,
     reason_code text NOT NULL,
+    due_at timestamptz,
+    allowed_actions text NOT NULL DEFAULT '' CHECK (length(allowed_actions)<=512),
     last_updated timestamptz NOT NULL,
     checked_at timestamptz NOT NULL,
     PRIMARY KEY(store_id,site_id,seller_id,claim_id)
 );
+ALTER TABLE app.meli_claim_notifications ADD COLUMN IF NOT EXISTS due_at timestamptz;
+ALTER TABLE app.meli_claim_notifications ADD COLUMN IF NOT EXISTS allowed_actions text NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS app.meli_item_notifications (
     store_id uuid NOT NULL REFERENCES app.meli_store_connections(id) ON DELETE CASCADE,
     owner_user_id uuid NOT NULL REFERENCES app.users(id),
@@ -38,11 +42,15 @@ CREATE TABLE IF NOT EXISTS app.meli_item_notifications (
     site_id text NOT NULL,
     item_id text NOT NULL,
     status text NOT NULL,
+    sub_status text NOT NULL DEFAULT '' CHECK (length(sub_status)<=160),
+    price numeric(18,6) CHECK (price>=0),
     available_quantity integer CHECK (available_quantity>=0),
     last_updated timestamptz NOT NULL,
     checked_at timestamptz NOT NULL,
     PRIMARY KEY(store_id,site_id,seller_id,item_id)
 );
+ALTER TABLE app.meli_item_notifications ADD COLUMN IF NOT EXISTS sub_status text NOT NULL DEFAULT '';
+ALTER TABLE app.meli_item_notifications ADD COLUMN IF NOT EXISTS price numeric(18,6);
 CREATE INDEX IF NOT EXISTS meli_claim_notifications_owner_checked_idx ON app.meli_claim_notifications(owner_user_id,checked_at DESC);
 CREATE INDEX IF NOT EXISTS meli_item_notifications_owner_checked_idx ON app.meli_item_notifications(owner_user_id,checked_at DESC);
 ALTER TABLE app.meli_claim_notifications ENABLE ROW LEVEL SECURITY;
