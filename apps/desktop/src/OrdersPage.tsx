@@ -864,7 +864,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   };
   const trackingURL = officialTrackingURL(detail?.shipment?.details?.tracking_url);
   const trackingNumber = detail?.shipment?.tracking_number?.trim() || "";
-  const providerURL = trackingProvider === "track718" ? "https://www.track718.com/zh-CN" : "https://t.17track.net/zh-cn";
+  const providerURL = trackingProvider === "track718" ? "https://www.track718.com/zh-CN" : "https://www.17track.net/zh-cn";
   const openTracking = async (url: string, carrier: string, external: boolean, copyNumber = false) => {
     if (!url) return;
     setTrackingError("");
@@ -1035,7 +1035,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <div className="orders-table-scroll">
               <table className="orders-table">
                 <thead><tr>
-                  <th>订单信息</th><th>商品标题 / 规格</th><th>销售金额</th><th>订单状态</th><th>采购 / 平台物流</th><th>发货倒计时</th><th>下单时间</th><th>操作</th>
+                  <th>订单信息</th><th>商品标题 / 规格</th><th>销售金额</th><th>订单状态</th><th>采购 / 物流运单</th><th>发货倒计时</th><th>下单时间</th><th>操作</th>
                 </tr></thead>
                 <tbody>
                   {loading && page.items.length === 0 && <tr><td colSpan={8} className="orders-table-empty">正在读取订单…</td></tr>}
@@ -1076,12 +1076,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <small title="利润待实际采购成本、费用和汇率核算">利润：待核算</small>
                     </td>
                     <td><span className={"orders-status " + safeOrderStatus(orderFulfillmentStatus(order))}>{displayOrderStatus(order)}</span>
-                      {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
                     </td>
                     <td className="orders-shipping-refs">
+                      {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
                       <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
                       <span><small>平台运单</small>{order.shipment?.tracking_number || (order.shipment ? "平台未提供" : "尚未读取")}</span>
-                      <span><small>平台物流</small>{shipmentStatusLabel(order.shipment)}</span>
                     </td>
                     <td><DispatchCountdown order={order} now={clockNow}
                       logistic={order.logistic_type ?? scope?.logistic ?? ""} /></td>
@@ -1163,7 +1162,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   {detail.shipment?.first_mile_carrier && <><dt>首程承运商</dt><dd>{detail.shipment.first_mile_carrier}</dd></>}
                   <dt>官方承运商</dt><dd>{detail.shipment?.details
                     ? (detail.shipment.details.carrier_name || "平台未提供") : "尚未读取"}</dd>
-                  <dt>物流查询</dt><dd>
+                  <dt>第三方物流查询</dt><dd>
                     {trackingNumber ? <div className="orders-tracking-actions">
                       <select aria-label="物流查询平台" value={trackingProvider} onChange={e=>{setTrackingProvider(e.target.value==="17track"?"17track":"track718");setTrackingError("");}}>
                         <option value="track718">Track718</option><option value="17track">17TRACK</option>
@@ -1173,8 +1172,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <small>打开查询平台并复制运单号，粘贴后查询。</small>
                     </div> : <small>平台未提供运单号</small>}
                     {trackingURL && <>
-                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",false)}>官方物流查询</button>{" "}
-                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",true)}>在浏览器中打开</button>{" "}
+                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",false)}>官方承运商原始查询（备用）</button>{" "}
+                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",true)}>官方地址浏览器打开（备用）</button>{" "}
                       <button type="button" onClick={()=>copy(trackingURL)}>复制地址</button>
                     </>}
                     {trackingError && <small role="alert">{trackingError}</small>}

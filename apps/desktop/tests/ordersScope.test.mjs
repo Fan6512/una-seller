@@ -435,7 +435,7 @@ try {
   flushSync(() => batchShipment.click());
   await waitFor(() => shipmentFetchCount === 1 &&
     document.querySelector(".orders-shipping-refs")?.textContent.includes("OFFICIAL-TRACK-102") &&
-    document.querySelector(".orders-shipping-refs")?.textContent.includes("运输中") &&
+    !document.querySelector(".orders-shipping-refs")?.textContent.includes("运输中") &&
     document.querySelector(".orders-status")?.textContent.includes("运输中"),
     "main order state must follow current shipment");
   const stateFilter = label => [...document.querySelectorAll(".orders-tabs button")].find(item => item.textContent === label);
@@ -472,11 +472,11 @@ try {
     [...detailsFields.querySelectorAll("time")].some(time => time.dateTime === shipmentDetails.delivered_at),
     "tracking, first-mile carrier and exact receipt time must stay distinct");
   const trackingActions = [...detailsFields.querySelectorAll("button")];
-  const browserTracking = trackingActions.find(button => button.textContent === "在浏览器中打开");
+  const browserTracking = trackingActions.find(button => button.textContent === "官方地址浏览器打开（备用）");
   const opened = [];
   window.open = (...args) => opened.push(args);
   browserTracking?.click();
-  assert(trackingActions.some(button => button.textContent === "官方物流查询") &&
+  assert(trackingActions.some(button => button.textContent === "官方承运商原始查询（备用）") &&
     trackingActions.some(button => button.textContent === "复制地址") &&
     opened[0]?.[0] === shipmentDetails.details.tracking_url && opened[0]?.[2] === "noopener,noreferrer",
     "carrier actions must offer popup, clipboard and safe browser fallback");
@@ -487,7 +487,7 @@ try {
   assert(opened.at(-1)?.[0]==="https://www.track718.com/zh-CN","Track718 destination changed");
   flushSync(()=>{providerSelect.value="17track";providerSelect.dispatchEvent(new Event("change",{bubbles:true}));});
   providerBrowser.click();
-  assert(opened.at(-1)?.[0]==="https://t.17track.net/zh-cn","17TRACK destination changed");
+  assert(opened.at(-1)?.[0]==="https://www.17track.net/zh-cn","17TRACK destination changed");
   const beforePopup = opened.length;
   flushSync(()=>trackingActions.find(button=>button.textContent==="独立窗口查询").click());
   assert(opened.length===beforePopup&&detailsFields.textContent.includes("无法打开客户端独立窗口"),"popup must not silently open a browser tab");
