@@ -89,6 +89,10 @@ func (a storeAPI) start(w http.ResponseWriter, r *http.Request) {
 func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 	// Orders stay isolated from listing sync and desktop diagnostics.
 	orderPath := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/stores/"), "/")
+	if len(orderPath) == 3 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] == "billing-preview" {
+		a.orderBillingPreview(w, r, orderPath[0])
+		return
+	}
 	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && (orderPath[3] == "sla" || orderPath[3] == "shipment") {
 		a.orderLogistics(w, r, orderPath[0], orderPath[2], orderPath[3])
 		return

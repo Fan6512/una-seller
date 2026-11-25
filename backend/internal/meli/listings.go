@@ -871,6 +871,19 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 		if resp.StatusCode == http.StatusTooManyRequests {
 			timing.retryAfter = resp.Header.Get("Retry-After")
 		}
+		// CBT Billing can wrap its own upstream 429 in HTTP 400. Recognize
+		// only the observed endpoint-specific marker, never expose the body.
+		if resp.StatusCode == http.StatusBadRequest && strings.HasPrefix(path, "/billing/integration/group/ML/order/details?") {
+			const maxErrorBody = 16 << 10
+			data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody+1))
+			if readErr == nil && len(data) <= maxErrorBody && strings.Contains(string(data), "[REPORTING_CORE_API][ML_DETAILS_BY_ORDER][429]") {
+				timing.retryAfter = resp.Header.Get("Retry-After")
+				if timing.retryAfter == "" {
+					timing.retryAfter = "60"
+				}
+				return http.StatusTooManyRequests, ListingPlatformError(http.StatusTooManyRequests)
+			}
+		}
 		return resp.StatusCode, ListingPlatformError(resp.StatusCode)
 	}
 	const maxBody = 2 << 20

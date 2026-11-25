@@ -45,9 +45,11 @@ const pausedRefreshes = [];
 const statusReads = [];
 const order = { order_id: "102", status: "paid", order_items: [
     { item_id: "MLB101", title: "Original title without translation", quantity: 1, unit_price: "12", currency_id: "USD" },
-  ], total_amount: "12", currency_id: "USD",
+  ], total_amount: "67.23", currency_id: "USD", sales_amount_usd: "12.00",
   shipment_id: "87123456" };
 let slaFetchCount = 0;
+let billingFetches = 0;
+let billingRateLimited = false;
 let shipmentFetchCount = 0;
 let shipmentDetailsCount = 0;
 let cachedShipmentDetails;
@@ -100,6 +102,31 @@ window.fetch = (path, options) => {
     order.dispatch_sla_status = "on_time";
     order.dispatch_checked_at = new Date().toISOString();
     return Promise.resolve(Response.json(order));
+  }
+  if (pathname.endsWith("/orders/billing-preview")) {
+    billingFetches++;
+    const q = new URL(path, location.href).searchParams;
+    assert(q.get("site") === "MLB" && q.get("logistic_type") === "remote", "billing used the wrong scope");
+    assert(JSON.parse(options.body).order_ids.join(",") === "102", "billing requested the wrong order");
+    if (billingRateLimited) return Promise.resolve(Response.json({ error: "order_rate_limited" }, { status: 429 }));
+    return Promise.resolve(Response.json({ net_income_usd: null, items: [{ order_id: "102", available: true,
+      payments: [{ status: "approved", money_release_status: "pending" }], taxes: [],
+      charges: [
+        { detail_id: "91", type: "CHARGE", subtype: "CCSI", amount: "11.10", currency: "USD", shipment_id: "80001" },
+        { detail_id: "94", type: "CHARGE", subtype: "CCSI", amount: "2.45", currency: "USD", shipment_id: "80002" },
+        { detail_id: "92", type: "BONUS", subtype: "CCSI", amount: "-1.12", currency: "USD", reversal_of: "91" },
+        { detail_id: "93", type: "CHARGE", subtype: "LOCAL_ONLY", amount: "1.25", currency: "BRL" },
+        { detail_id: "95", type: "CHARGE", amount: "0.40", currency: "USD" },
+      ],
+      shipping: { buyer_cost_usd: "7.72", seller_charge_usd: "11.10", seller_net_cost_usd: "3.38",
+        seller_charge_detail_id: "91" },
+      charge_groups: [
+        { type: "CHARGE", subtype: "CCSI", currency: "USD", original_total: "13.55" },
+        { type: "CHARGE", subtype: "LOCAL_ONLY", currency: "BRL", original_total: "1.25" },
+        { type: "BONUS", subtype: "CCSI", currency: "USD", original_total: "-1.12" },
+        { type: "CHARGE", currency: "USD", original_total: "0.40" },
+      ],
+    }] }));
   }
   if (pathname.endsWith("/orders/102/refresh")) {
     if (pauseOrderRefresh) return new Promise(resolve => pausedRefreshes.push(resolve));
@@ -441,7 +468,47 @@ try {
     "manual order refresh did not display refunded state");
   assert(!document.querySelector(".orders-money-net") &&
     ![...document.querySelectorAll("button")].some((item) => item.textContent === "订单设置"),
-    "nonexistent finance editor should not be visible");
+    "nonexistent finance settings should not be visible");
+  const profit = () => document.querySelector('section[aria-label="订单账单与利润"]');
+  assert(billingFetches === 0 && profit()?.textContent.includes("待核账"), "billing ran automatically or invented net proceeds");
+  flushSync(() => profit().querySelector("button").click());
+  await waitFor(() => billingFetches === 1 && profit()?.textContent.includes("-USD 3.38") &&
+    profit()?.textContent.includes("+USD 7.72") && profit()?.textContent.includes("-USD 11.10") &&
+    profit()?.textContent.includes("待释放，待核账"), "billing must show scoped shipping amounts and keep net proceeds pending");
+  assert(profit().textContent.includes("USD 12.00") && profit().textContent.includes("-USD 1.12") &&
+    profit().textContent.match(/11\.10/g)?.length === 1 &&
+    !["67.23", "1.25", "7.90"].some(amount => profit().textContent.includes(amount)),
+    "wrong sale, currency, duplicate shipping charge or unverified net was displayed");
+  assert(profit().textContent.includes("同类物流扣项逐项展示") && profit().querySelector("details")?.open &&
+    profit().textContent.includes("USD 2.45") && !profit().textContent.includes("USD 13.55"),
+    "mixed shipping group must expose remaining charges without showing a misleading subtotal");
+  assert(profit().textContent.includes("不可相加或重复扣减") && profit().textContent.includes("同货件多单时未分摊") &&
+    profit().textContent.includes("已批准 / 待释放"), "shipping scope and payment status must be explicit");
+  const subtotal = [...profit().querySelectorAll("dl")].find(dl => dl.textContent.includes("CHARGE 小计"));
+  assert(subtotal && getComputedStyle(subtotal).display === "grid" && subtotal.children.length === 4,
+    "subtotal groups must be direct grid pairs");
+  const pairs = [...subtotal.children];
+  for (let i = 0; i < pairs.length; i += 2) {
+    const label = pairs[i].getBoundingClientRect(), value = pairs[i+1].getBoundingClientRect();
+    assert(pairs[i].tagName === "DT" && pairs[i+1].tagName === "DD" && Math.abs(label.top-value.top)<1 &&
+      value.left >= label.right, "subtotal grid label and value must share a row");
+  }
+  assert(subtotal.textContent.includes("USD 0.40") && subtotal.textContent.includes("-USD 1.12") &&
+    profit().textContent.includes("部分官方费用缺少已核实的美元金额，暂不展示") &&
+    !["BRL", "LOCAL_ONLY", "1.25", "USD 待核实"].some(value => profit().textContent.includes(value)),
+    "non-USD subtotals and line items must stay hidden while confirmed USD rows remain visible");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => profit()?.textContent.includes("-USD 3.38"),
+    "reopening the same scoped detail did not reuse the recent billing snapshot");
+  assert(billingFetches === 1, "reopening detail made another official Billing request");
+  billingRateLimited = true;
+  flushSync(() => profit().querySelector("button").click());
+  await waitFor(() => billingFetches === 2 && profit().querySelector("button").disabled &&
+    profit().querySelector("button").textContent === "限流冷却中" && profit().textContent.includes("平台暂时限流"),
+    "rate limit must stop manual billing retries");
+  assert(profit().textContent.includes("-USD 3.38"), "rate limited read must retain prior scoped bill");
+  billingRateLimited = false;
 
   // Issue #53: numeric Order ID crosses sites; title searches respect selected site.
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());

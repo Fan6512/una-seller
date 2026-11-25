@@ -8,6 +8,7 @@ import {
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
+import OrderProfitCard, { type OrderBillingCache } from "./OrderProfitCard";
 import TranslatedOrderTitle, { useOrderTitleTranslations } from "./TranslatedOrderTitle";
 import "./orders.css";
 
@@ -238,10 +239,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const detailDialogRef = useRef<HTMLDialogElement>(null);
   const purchaseDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<OrderRecord | null>(null);
+  const billingCache = useRef<OrderBillingCache>(new Map());
   const [detailError, setDetailError] = useState("");
   const [trackingError, setTrackingError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedRowScope, setSelectedRowScope] = useState<OrderScope | null>(null);
+  const billingKey = detail ? JSON.stringify([orderRecordKey(detail, selectedRowScope ?? scope), detail.last_updated, detail.shipment_id]) : "";
   const [purchaseRowScope, setPurchaseRowScope] = useState<OrderScope | null>(null);
   const [running, setRunning] = useState(false);
   const [logisticsAction, setLogisticsAction] = useState<"sla" | "shipment" | null>(null);
@@ -1132,6 +1135,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 </ol> : <p className="orders-muted">{detail.shipment.details.history
                   ? "平台暂无物流事件。" : "平台未提供物流历史。"}</p>}
               </section>}
+              <OrderProfitCard key={billingKey} cacheKey={billingKey} cache={billingCache.current}
+                order={detail} scope={selectedRowScope ?? scope}
+                disabled={running || Boolean(logisticsAction) || refreshingOrder || installingUpdate}/>
               <section className="orders-detail-block">
                 <div className="orders-detail-block-title">
                   <h3>采购</h3>
