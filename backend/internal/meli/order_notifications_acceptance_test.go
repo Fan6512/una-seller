@@ -695,3 +695,61 @@ func TestNotificationLateAssociationPostgres(t *testing.T) {
 		t.Fatalf("late association not recovered: %d", got)
 	}
 }
+
+func TestShipmentAssociationFallbackRejectsBusy(t *testing.T) {
+	for _, reason := range []string{notifications.DeferAuthorization, notifications.DeferAssociation, notifications.DeferBusy} {
+		err := &notifications.Deferred{Reason: reason, Delay: time.Minute}
+		if got := shipmentAssociationFallbackAllowed(err); got != (reason != notifications.DeferBusy) {
+			t.Fatalf("fallback classification %s=%t", reason, got)
+		}
+	}
+	if shipmentAssociationFallbackAllowed(&notifications.RateLimited{RetryAfter: time.Minute}) {
+		t.Fatal("rate limit must not trigger fallback")
+	}
+}
+
+func TestShipmentFallbackUpdatesKnownAndLateOrdersPostgres(t *testing.T) {
+	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/marketplace/shipments/801":
+			fmt.Fprint(w, `{"id":801,"order_id":10001,"sender_id":0,"status":"delivered",
+"tracking_number":"TRACK801","logistic":{"type":"cross_docking"},"last_updated":"2026-11-22T00:00:00Z"}`)
+		case "/shipments/801/orders":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			id := strings.TrimPrefix(r.URL.Path, "/marketplace/orders/")
+			fmt.Fprint(w, notifiedOrderFixture(id, "2026-11-21T01:00:00Z", "paid", "801"))
+		}
+	})
+	for _, id := range []string{"10001", "10002"} {
+		resource, err := c.prepare(t, c.job("marketplace_orders", id, "987654"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.apply(t, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resource, err := c.prepare(t, c.job("marketplace_shipments", "801", "987654"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.apply(t, resource); err != nil {
+		t.Fatal(err)
+	}
+	const query = `SELECT count(*) FROM app.meli_orders WHERE store_id=$1 AND shipment_id='801'
+AND shipment_snapshot->>'status'='delivered' AND shipment_snapshot->>'tracking_number'='TRACK801'`
+	if got := c.count(t, query, c.store); got != 2 {
+		t.Fatalf("known sibling missing snapshot: %d", got)
+	}
+	resource, err = c.prepare(t, c.job("marketplace_orders", "10003", "987654"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.apply(t, resource); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.count(t, query, c.store); got != 3 {
+		t.Fatalf("late sibling missing snapshot: %d", got)
+	}
+}

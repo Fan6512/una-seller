@@ -159,7 +159,10 @@ func (s *Service) prepareOrderNotification(ctx context.Context, job notification
 			if err := checkNotifiedOrderScope(ctx, tx, job, order); err != nil {
 				return err
 			}
-			return upsertOrderRecord(ctx, tx, job.StoreID, order.scope, order.seller, order.record)
+			if err := upsertOrderRecord(ctx, tx, job.StoreID, order.scope, order.seller, order.record); err != nil {
+				return err
+			}
+			return inheritKnownShipmentSnapshot(ctx, tx, job, order)
 		},
 	}, nil
 }
@@ -238,13 +241,14 @@ func (s *Service) prepareShipmentNotification(ctx context.Context, job notificat
 		return notifications.VerifiedResource{}, notificationAuthError(err)
 	}
 	links, err := s.readShipmentOrderLinks(ctx, auth.AccessToken, job.ResourceID)
+	fallback := false
 	if err != nil {
 		// Real CBT shipments still return one order_id. Use it only when the
 		// association is unavailable or empty, never to fill a partial list.
-		var deferred *notifications.Deferred
-		if shipmentOrderID == "" || !errors.As(err, &deferred) {
+		if shipmentOrderID == "" || !shipmentAssociationFallbackAllowed(err) {
 			return notifications.VerifiedResource{}, err
 		}
+		fallback = true
 		links = []shipmentOrderLink{{OrderID: json.Number(shipmentOrderID)}}
 	}
 	orders := make([]notifiedOrder, 0, len(links))
@@ -293,7 +297,91 @@ func (s *Service) prepareShipmentNotification(ctx context.Context, job notificat
 					return ErrOrderShipmentChanged
 				}
 			}
+			if fallback {
+				return updateKnownShipmentOrders(ctx, tx, job, orders[0], snapshot)
+			}
 			return nil
 		},
 	}, nil
+}
+
+// A denied/empty association response does not prove that the returned order_id
+// is the only order. Update already verified local siblings in the exact same
+// scope and current shipment, never invent or infer an unknown order ID.
+// Keep the same hard bound; overflow rolls back the entire fenced transaction.
+func updateKnownShipmentOrders(ctx context.Context, tx notifications.LocalWriter, job notifications.Job, order notifiedOrder, snapshot OrderShipment) error {
+	rows, err := tx.Query(ctx, `SELECT order_id FROM app.meli_orders
+WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND seller_id=$4
+AND shipment_id=$5 AND order_id<>$6 ORDER BY order_id LIMIT $7 FOR UPDATE`,
+		job.StoreID, order.scope.Site, order.scope.Logistic, order.seller, snapshot.ID, order.record.ID, maxNotificationShipmentOrders)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, maxNotificationShipmentOrders)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(ids) >= maxNotificationShipmentOrders {
+		return ErrOrderInvalidResponse
+	}
+	for _, id := range ids {
+		tag, err := writeOrderShipmentSnapshot(ctx, tx, job.OwnerID, job.StoreID, order.scope,
+			order.seller, id, job.ParentSellerID, snapshot)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrOrderShipmentChanged
+		}
+	}
+	return nil
+}
+
+// A later order notification can establish another order's relationship to an
+// already-read shipment, even when the hosted association endpoint is denied.
+// Reuse only a current same-scope snapshot, and use the existing stale guard.
+// This does not establish completeness of the official association list.
+func inheritKnownShipmentSnapshot(ctx context.Context, tx notifications.LocalWriter, job notifications.Job, order notifiedOrder) error {
+	if !orderSLAShipmentID.MatchString(order.record.ShipmentID) {
+		return nil
+	}
+	var raw []byte
+	err := tx.QueryRow(ctx, `SELECT shipment_snapshot FROM app.meli_orders
+WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND seller_id=$4
+AND shipment_id=$5 AND shipment_snapshot->>'shipment_id'=$5 AND order_id<>$6
+ORDER BY (shipment_snapshot->>'last_updated')::timestamptz DESC NULLS LAST,
+(shipment_snapshot->>'checked_at')::timestamptz DESC NULLS LAST, order_id
+LIMIT 1`,
+		job.StoreID, order.scope.Site, order.scope.Logistic, order.seller,
+		order.record.ShipmentID, order.record.ID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var snapshot OrderShipment
+	if json.Unmarshal(raw, &snapshot) != nil || snapshot.ID != order.record.ShipmentID || snapshot.CheckedAt.IsZero() {
+		return ErrOrderInvalidResponse
+	}
+	// A newer local order may have moved to a different shipment; in that
+	// case the guarded update affects zero rows and leaves the newer order intact.
+	_, err = writeOrderShipmentSnapshot(ctx, tx, job.OwnerID, job.StoreID, order.scope,
+		order.seller, order.record.ID, job.ParentSellerID, snapshot)
+	return err
+}
+
+func shipmentAssociationFallbackAllowed(err error) bool {
+	var deferred *notifications.Deferred
+	return errors.As(err, &deferred) &&
+		(deferred.Reason == notifications.DeferAuthorization || deferred.Reason == notifications.DeferAssociation)
 }
