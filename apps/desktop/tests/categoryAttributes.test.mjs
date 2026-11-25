@@ -18,6 +18,7 @@ import { setSiteTitleMode } from "/src/titleModePreference.ts";
 
 const fields = [
   { id: "BRAND", name: "Brand", value_type: "string", tags: { required: true } },
+  { id: "MODEL", name: "Model", value_type: "string", tags: { required: true } },
   { id: "COUNT", name: "Count", value_type: "number", tags: { new_required: true } },
   { id: "CAPACITY", name: "Capacity", value_type: "number_unit", tags: { required: true },
     allowed_units: [{ id: "l", name: "L" }] },
@@ -67,9 +68,9 @@ window.fetch = (path, options) => {
     technical_requirement_names: id === "CBT2" ? { STYLE: "Style" } : undefined,
     path: [{ id: "CBT1", name: "Home" }, { id, name: id === "CBT1" ? "Jugs" : "Other" }],
     attributes: id === "CBT1" ? fields : id === "CBT2" ? [
-      fields[0],
-      { ...fields[2], allowed_units: [{ id: "ml", name: "mL" }] },
-      { ...fields[3], values: [{ id: 300, name: "Plastic" }] },
+      fields.find(rule => rule.id === "BRAND"),
+      { ...fields.find(rule => rule.id === "CAPACITY"), allowed_units: [{ id: "ml", name: "mL" }] },
+      { ...fields.find(rule => rule.id === "MATERIAL"), values: [{ id: 300, name: "Plastic" }] },
       {id:"READONLY_CODE",name:"Read-only code",value_type:"string",tags:{read_only:true}},
       {id:"SPECIAL_GRID",name:"Special grid",value_type:"string",tags:{size_grid_required:true}},
     ] : id === "CBT1055" ? [
@@ -134,6 +135,8 @@ try {
   flushSync(() => root.render(React.createElement(Fixture)));
   const brand = await loaded("label", "Brand");
   assert(brand.querySelector("input").getAttribute("aria-required") === "true", "required text missing");
+  assert((await loaded("label","Model · 必填")).querySelector("input").getAttribute("aria-required")==="true","official MODEL required flag lost");
+  await loaded("small","官方 MODEL 必填，请在官方属性或变体规格填写");
   assert((await loaded("label", "Count")).querySelector("input").getAttribute("aria-required") === "true", "new_required number missing");
   input(brand.querySelector("input"), "Sample Brand");
   input((await loaded("label", "Count")).querySelector("input"), "3");
@@ -173,6 +176,8 @@ try {
     deferredTechnical.textContent.includes("Read-only code（平台依赖／只读")&&
     deferredTechnical.textContent.includes("Special grid（暂无可编辑控件"),"required technical fields without editable controls were omitted");
   await loaded("option", "塑料 · Plastic");
+  await loaded("small","当前已读取规则未标记 MODEL 必填");
+  assert(![...document.querySelectorAll("label")].some(node=>node.textContent.includes("Model · 必填")),"MODEL required status leaked across categories");
   assert(newBrand.value === "" && working.length === 4 && working.every(field => field.category_id === "CBT1"),
     "changing category accepted or lost historical values");
   assert((await loaded("label", "Material")).querySelector("select").value === "", "historical enum was applied to the wrong category");
@@ -337,17 +342,17 @@ try {
   const commonColor=(await loaded("label","Color · 必填")).querySelector("select");
   assert(commonColor.options.length>1,"single-product official string suggestions missing");
   input((await loaded("label","Is Dual SIM · 必填 · 家族共用")).querySelector("select"),"242085");
-  await loaded("th", "Color（颜色）");
+  await loaded(".listing-variant-rule-search label", "Color（颜色）");
   assert(![...document.querySelectorAll("p")].some(p=>p.textContent.includes("存在特殊官方要求")),"optional dependent field alone produced a warning");
   await click("button", "+ 添加变体");
   await click("button", "+ 添加变体");
-  const color1=await loaded("th","Color（颜色）");
+  const color1=await loaded(".listing-variant-rule-search label","Color（颜色）");
   assert(color1.querySelector("input"),"bilingual search missing");
   input(color1.querySelector("input"),"黑色");
   const firstColor=document.querySelector('select[aria-label="变体 1 Color"]');
   assert([...firstColor.options].some(o=>o.textContent.includes("Black（黑色）"))&&!([...firstColor.options].some(o=>o.textContent.includes("White"))),"Chinese option filter failed");
   assert(!commonColor.isConnected,"child spec still editable as a shared attribute");
-  assert(![...document.querySelectorAll("th")].some(node=>node.textContent.includes("Main color")),
+  assert(![...document.querySelectorAll(".listing-variant-official strong, .listing-variant-rule-search label")].some(node=>node.textContent.includes("Main color")),
     "dependent spec rendered as an independent variation axis");
   input(firstColor,"52049");
   input(color1.querySelector("input"),"");
@@ -376,7 +381,7 @@ try {
   switchCategory("CBT2");
   await loaded("small","历史规格：CBT1055 · COLOR · Black");
   switchCategory("CBT1055");
-  await loaded("th","Color（颜色）");
+  await loaded(".listing-variant-rule-search label","Color（颜色）");
   assert(document.querySelector('select[aria-label="变体 1 Color"]').value==="52049","category switch lost its historical official selection");
   input(document.querySelector('input[aria-label="变体 1 采购成本（¥）"]'),"20.25");
   input(document.querySelector('input[aria-label="变体 1 目标净收益（USD）"]'),"8.50");
@@ -386,9 +391,17 @@ try {
     await click("button","添加链接");
   };
   const img=s=>"https://example.com/"+s+".jpg";
-  await openPicker(0);await appendImage(img("black"));await appendImage(img("shared"));await appendImage(img("shared2"));
+  await openPicker(0);
+  assert(document.querySelector('article[aria-label="变体 1"] .listing-variant-image-picker'),"picker must appear within the selected variant");
+  input(document.querySelector('input[aria-label="变体 1 SKU"]'),"BLACK-01");
+  input(document.querySelector('input[aria-label="变体 2 SKU"]'),"WHITE-02");
+  input(document.querySelector('input[aria-label="变体 2 目标净收益（USD）"]'),"12.00");
+  await appendImage(img("black"));await appendImage(img("shared"));await appendImage(img("shared2"));
   await click(".listing-variant-image-picker-head button","完成");
-  await openPicker(1);await appendImage(img("white"));await appendImage(img("old"));
+  await openPicker(1);
+  assert(document.querySelector('article[aria-label="变体 2"] .listing-variant-image-picker')&&!document.querySelector('article[aria-label="变体 1"] .listing-variant-image-picker'),"switching variants must move the picker");
+  assert([...document.querySelectorAll('article[aria-label="变体 2"] .listing-variant-image-options img')].some(im=>im.src===img("shared")),"other captured variant images unavailable");
+  await appendImage(img("white"));await appendImage(img("old"));
   await loaded(".listing-variant-image-picker-head strong","White（白色）");
   await click(".listing-variant-image-picker-head button","复用副图");
   await loaded('[aria-label="复用副图"] option',"Black（黑色） / 64.0 GB");
@@ -424,7 +437,7 @@ try {
   await click('[aria-label="复用副图"] button',"关闭");
   assert(validateListingFields(editor)==="","new workbench fields not valid");
   flushSync(()=>saveAccepted());flushSync(()=>reloadSaved());
-  assert(editor.variants[0].purchase_cost_cny==="20.25"&&editor.variants[0].target_net_proceeds_usd==="8.50"&&editor.variants[2].image_urls[0]===img("blue"),"variant reload lost new fields or images");
+  assert(editor.variants[0].purchase_cost_cny==="20.25"&&editor.variants[0].target_net_proceeds_usd==="8.50"&&editor.variants[0].seller_sku==="BLACK-01"&&editor.variants[1].seller_sku==="WHITE-02"&&editor.variants[1].target_net_proceeds_usd==="12.00"&&editor.variants[2].image_urls[0]===img("blue"),"variant reload lost new fields or images");
   assert(editor.variants[0].category_attributes.some(f=>f.id==="INTERNAL_MEMORY"&&f.value==="64.0"&&f.unit_id==="GB"),
     "variant reload altered official unit or numeric value");
   flushSync(()=>setEditorValue({...editor,variants:editor.variants.map((v,i)=>i===2?

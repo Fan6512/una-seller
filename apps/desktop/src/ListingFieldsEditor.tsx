@@ -89,6 +89,13 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const images=value.images??[];
   const variants=value.variants??[];
   const activeRules=categoryRules?.category_id===value.category_id?categoryRules:null;
+  const modelRule=activeRules?.attributes.find(rule=>rule.id==="MODEL");
+  const modelRequired=Boolean(activeRules&&(activeRules.technical_requirements?.includes("MODEL")||
+    (modelRule&&requiredAttribute(modelRule,activeRules.technical_requirements))));
+  const modelHint=!activeRules?"选择类目后核实":
+    modelRequired?"官方 MODEL 必填，请在官方属性或变体规格填写":
+    !activeRules.technical_specs_verified||modelRule?.tags?.conditional_required?"官方要求待核实":
+    "当前已读取规则未标记 MODEL 必填";
   const childRules=(activeRules?.attributes??[]).filter(r=>r?.hierarchy==="CHILD_PK"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(r.id));
   // These are display-only hints; never change the platform option's value or ID.
   const glossary:Record<string,string>={Color:"颜色",Colour:"颜色",Size:"尺寸",Style:"款式",Material:"材质",Voltage:"电压",
@@ -343,7 +350,10 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
             }}/>
         </label>
         {field("品牌","brand","无品牌请留空")}
-        {field("型号","model")}
+        <label className="listing-field">型号（基础参考）
+          <input disabled={disabled} value={value.model} maxLength={120} onChange={e=>set("model",e.target.value)} placeholder="如有实际型号可填写"/>
+          <small>{modelHint}</small>
+        </label>
         {field("主商品 SKU（内部编码）","seller_sku","例如：FLOOR-001")}
         {field("条码 GTIN / EAN（有则填）","gtin","不编造条码",50)}
       </div>
@@ -452,21 +462,92 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       {activeRules&&variants.length>0&&<p className="listing-fields-note">家族共用属性请在 CBT 官方属性中填写。刊登前核对家族名称、类目和商品状态一致。</p>}
       <p className="listing-fields-note">{!activeRules?"选择 CBT 类目并加载官方规则后可填写 UP 规格。":childRules.length===0?"当前规则未返回 CHILD_PK，保留原始规格，需在刊登前核实。":"官方规格使用英文及官方 ID，中文仅辅助阅读。原始规格不自动提交。"}</p>
       {variants.length>0&&<p className="listing-fields-note">规格警告不阻止保存工作稿；有未核实项或重复组合时，不代表已通过正式刊登校验，刊登前必须修正。</p>}
-      <div className="listing-variant-table-scroll" role="region" aria-label="可横向滚动的变体表格" tabIndex={0}>
-        <table className="listing-variant-table">
-          <thead><tr>{childRules.map(rule=><th className="listing-variant-official" key={rule.id} scope="col">
-            {bilingual(rule.name||rule.id)}{mandatory(rule)&&" · 必填"}
-            {hasChoices(rule)&&<input aria-label={"搜索规格 "+rule.id} disabled={disabled} placeholder="英文 / 中文"
-              value={specSearch[rule.id]??""} onChange={e=>setSpecSearch(old=>({...old,[rule.id]:e.target.value}))}/>}
-          </th>)}<th className="listing-variant-spec" scope="col">原始规格（参考）</th><th scope="col">SKU</th><th scope="col">采购成本（¥）</th><th scope="col">目标净收益（USD）</th><th scope="col">来源价格</th><th scope="col">图片</th><th scope="col">操作</th></tr></thead>
-          <tbody>{variants.map((v,i)=><tr key={i}>
+      {childRules.some(hasChoices)&&<div className="listing-variant-rule-search">
+        {childRules.filter(hasChoices).map(rule=><label className="listing-field" key={rule.id}>
+          {bilingual(rule.name||rule.id)}{mandatory(rule)&&" · 必填"}
+          <input aria-label={"搜索规格 "+rule.id} disabled={disabled} placeholder="英文 / 中文"
+            value={specSearch[rule.id]??""} onChange={e=>setSpecSearch(old=>({...old,[rule.id]:e.target.value}))}/>
+        </label>)}
+      </div>}
+      <div className="listing-variant-list">
+        {variants.map((v,i)=><article className="listing-variant-card" key={i} aria-label={"变体 "+(i+1)}>
+          <div className="listing-variant-card-heading">
+            <strong>{variantLabel(v,i)}</strong>
+            <small>来源价格：{v.price? v.price+" "+(v.currency||"币种未确认"):"—"}</small>
+            <button type="button" disabled={disabled} onClick={()=>{
+              set("variants",variants.filter((_,j)=>j!==i));
+              setVariantImageIndex(null);setReuseMode(null);setReuseMessage("");
+            }}>删除</button>
+
+          </div>
+          <div className="listing-variant-card-fields">
+            <label className="listing-field">自定义 SKU<input disabled={disabled} aria-label={"变体 "+(i+1)+" SKU"} value={v.seller_sku}
+              maxLength={120} onChange={e=>updateVariant(i,{seller_sku:e.target.value})} placeholder="自定义 SKU"/></label>
+            <label className="listing-field">采购成本（¥）<input disabled={disabled} aria-label={"变体 "+(i+1)+" 采购成本（¥）"} value={v.purchase_cost_cny??""}
+              inputMode="decimal" maxLength={21} onChange={e=>updateVariant(i,{purchase_cost_cny:e.target.value})} placeholder="CNY"/></label>
+            <label className="listing-field">目标净收益（USD）<input disabled={disabled} aria-label={"变体 "+(i+1)+" 目标净收益（USD）"} value={v.target_net_proceeds_usd??""}
+              inputMode="decimal" maxLength={21} onChange={e=>updateVariant(i,{target_net_proceeds_usd:e.target.value})} placeholder="USD"/></label>
+          </div>
+            <div className="listing-variant-image-action"><button type="button" className="listing-variant-images-button" aria-expanded={variantImageIndex===i} disabled={disabled}
+                onClick={()=>{setVariantImageIndex(variantImageIndex===i?null:i);setVariantImageUrlDraft("");setReuseMode(null);setReuseMessage("");}}>
+                {variantImageIndex===i?"收起图片":"选择图片"} ({v.image_urls.length})
+              </button>
+              <div className="listing-variant-mini-images">
+                {v.image_urls.slice(0,3).map((url,j)=><img key={j} src={url} alt={"变体 "+(i+1)+" 图片 "+(j+1)} loading="lazy" referrerPolicy="no-referrer"/>)}
+              </div>
+            </div>
+          {variantImageIndex===i&&<section className="listing-variant-image-picker" aria-label={"变体 "+(i+1)+" 图片选择"}>
+        <div className="listing-variant-image-picker-head">
+          <strong>{variantLabel(v,i)} · 选择图片</strong>
+          <button type="button" disabled={disabled||!v.image_urls.length||!variants.some((other,j)=>j!==i&&other.image_urls.length>1)}
+            onClick={()=>beginReuse("single",i)}>复用副图</button>
+          <button type="button" onClick={()=>{setVariantImageIndex(null);setReuseMode(null);setReuseMessage("");}}>完成</button>
+        </div>
+        {reuseMode==="single"&&reusePanel}
+        <div className="listing-variant-url-row">
+          <label>变体主图
+            <select disabled={disabled||v.image_urls.length===0}
+              value={v.image_urls[0]??""}
+              onChange={e=>updateVariant(i,{image_urls:[e.target.value,...v.image_urls.filter(url=>url!==e.target.value)]})}>
+              {!v.image_urls.length&&<option value="">请先选择图片</option>}
+              {v.image_urls.map((url,i)=><option key={url} value={url}>已选图片 {i+1}{i===0?"（主图）":""}</option>)}
+            </select>
+          </label>
+          {v.image_urls[0]&&<img width={64} height={64} style={{objectFit:"contain"}} src={v.image_urls[0]} alt="当前变体主图" referrerPolicy="no-referrer"/>}
+        </div>
+        <div className="listing-variant-image-options">
+          {Array.from(new Set([...v.image_urls,...images.map(im=>im.url),...variants.flatMap(other=>other.image_urls)]))
+            .filter(url=>url.trim()!=="").map(url=><label key={url}>
+              <input type="checkbox" disabled={disabled||(v.image_urls.length>=30&&
+                !v.image_urls.includes(url))} checked={v.image_urls.includes(url)}
+                onChange={e=>updateVariant(i,{
+                  image_urls:toggleVariantImage(v.image_urls,url,e.target.checked)
+                })}/>
+              <img src={url} alt="可选变体图片" loading="lazy" referrerPolicy="no-referrer"/>
+              <small>{v.image_urls[0]===url?"主图":v.image_urls.includes(url)?"副图":"未选"}</small>
+            </label>)}
+        </div>
+        <div className="listing-variant-url-row">
+          <input disabled={disabled} aria-label="追加变体图片 URL" placeholder="https://..." value={variantImageUrlDraft}
+            onChange={e=>setVariantImageUrlDraft(e.target.value)}/>
+          <button type="button" disabled={disabled||v.image_urls.length>=30||
+            variantImageUrlDraft.trim().length>2000||!/^https:\/\/\S+$/i.test(variantImageUrlDraft.trim())}
+            onClick={()=>{
+              updateVariant(i,{image_urls:toggleVariantImage(
+                v.image_urls,variantImageUrlDraft.trim(),true)});
+              setVariantImageUrlDraft("");
+            }}>添加链接</button>
+        </div>
+      </section>}
+          <div className="listing-variant-card-specs">
             {childRules.map(rule=>{
               const f=currentSpec(v,rule);
               const issue=specIssue(f,rule);
               const choices=choicesFor(rule);
               const candidate=hasChoices(rule)&&!f?.value&&exactMatch(rule,v);
               const label="变体 "+(i+1)+" "+(rule.name||rule.id);
-              return <td className="listing-variant-official" key={rule.id}>
+              return <div className="listing-variant-official" key={rule.id}>
+                <strong>{bilingual(rule.name||rule.id)}{mandatory(rule)&&" · 必填"}</strong>
                 {supported(rule)?<>
                   {hasChoices(rule)&&<select disabled={disabled} aria-label={label} value={f?.value_id??""}
                     aria-required={mandatory(rule)} aria-invalid={Boolean(issue)}
@@ -491,9 +572,10 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
                 {candidate&&<button type="button" disabled={disabled}
                   onClick={()=>setOfficialSpec(i,rule,candidate.name,String(candidate.id))}>匹配 {bilingual(candidate.name)}</button>}
                 {issue&&<small className="listing-validation">{issue} · 可保存工作稿，刊登前修正</small>}
-              </td>;
+              </div>;
             })}
-            <td className="listing-variant-spec">
+            <div className="listing-variant-spec">
+              <strong>原始规格（参考）</strong>
               {completeKeys[i]&&completeKeys.filter(k=>k===completeKeys[i]).length>1&&<small className="listing-validation">重复官方规格组合 · 可保存工作稿，刊登前修正</small>}
               {(v.category_attributes??[]).filter(a=>a.category_id!==value.category_id||!childRules.some(r=>r.id===a.id)).map(a=><div key={a.category_id+":"+a.id}>
                 <small>历史规格：{a.category_id} · {a.id} · {a.value}</small>
@@ -513,72 +595,11 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
                   let j=1;while(Object.prototype.hasOwnProperty.call(v.attributes,"属性"+j))j++;
                   updateVariant(i,{attributes:{...v.attributes,["属性"+j]:""}});
                 }}>+ 属性</button>
-            </td>
-            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" SKU"} value={v.seller_sku}
-              maxLength={120} onChange={e=>updateVariant(i,{seller_sku:e.target.value})} placeholder="自定义 SKU"/></td>
-            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 采购成本（¥）"} value={v.purchase_cost_cny??""}
-              inputMode="decimal" maxLength={21} onChange={e=>updateVariant(i,{purchase_cost_cny:e.target.value})} placeholder="CNY"/></td>
-            <td><input disabled={disabled} aria-label={"变体 "+(i+1)+" 目标净收益（USD）"} value={v.target_net_proceeds_usd??""}
-              inputMode="decimal" maxLength={21} onChange={e=>updateVariant(i,{target_net_proceeds_usd:e.target.value})} placeholder="USD"/></td>
-            <td><small>{v.price? v.price+" "+(v.currency||"币种未确认"):"—"}</small></td>
-            <td><button type="button" className="listing-variant-images-button" disabled={disabled}
-                onClick={()=>{setVariantImageIndex(variantImageIndex===i?null:i);setVariantImageUrlDraft("");setReuseMode(null);setReuseMessage("");}}>
-                选择图片 ({v.image_urls.length})
-              </button>
-              <div className="listing-variant-mini-images">
-                {v.image_urls.slice(0,3).map((url,j)=><img key={j} src={url} alt={"变体 "+(i+1)+" 图片 "+(j+1)} loading="lazy" referrerPolicy="no-referrer"/>)}
-              </div>
-            </td>
-            <td><button type="button" disabled={disabled} onClick={()=>{
-              set("variants",variants.filter((_,j)=>j!==i));
-              setVariantImageIndex(null);setReuseMode(null);setReuseMessage("");
-            }}>删除</button></td>
-          </tr>)}</tbody>
-        </table>
+            </div>
+          </div>
+        </article>)}
       </div>
       {variants.length===0&&<p className="listing-fields-note">未采集到变体，可点击“添加变体”手动填写真实规格。</p>}
-      {variantImageIndex!==null&&variants[variantImageIndex]&&<section className="listing-variant-image-picker" aria-label={"变体 "+(variantImageIndex+1)+" 图片选择"}>
-        <div className="listing-variant-image-picker-head">
-          <strong>{variantLabel(variants[variantImageIndex],variantImageIndex)} · 选择图片</strong>
-          <button type="button" disabled={disabled||!variants[variantImageIndex].image_urls.length||!variants.some((v,i)=>i!==variantImageIndex&&v.image_urls.length>1)}
-            onClick={()=>beginReuse("single",variantImageIndex)}>复用副图</button>
-          <button type="button" onClick={()=>{setVariantImageIndex(null);setReuseMode(null);setReuseMessage("");}}>完成</button>
-        </div>
-        {reuseMode==="single"&&reusePanel}
-        <div className="listing-variant-url-row">
-          <label>变体主图
-            <select disabled={disabled||variants[variantImageIndex].image_urls.length===0}
-              value={variants[variantImageIndex].image_urls[0]??""}
-              onChange={e=>updateVariant(variantImageIndex,{image_urls:[e.target.value,...variants[variantImageIndex].image_urls.filter(url=>url!==e.target.value)]})}>
-              {!variants[variantImageIndex].image_urls.length&&<option value="">请先选择图片</option>}
-              {variants[variantImageIndex].image_urls.map((url,i)=><option key={url} value={url}>已选图片 {i+1}{i===0?"（主图）":""}</option>)}
-            </select>
-          </label>
-          {variants[variantImageIndex].image_urls[0]&&<img width={64} height={64} style={{objectFit:"contain"}} src={variants[variantImageIndex].image_urls[0]} alt="当前变体主图" referrerPolicy="no-referrer"/>}
-        </div>
-        <div className="listing-variant-image-options">
-          {Array.from(new Set([...images.map(im=>im.url),...variants[variantImageIndex].image_urls]))
-            .filter(url=>url.trim()!=="").map(url=><label key={url}>
-              <input type="checkbox" disabled={disabled||(variants[variantImageIndex].image_urls.length>=30&&
-                !variants[variantImageIndex].image_urls.includes(url))} checked={variants[variantImageIndex].image_urls.includes(url)}
-                onChange={e=>updateVariant(variantImageIndex,{
-                  image_urls:toggleVariantImage(variants[variantImageIndex].image_urls,url,e.target.checked)
-                })}/>
-              <img src={url} alt="可选变体图片" loading="lazy" referrerPolicy="no-referrer"/>
-            </label>)}
-        </div>
-        <div className="listing-variant-url-row">
-          <input disabled={disabled} aria-label="追加变体图片 URL" placeholder="https://..." value={variantImageUrlDraft}
-            onChange={e=>setVariantImageUrlDraft(e.target.value)}/>
-          <button type="button" disabled={disabled||variants[variantImageIndex].image_urls.length>=30||
-            variantImageUrlDraft.trim().length>2000||!/^https:\/\/\S+$/i.test(variantImageUrlDraft.trim())}
-            onClick={()=>{
-              updateVariant(variantImageIndex,{image_urls:toggleVariantImage(
-                variants[variantImageIndex].image_urls,variantImageUrlDraft.trim(),true)});
-              setVariantImageUrlDraft("");
-            }}>添加链接</button>
-        </div>
-      </section>}
     </fieldset>
     <fieldset className="listing-editor-panel">
       <legend>商品卖点</legend>

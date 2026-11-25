@@ -335,3 +335,19 @@
   .listing-gallery-wall { grid-template-columns: repeat(auto-fill,minmax(100px,1fr)); }
   .listing-language-tabs button { flex: 1 1 28%; }
 }
+
+/* Keep each variant's controls visible inside a narrow detail pane. */
+.listing-variant-list { display: grid; gap: 12px; min-width: 0; }
+.listing-variant-card { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--ui-outline); border-radius: 10px; background: var(--ui-surface); }
+.listing-variant-card-heading, .listing-variant-image-action { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.listing-variant-card-heading strong { flex: 1 1 150px; overflow-wrap: anywhere; }
+.listing-variant-card-heading small { color: var(--ui-muted); }
+.listing-variant-card-fields, .listing-variant-card-specs, .listing-variant-rule-search { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; min-width: 0; }
+.listing-variant-card .listing-variant-spec { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.listing-variant-card .listing-variant-official { display: grid; align-content: start; gap: 5px; min-width: 0; }
+.listing-variant-card input:not([type="checkbox"]), .listing-variant-rule-search input { box-sizing: border-box; width: 100%; min-width: 0; padding: 7px; border: 1px solid var(--ui-outline); border-radius: 7px; background: var(--ui-surface); color: var(--ui-text); }
+.listing-variant-card button { border: 1px solid var(--ui-outline); border-radius: 7px; padding: 6px 8px; background: var(--ui-surface); color: var(--ui-text); cursor: pointer; }
+.listing-variant-card .listing-variant-mini-images { margin: 0; }
+.listing-variant-card .listing-variant-mini-images img { width: 42px; height: 42px; }
+.listing-variant-card .listing-variant-image-picker-head { flex-wrap: wrap; }
+.listing-variant-card .listing-variant-image-options label:has(input:checked) { border-color: #5284c8; }

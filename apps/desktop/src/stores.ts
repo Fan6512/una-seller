@@ -45,11 +45,13 @@ export type ListingPage = { items: Listing[]; has_more: boolean; synced_at: stri
 export class StoreRequestError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly retryAfter: string | null;
 
-  constructor(message: string, status: number, code = "") {
+  constructor(message: string, status: number, code = "", retryAfter: string | null = null) {
     super(message);
     this.status = status;
     this.code = code;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -203,7 +205,7 @@ export async function storeRequest<T>(path: string, method: "GET" | "POST", sign
       assertActive();
       diagnostic?.("failed", response, detail?.error);
       const code = detail?.error || "order_unavailable";
-      throw new StoreRequestError(errorLabel(code, response.status), response.status, code);
+      throw new StoreRequestError(errorLabel(code, response.status), response.status, code, response.headers.get("Retry-After"));
     }
     diagnostic?.("failed", response);
     const reason = ({

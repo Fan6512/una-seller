@@ -282,3 +282,7 @@
   .orders-notice, .orders-review { flex-direction: column; align-items: flex-start; }
   .orders-review-actions { justify-content: flex-start; }
 }
+
+.orders-tracking-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.orders-tracking-actions select { min-width: 0; max-width: 100%; padding: 5px; border: 1px solid var(--ui-outline); border-radius: 6px; background: var(--ui-surface); color: var(--ui-text); }
+.orders-tracking-actions small { flex: 1 1 100%; color: var(--ui-muted); }

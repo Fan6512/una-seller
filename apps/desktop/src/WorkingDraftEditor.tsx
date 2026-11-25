@@ -65,9 +65,9 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   }, [touched,dirty,onDirtyChange]);
   const editable = !locked && loadState === "ready" && !saving;
   const titleCount = listingTextCount(fields.title);
-  const descriptionCount = charCount(fields.description);
+  const legacyDescriptionOversize = charCount(fields.description) > 20000;
   const notesCount = charCount(fields.notes);
-  const validation = descriptionCount > 20000 ? "商品描述不能超过 20000 字符"
+  const validation = legacyDescriptionOversize ? "历史描述超过 20000 字符，请先处理历史数据"
     : notesCount > 5000 ? "整理备注不能超过 5000 字符"
     : titleCount > 500 ? "商品标题不能超过 500 字符"
     : validateListingFields(fields.listing_fields, saved?.listing_fields.titles);
@@ -137,11 +137,14 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
         setTouched(true);setNotice("");
       }} />
-    <label>旧版整理描述（历史参考，非默认刊登）
-      <textarea rows={5} value={fields.description} readOnly={!editable}
-        onChange={(e) => change("description", e.target.value)} />
-      <small>{descriptionCount} / 20000 字符</small>
-    </label>
+    {legacyDescriptionOversize&&<details className="listing-fields-note">
+      <summary>历史描述过长 · 查看及处理（非刊登描述）</summary>
+      <textarea rows={4} readOnly value={fields.description} aria-label="超长历史描述，只读"/>
+      <p>请先复制需要保留的历史文本。正常历史描述不会显示或被删除。</p>
+      <button type="button" disabled={!editable} onClick={()=>{
+        if(window.confirm("确认清空超长历史描述？正式多语言商品描述不受影响。"))change("description","");
+      }}>清空超长历史描述</button>
+    </details>}
     <label>供应商 / 规格 / 包装等整理备注（仅内部使用，不直接刊登）
       <textarea rows={3} value={fields.notes} readOnly={!editable}
         onChange={(e) => change("notes", e.target.value)} />

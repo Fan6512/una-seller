@@ -59,6 +59,9 @@ func writeOrderBillingError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	case code == "order_rate_limited":
 		status = http.StatusTooManyRequests
+		// Retry-After is not a CORS-safelisted response header. Expose only
+		// this non-sensitive value; the existing origin and owner gates remain.
+		w.Header().Set("Access-Control-Expose-Headers", "Retry-After")
 		var cooldown *meli.OrderRateLimitError
 		if errors.As(err, &cooldown) {
 			w.Header().Set("Retry-After", cooldown.RetryAfter())

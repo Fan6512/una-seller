@@ -240,8 +240,10 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const purchaseDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<OrderRecord | null>(null);
   const billingCache = useRef<OrderBillingCache>(new Map());
+  const billingCooldown = useRef({until:0});
   const [detailError, setDetailError] = useState("");
   const [trackingError, setTrackingError] = useState("");
+  const [trackingProvider, setTrackingProvider] = useState<"track718" | "17track">("track718");
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedRowScope, setSelectedRowScope] = useState<OrderScope | null>(null);
   const billingKey = detail ? JSON.stringify([orderRecordKey(detail, selectedRowScope ?? scope), detail.last_updated, detail.shipment_id]) : "";
@@ -810,17 +812,30 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     else setActiveQuery(input);
   };
   const trackingURL = officialTrackingURL(detail?.shipment?.details?.tracking_url);
-  const openOfficialTracking = async (external: boolean) => {
-    if (!trackingURL) return;
+  const trackingNumber = detail?.shipment?.tracking_number?.trim() || "";
+  const providerURL = trackingProvider === "track718" ? "https://www.track718.com/zh-CN" : "https://t.17track.net/zh-cn";
+  const openTracking = async (url: string, carrier: string, external: boolean, copyNumber = false) => {
+    if (!url) return;
     setTrackingError("");
+    if (!external && !isTauri()) {
+      setTrackingError("当前运行环境无法打开客户端独立窗口，请选择在浏览器中打开。");
+      return;
+    }
+    if (copyNumber && trackingNumber) {
+      if (navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(trackingNumber).then(
+          ()=>setNotice("已复制平台运单号，请在查询网站粘贴"),
+          ()=>setNotice("复制失败，请使用平台运单号旁的复制按钮或手动复制。"));
+      } else {
+        setNotice("请手动复制平台运单号。");
+      }
+    }
     if (!isTauri()) {
-      window.open(trackingURL, "_blank", "noopener,noreferrer");
+      window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
     try {
-      await invoke("official_tracking", {
-        url: trackingURL, carrier: detail?.shipment?.details?.carrier_name ?? "", external,
-      });
+      await invoke("official_tracking", {url, carrier, external});
     } catch (error) {
       setTrackingError(typeof error === "string" ? error : "无法加载物流查询，请在浏览器中打开。");
     }
@@ -1097,14 +1112,22 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                   {detail.shipment?.first_mile_carrier && <><dt>首程承运商</dt><dd>{detail.shipment.first_mile_carrier}</dd></>}
                   <dt>官方承运商</dt><dd>{detail.shipment?.details
                     ? (detail.shipment.details.carrier_name || "平台未提供") : "尚未读取"}</dd>
-                  <dt>物流查询</dt><dd>{detail.shipment?.details
-                    ? (trackingURL
-                      ? <>
-                        <button type="button" onClick={() => void openOfficialTracking(false)}>官方物流查询</button>{" "}
-                        <button type="button" onClick={() => void openOfficialTracking(true)}>在浏览器中打开</button>{" "}
-                        <button type="button" onClick={() => copy(trackingURL)}>复制地址</button>
-                        {trackingError && <small role="alert">{trackingError}</small>}
-                      </> : "平台未提供") : "尚未读取"}</dd>
+                  <dt>物流查询</dt><dd>
+                    {trackingNumber ? <div className="orders-tracking-actions">
+                      <select aria-label="物流查询平台" value={trackingProvider} onChange={e=>{setTrackingProvider(e.target.value==="17track"?"17track":"track718");setTrackingError("");}}>
+                        <option value="track718">Track718</option><option value="17track">17TRACK</option>
+                      </select>
+                      <button type="button" onClick={()=>void openTracking(providerURL,trackingProvider==="track718"?"Track718":"17TRACK",false,true)}>独立窗口查询</button>
+                      <button type="button" onClick={()=>void openTracking(providerURL,trackingProvider==="track718"?"Track718":"17TRACK",true,true)}>浏览器查询</button>
+                      <small>打开查询平台并复制运单号，粘贴后查询。</small>
+                    </div> : <small>平台未提供运单号</small>}
+                    {trackingURL && <>
+                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",false)}>官方物流查询</button>{" "}
+                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",true)}>在浏览器中打开</button>{" "}
+                      <button type="button" onClick={()=>copy(trackingURL)}>复制地址</button>
+                    </>}
+                    {trackingError && <small role="alert">{trackingError}</small>}
+                  </dd>
                   <dt>官方实际发货</dt><dd>{detail.shipment?.shipped_at
                     ? <time title="北京时间" dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
                     : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
@@ -1135,7 +1158,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 </ol> : <p className="orders-muted">{detail.shipment.details.history
                   ? "平台暂无物流事件。" : "平台未提供物流历史。"}</p>}
               </section>}
-              <OrderProfitCard key={billingKey} cacheKey={billingKey} cache={billingCache.current}
+              <OrderProfitCard key={billingKey} cacheKey={billingKey} cache={billingCache.current} rateLimit={billingCooldown.current}
                 order={detail} scope={selectedRowScope ?? scope}
                 disabled={running || Boolean(logisticsAction) || refreshingOrder || installingUpdate}/>
               <section className="orders-detail-block">
