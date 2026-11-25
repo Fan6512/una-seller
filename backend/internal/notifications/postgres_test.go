@@ -493,3 +493,46 @@ func TestNotificationPostgresRestart(t *testing.T) {
 		t.Fatalf("unknown TEST_RESTART_PHASE %q", phase)
 	}
 }
+
+// A persisted cooldown protects one store across topics, never another store,
+// and releases exactly at its boundary instead of waiting for a new receipt.
+func TestNotificationCooldownBoundaryPostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	ready := func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID,
+			Apply: func(context.Context, LocalWriter) error { return nil }}, nil
+	}
+	worker := NewWorker(p, testApp, map[string]Prepare{testOrder: ready, testShipment: ready})
+	assertACK(t, h, 200, testOrder, "997", testChildA, "cooldown-a")
+	assertACK(t, h, 200, testShipment, "897", testChildA, "cooldown-b")
+	j, err := worker.claim(ctx)
+	if err != nil || j.Topic != testOrder || j.ResourceID != "997" {
+		t.Fatalf("unexpected first claim: %+v %v", j, err)
+	}
+	if err := worker.retry(ctx, j, &RateLimited{RetryAfter: 90 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_cooldowns
+		WHERE store_id=$1 AND available_at BETWEEN now()+interval '85 seconds' AND now()+interval '91 seconds'`, testStoreA)
+	if _, err := worker.claim(ctx); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cooldown leaked another topic of the same store: %v", err)
+	}
+
+	assertACK(t, h, 200, testShipment, "896", testChildB, "cooldown-c")
+	other, err := worker.claim(ctx)
+	if err != nil || other.ResourceID != "896" {
+		t.Fatalf("cooldown blocked another store: %+v %v", other, err)
+	}
+
+	// Advance the persisted boundary instead of sleeping in CI.
+	mustExec(t, ctx, p, `UPDATE app.meli_notification_cooldowns SET available_at=now()-interval '1 second' WHERE store_id=$1`, testStoreA)
+	released, err := worker.claim(ctx)
+	if err != nil || released.ResourceID != "897" || released.StoreID != testStoreA {
+		t.Fatalf("cooldown did not release at its boundary: %+v %v", released, err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+		WHERE store_id=$1 AND resource_id='997' AND last_failure='rate_limited' AND dead_at IS NULL`, testStoreA)
+}

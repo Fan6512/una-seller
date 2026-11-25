@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/notifications"
+	"github.com/jackc/pgx/v5"
 )
 
 const maxNotificationShipmentOrders = 10
@@ -104,6 +105,11 @@ func checkNotifiedOrderScope(ctx context.Context, tx notifications.LocalWriter, 
  WHERE id=$1::uuid AND owner_user_id=$2::uuid AND seller_id=$3
  AND status='connected' AND marketplaces_status='verified' FOR SHARE`,
 		job.StoreID, job.OwnerID, job.ParentSellerID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The mapping was revoked or replaced between the official read and the
+		// commit. Report it as a scope rejection, not a generic handler failure.
+		return notifications.ErrScope
+	}
 	if err != nil {
 		return err
 	}
