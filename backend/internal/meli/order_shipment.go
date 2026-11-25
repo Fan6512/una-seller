@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var ErrOrderShipmentMissing = errors.New("shipment missing or unavailable")
@@ -110,107 +112,11 @@ func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string,
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	var payload struct {
-		ID               json.Number `json:"id"`
-		Status           string      `json:"status"`
-		Substatus        string      `json:"substatus"`
-		TrackingNumber   string      `json:"tracking_number"`
-		LogisticType     string      `json:"logistic_type"`
-		FirstMileCarrier string      `json:"fm_carrier"`
-		LastUpdated      *time.Time  `json:"last_updated"`
-		Logistic         struct {
-			Type string `json:"type"`
-		} `json:"logistic"`
-		StatusHistory struct {
-			Shipped   string `json:"date_shipped"`
-			Delivered string `json:"date_delivered"`
-		} `json:"status_history"`
-	}
-	path := "/marketplace/shipments/" + order.ShipmentID
-	code, err := s.orderGET(fetchCtx, auth.AccessToken, path, &payload)
-	switch code {
-	case http.StatusNotFound:
-		return OrderRecord{}, ErrOrderShipmentMissing
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return OrderRecord{}, ErrOrderShipmentDenied
-	}
+	snapshot, _, _, err := s.fetchShipmentSnapshot(fetchCtx, auth.AccessToken, order.ShipmentID, checkedAt, withDetails)
 	if err != nil {
 		return OrderRecord{}, err
 	}
-	if payload.LogisticType == "" {
-		payload.LogisticType = payload.Logistic.Type
-	}
-	if code != http.StatusOK || payload.ID.String() != order.ShipmentID || payload.Status == "" ||
-		!ValidOrderStatus(payload.Status) || !ValidOrderStatus(payload.Substatus) ||
-		!ValidOrderStatus(payload.LogisticType) || len(payload.TrackingNumber) > 200 ||
-		strings.IndexFunc(payload.TrackingNumber, unicode.IsControl) >= 0 {
-		return OrderRecord{}, ErrOrderInvalidResponse
-	}
-	snapshot := OrderShipment{
-		ID: order.ShipmentID, Status: payload.Status, Substatus: payload.Substatus,
-		TrackingNumber: payload.TrackingNumber, LogisticType: payload.LogisticType,
-		FirstMileCarrier: shipmentCarrierName(payload.FirstMileCarrier),
-		ShippedAt:        shipmentEventTime(payload.StatusHistory.Shipped),
-		DeliveredAt:      shipmentEventTime(payload.StatusHistory.Delivered),
-		LastUpdated:      payload.LastUpdated, CheckedAt: checkedAt,
-	}
-	var details *OrderShipmentDetails
-	if withDetails {
-		details, err = s.fetchOrderShipmentDetails(fetchCtx, auth.AccessToken, path)
-		if err != nil {
-			return OrderRecord{}, err
-		}
-		details.CheckedAt = checkedAt
-		snapshot.Details = details
-		for _, event := range details.History {
-			// A timestamp for a substatus update cannot date the status transition.
-			if event.Substatus != "" {
-				continue
-			}
-			switch {
-			case event.Status == "shipped" && snapshot.ShippedAt == nil:
-				snapshot.ShippedAt = &event.Date
-			case event.Status == "delivered" && snapshot.DeliveredAt == nil && snapshot.Status != "not_delivered" && snapshot.Status != "cancelled":
-				snapshot.DeliveredAt = &event.Date
-			}
-		}
-	}
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return OrderRecord{}, err
-	}
-	// Lock the store mapping while checking the order's current shipment. A
-	// late response cannot attach to a replaced shipment or a revoked mapping.
-	tag, err := s.db.Exec(ctx, `WITH authorized AS (
- SELECT c.id FROM app.meli_store_connections c
- WHERE c.id=$1::uuid AND c.owner_user_id=$2::uuid
-   AND c.status='connected' AND c.marketplaces_status='verified' AND c.seller_id=$9
-   AND EXISTS (
-     SELECT 1 FROM jsonb_array_elements(c.marketplaces) AS m(value)
-     WHERE m.value->>'site_id'=$3 AND m.value->>'logistic_type'=$4 AND m.value->>'user_id'=$5
-   )
- FOR SHARE
-)
-UPDATE app.meli_orders o SET shipment_snapshot=CASE
- WHEN o.shipment_snapshot->>'shipment_id'=$7
-   AND (
-     (o.shipment_snapshot->>'last_updated')::timestamptz > $10
-     OR ($10::timestamptz IS NULL AND (o.shipment_snapshot->>'last_updated') IS NOT NULL)
-     OR ((o.shipment_snapshot->>'last_updated')::timestamptz IS NOT DISTINCT FROM $10::timestamptz
-         AND (o.shipment_snapshot->>'checked_at')::timestamptz > $11)
-   )
- THEN o.shipment_snapshot
- ELSE $8::jsonb || jsonb_strip_nulls(jsonb_build_object(
-   'shipped_at', COALESCE($8::jsonb->'shipped_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'shipped_at' END),
-   'delivered_at', COALESCE($8::jsonb->'delivered_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7
-     AND COALESCE($8::jsonb->>'status','') NOT IN ('not_delivered','cancelled') THEN o.shipment_snapshot->'delivered_at' END),
-   'details', COALESCE($8::jsonb->'details', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'details' END)
- )) END
-FROM authorized c
-WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
- AND o.order_id=$6 AND o.shipment_id=$7`,
-		store, owner, scope.Site, scope.Logistic, childID, orderID, order.ShipmentID, data,
-		auth.SellerID, payload.LastUpdated, checkedAt)
+	tag, err := writeOrderShipmentSnapshot(ctx, s.db, owner, store, scope, childID, orderID, auth.SellerID, snapshot)
 	if err != nil {
 		return OrderRecord{}, err
 	}
@@ -241,10 +147,121 @@ WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
 		return OrderRecord{}, err
 	}
 	if result.ShipmentID != order.ShipmentID || result.Shipment == nil ||
-		(details != nil && !result.Shipment.CheckedAt.Equal(checkedAt)) {
+		(snapshot.Details != nil && !result.Shipment.CheckedAt.Equal(checkedAt)) {
 		return OrderRecord{}, ErrOrderShipmentChanged
 	}
 	return result, nil
+}
+
+// fetchShipmentSnapshot shares the official parser with manual and notification reads.
+func (s *Service) fetchShipmentSnapshot(ctx context.Context, token, shipmentID string, checkedAt time.Time, withDetails bool) (OrderShipment, string, string, error) {
+	var payload struct {
+		ID               json.Number `json:"id"`
+		SenderID         json.Number `json:"sender_id"`
+		SiteID           string      `json:"site_id"`
+		Status           string      `json:"status"`
+		Substatus        string      `json:"substatus"`
+		TrackingNumber   string      `json:"tracking_number"`
+		LogisticType     string      `json:"logistic_type"`
+		FirstMileCarrier string      `json:"fm_carrier"`
+		LastUpdated      *time.Time  `json:"last_updated"`
+		Logistic         struct {
+			Type string `json:"type"`
+		} `json:"logistic"`
+		StatusHistory struct {
+			Shipped   string `json:"date_shipped"`
+			Delivered string `json:"date_delivered"`
+		} `json:"status_history"`
+	}
+	path := "/marketplace/shipments/" + shipmentID
+	code, err := s.orderGET(ctx, token, path, &payload)
+	switch code {
+	case http.StatusNotFound:
+		return OrderShipment{}, "", "", ErrOrderShipmentMissing
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return OrderShipment{}, "", "", ErrOrderShipmentDenied
+	}
+	if err != nil {
+		return OrderShipment{}, "", "", err
+	}
+	if payload.LogisticType == "" {
+		payload.LogisticType = payload.Logistic.Type
+	}
+	if code != http.StatusOK || payload.ID.String() != shipmentID || payload.Status == "" ||
+		!ValidOrderStatus(payload.Status) || !ValidOrderStatus(payload.Substatus) ||
+		!ValidOrderStatus(payload.LogisticType) || len(payload.TrackingNumber) > 200 ||
+		strings.IndexFunc(payload.TrackingNumber, unicode.IsControl) >= 0 {
+		return OrderShipment{}, "", "", ErrOrderInvalidResponse
+	}
+	snapshot := OrderShipment{
+		ID: shipmentID, Status: payload.Status, Substatus: payload.Substatus,
+		TrackingNumber: payload.TrackingNumber, LogisticType: payload.LogisticType,
+		FirstMileCarrier: shipmentCarrierName(payload.FirstMileCarrier),
+		ShippedAt:        shipmentEventTime(payload.StatusHistory.Shipped),
+		DeliveredAt:      shipmentEventTime(payload.StatusHistory.Delivered),
+		LastUpdated:      payload.LastUpdated, CheckedAt: checkedAt,
+	}
+	if withDetails {
+		details, err := s.fetchOrderShipmentDetails(ctx, token, path)
+		if err != nil {
+			return OrderShipment{}, "", "", err
+		}
+		details.CheckedAt = checkedAt
+		snapshot.Details = details
+		for _, event := range details.History {
+			// A timestamp for a substatus update cannot date the status transition.
+			if event.Substatus != "" {
+				continue
+			}
+			switch {
+			case event.Status == "shipped" && snapshot.ShippedAt == nil:
+				snapshot.ShippedAt = &event.Date
+			case event.Status == "delivered" && snapshot.DeliveredAt == nil && snapshot.Status != "not_delivered" && snapshot.Status != "cancelled":
+				snapshot.DeliveredAt = &event.Date
+			}
+		}
+	}
+	return snapshot, payload.SenderID.String(), payload.SiteID, nil
+}
+
+// writeOrderShipmentSnapshot retains the manual refresh's scope and stale guards.
+func writeOrderShipmentSnapshot(ctx context.Context, tx orderWriter, owner, store string, scope OrderScope, childID, orderID, parent string, snapshot OrderShipment) (pgconn.CommandTag, error) {
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return pgconn.CommandTag{}, err
+	}
+	// Lock the store mapping while checking the order's current shipment. A
+	// late response cannot attach to a replaced shipment or a revoked mapping.
+	return tx.Exec(ctx, `WITH authorized AS (
+ SELECT c.id FROM app.meli_store_connections c
+ WHERE c.id=$1::uuid AND c.owner_user_id=$2::uuid
+   AND c.status='connected' AND c.marketplaces_status='verified' AND c.seller_id=$9
+   AND EXISTS (
+     SELECT 1 FROM jsonb_array_elements(c.marketplaces) AS m(value)
+     WHERE m.value->>'site_id'=$3 AND m.value->>'logistic_type'=$4 AND m.value->>'user_id'=$5
+   )
+ FOR SHARE
+)
+UPDATE app.meli_orders o SET shipment_snapshot=CASE
+ WHEN o.shipment_snapshot->>'shipment_id'=$7
+   AND (
+     (o.shipment_snapshot->>'last_updated')::timestamptz > $10
+     OR ($10::timestamptz IS NULL AND (o.shipment_snapshot->>'last_updated') IS NOT NULL)
+     OR ((o.shipment_snapshot->>'last_updated')::timestamptz IS NOT DISTINCT FROM $10::timestamptz
+         AND (o.shipment_snapshot->>'checked_at')::timestamptz > $11)
+   )
+ THEN o.shipment_snapshot
+ ELSE $8::jsonb || jsonb_strip_nulls(jsonb_build_object(
+   'shipped_at', COALESCE($8::jsonb->'shipped_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'shipped_at' END),
+   'delivered_at', COALESCE($8::jsonb->'delivered_at', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7
+     AND COALESCE($8::jsonb->>'status','') NOT IN ('not_delivered','cancelled') THEN o.shipment_snapshot->'delivered_at' END),
+   'details', COALESCE($8::jsonb->'details', CASE WHEN o.shipment_snapshot->>'shipment_id'=$7 THEN o.shipment_snapshot->'details' END)
+ )) END
+FROM authorized c
+WHERE o.store_id=c.id AND o.site_id=$3 AND o.logistic_type=$4 AND o.seller_id=$5
+ AND o.order_id=$6 AND o.shipment_id=$7`,
+		store, owner, scope.Site, scope.Logistic, childID, orderID, snapshot.ID, data,
+		parent, snapshot.LastUpdated, snapshot.CheckedAt)
 }
 
 func (s *Service) fetchOrderShipmentDetails(ctx context.Context, token, path string) (*OrderShipmentDetails, error) {

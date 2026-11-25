@@ -847,6 +847,9 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 	if strings.HasPrefix(path, "/marketplace/shipments/") {
 		req.Header.Set("x-format-new", "true")
 	}
+	if strings.HasPrefix(path, "/shipments/") && strings.HasSuffix(path, "/orders") {
+		req.Header.Set("X-New-Domain", "true")
+	}
 	var written atomic.Bool
 	if timing == nil {
 		timing = &listingGETTiming{}

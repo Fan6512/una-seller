@@ -117,7 +117,7 @@ func main() {
 		}
 		inbox := notifications.PostgresInbox{DB: db}
 		// WH-03 must register both real read-only handlers before activation.
-		worker := notifications.NewWorker(inbox, id, nil)
+		worker := notifications.NewWorker(inbox, id, meliService.NotificationHandlers())
 		if err := worker.ValidateActivation(); err != nil {
 			log.Fatal(err)
 		}
