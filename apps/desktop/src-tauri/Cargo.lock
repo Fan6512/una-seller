@@ -4198,6 +4198,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-updater",
+ "webview2-com",
 ]
 
 [[package]]

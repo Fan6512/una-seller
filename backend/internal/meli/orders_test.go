@@ -79,6 +79,52 @@ func containsBytes(data, fragment []byte) bool {
 	return false
 }
 
+func TestOrderSalesAmountUsesScopedMerchandiseLines(t *testing.T) {
+	raw := []byte(`{
+	  "id":101,"pack_id":920,"status":"paid","site_id":"MLB","seller":{"id":777},
+	  "currency_id":"USD","total_amount":67.23,"date_created":"2026-11-01T11:00:00Z",
+	  "last_updated":"2026-11-01T11:00:00Z","order_items":[
+	    {"element_id":1,"item":{"id":"MLB101"},"quantity":2,"unit_price":11.28,"currency_id":"USD"},
+	    {"element_id":1,"item":{"id":"MLB101"},"quantity":2,"unit_price":11.28,"currency_id":"USD"},
+	    {"element_id":2,"item":{"id":"MLB101"},"quantity":3,"unit_price":0.01000001,"currency_id":"USD"}
+	  ]}`)
+	order, err := parseOrderDetail(raw, "101", "777", "MLB")
+	if err != nil || order.TotalAmount != "67.23" || order.PackID != "920" || len(order.Items) != 2 {
+		t.Fatalf("merchant detail was not preserved and deduplicated: %+v, %v", order, err)
+	}
+	if order.Items[0].ElementID != "1" || order.Items[1].ElementID != "2" {
+		t.Fatalf("element IDs were not preserved: %+v", order.Items)
+	}
+	if got := orderSalesAmountUSD(order.Items); got != "22.59000003" {
+		t.Fatalf("USD sales per Order = %q", got)
+	}
+	order.Items[1].CurrencyID = "BRL"
+	if got := orderSalesAmountUSD(order.Items); got != "" {
+		t.Fatalf("mixed currency displayed as USD: %q", got)
+	}
+	if got := orderSalesAmountUSD([]OrderLine{{CurrencyID: "USD", UnitPrice: "0.00", Quantity: 1}}); got != "0.00" {
+		t.Fatalf("explicit zero USD sale missing: %q", got)
+	}
+}
+
+func TestLegacyOrderDuplicateCandidatesRequireReview(t *testing.T) {
+	first := OrderLine{ItemID: "MLB101", Quantity: 1, UnitPrice: "11.28", CurrencyID: "USD"}
+	second := first
+	second.UnitPrice = "11.2800"
+	items := []OrderLine{first, second}
+	if !orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "" {
+		t.Fatal("legacy duplicate candidate was shown as confirmed sales")
+	}
+	items[0].ElementID = "1"
+	if !orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "" {
+		t.Fatal("mixed known and missing element IDs must require review")
+	}
+	items[1].ElementID = "2"
+	if orderItemsNeedReview(items) || orderSalesAmountUSD(items) != "22.56" {
+		t.Fatal("distinct official elements were incorrectly treated as duplicates")
+	}
+}
+
 func TestOrderScopeAndStatusValidation(t *testing.T) {
 	for _, scope := range []OrderScope{{"CBT", ""}, {"MLB", ""}, {"mlb", "remote"}, {"MLB", "remote/sub"}, {"ML1", "remote"},
 		{"ML A", "remote"}, {"M!A", "remote"}, {"MÉX", "remote"}, {"AA", "remote"}, {"ABCDEFGHI", "remote"}} {

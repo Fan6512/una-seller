@@ -39,6 +39,8 @@ export type OrderRecord = {
   status: string;
   currency_id: string;
   total_amount: string;
+  sales_amount_usd?: string;
+  order_items_review_required?: boolean;
   date_created: string;
   last_updated: string;
   shipment_id?: string;
@@ -141,10 +143,33 @@ export function orderStatusLabel(status: string) {
   };
   return labels[status] || status || "未知状态";
 }
-// Platform payment status is authoritative; procurement is a separate manually verified fact.
-// Shipment ID and dispatch SLA cannot establish "shipped" or "delivered".
+// Keep raw transaction status separate. Only a current official shipment can
+// refine a paid order's display; refunds/cancellations and unpaid states win.
+export function orderFulfillmentStatus(order: OrderRecord): string {
+  if (order.status !== "paid" || !order.shipment_id ||
+      order.shipment?.shipment_id !== order.shipment_id) return order.status;
+  const { status, substatus } = order.shipment;
+  if (status === "ready_to_ship" && substatus === "printed") return "label_printed";
+  if (["pending", "handling", "ready_to_ship"].includes(status)) return "awaiting_dispatch";
+  if (status === "delivered") return "delivered";
+  if (status === "cancelled") return "shipment_cancelled";
+  if (status === "not_delivered") return "logistics_exception";
+  if (status === "shipped") {
+    if (["receiver_absent", "bad_address", "delivery_blocked", "impassable_zone"].includes(substatus ?? "")) return "logistics_exception";
+    if (["out_for_delivery", "soon_deliver", "at_the_door"].includes(substatus ?? "")) return "out_for_delivery";
+    if (substatus === "in_transit") return "in_transit";
+    return "shipped";
+  }
+  return order.status;
+}
 export function displayOrderStatus(order: OrderRecord) {
-  return orderStatusLabel(order.status);
+  const state = orderFulfillmentStatus(order);
+  const labels: Record<string, string> = {
+    label_printed: "标签已打印", awaiting_dispatch: "待发货", delivered: "已签收",
+    shipment_cancelled: "物流已取消", logistics_exception: "物流异常",
+    out_for_delivery: "派送中", in_transit: "运输中", shipped: "已发货",
+  };
+  return Object.hasOwn(labels, state) ? labels[state] : orderStatusLabel(state);
 }
 
 export function shipmentStatusLabel(shipment?: Pick<OrderShipment, "status" | "substatus">) {
@@ -175,8 +200,30 @@ export function orderVariationText(line?: OrderLine) {
 export function orderDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN", {
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   });
+}
+export function officialTrackingURL(value?: string) {
+  if (!value || value.length > 2048 || /[\\\s]/.test(value)) return "";
+  try {
+    const url = new URL(value);
+    const tld = url.hostname.split(".").at(-1) ?? "";
+    return url.protocol === "https:" && !url.username && !url.password && !url.port &&
+      url.hostname.includes(".") && /^[a-z]{2,}$/.test(tld) &&
+      !["localhost", "local", "internal", "test", "invalid", "example", "onion", "arpa"].includes(tld)
+      ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+export function orderUSD(value?: string) {
+  if (!value || !/^\d+(\.\d+)?$/.test(value)) return "待核实";
+  const [whole, fraction = ""] = value.split(".");
+  const padded = fraction.padEnd(3, "0");
+  // Display cents, preserving the exact decimal string in the order record.
+  const cents = BigInt(whole) * 100n + BigInt(padded.slice(0, 2)) + (padded[2] >= "5" ? 1n : 0n);
+  return "USD " + (cents / 100n).toString() + "." + (cents % 100n).toString().padStart(2, "0");
 }
 export function orderMoney(value: string, currency: string) {
   const symbols: Record<string, string> = {
@@ -235,7 +282,7 @@ export function searchOrders(storeId: string, site: string, logistic: string, qu
     throw error;
   });
 }
-// A user-clicked, read-only official item query which only caches a trusted image URL.
+// Read-only official item query which only caches a trusted image URL.
 export function refreshOrderImage(scope: OrderScope, id: string, signal?: AbortSignal) {
   if (!/^\d{1,30}$/.test(id)) throw new Error("订单号必须是数字");
   return storeRequest<OrderRecord>(pathWithTail(scope, id + "/image-refresh"), "POST",

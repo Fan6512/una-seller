@@ -29,7 +29,7 @@ func (s *Service) RefreshOrderDispatchSLA(ctx context.Context, owner, store stri
 	if err != nil {
 		return OrderRecord{}, err
 	}
-	if order.Status == "cancelled" || order.Status == "cancellation_requested" ||
+	if order.Status == "cancelled" || order.Status == "cancellation_requested" || order.Status == "refunded" ||
 		strings.EqualFold(scope.Logistic, "fulfillment") || strings.EqualFold(scope.Logistic, "fulfilment") {
 		return OrderRecord{}, ErrOrderSLANotApplicable
 	}

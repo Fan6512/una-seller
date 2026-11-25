@@ -23,7 +23,7 @@ func TestRefreshOneOrderKeepsPurchaseAndReplacesStatus(t *testing.T) {
 	VALUES ($1::uuid,'MLB','remote','987654','10001','paid','USD',29.99,
 	'2026-11-20T00:00:00Z','2026-11-20T00:01:00Z','801',
 	'{"shipment_id":"801","status":"delivered","checked_at":"2026-11-20T00:02:00Z"}'::jsonb,
-	'[{"item_id":"MLB100","title":"Item","quantity":1,"unit_price":"29.99","currency_id":"USD"}]'::jsonb)`,
+	'[{"item_id":"MLB100","title":"Item","quantity":1,"unit_price":"29.99","currency_id":"USD","image_url":"https://http2.mlstatic.com/D_100-I.jpg"}]'::jsonb)`,
 		store); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,9 @@ func TestRefreshOneOrderKeepsPurchaseAndReplacesStatus(t *testing.T) {
 	s.apiURL = server.URL
 	scope := OrderScope{Site: "MLB", Logistic: "remote"}
 	refreshed, err := s.RefreshOneOrder(ctx, owner, store, scope, "10001")
-	if err != nil || refreshed.Status != "partially_refunded" || refreshed.PurchaseOrderID != "12345678" {
+	if err != nil || refreshed.Status != "partially_refunded" || refreshed.PurchaseOrderID != "12345678" ||
+		len(refreshed.Items) != 1 || refreshed.Items[0].ImageURL != "https://http2.mlstatic.com/D_100-I.jpg" ||
+		refreshed.SalesAmountUSD != "29.99" {
 		t.Fatalf("order refresh=%+v error=%v", refreshed, err)
 	}
 	var state string

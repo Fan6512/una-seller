@@ -79,8 +79,14 @@ func TestManualOfficialOrderImageBackfill(t *testing.T) {
 		order.Items[0].ImageURL != "https://http2.mlstatic.com/D_123-I.jpg" {
 		t.Fatalf("image backfill: %+v %v", order, err)
 	}
-	again, err := s.RefreshOrderPrimaryImage(ctx, owner, store, scope, "9002")
-	if err != nil || len(again.Items) != 1 || calls.Load() != 1 {
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,order_items)
+ VALUES($1::uuid,'MLB','remote','987654','9003','paid','USD',20,now(),now(),
+ '[{"item_id":"MLB123456","title":"Same product","quantity":1,"unit_price":"20","currency_id":"USD"}]'::jsonb)`, store); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.RefreshOrderPrimaryImage(ctx, owner, store, scope, "9003")
+	if err != nil || len(again.Items) != 1 || again.Items[0].ImageURL != order.Items[0].ImageURL || calls.Load() != 1 {
 		t.Fatalf("cached image was fetched twice: %+v calls=%d err=%v", again, calls.Load(), err)
 	}
 }

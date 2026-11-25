@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod tracking;
+
 // Installed package version is always available, even for unsigned QA builds.
 #[tauri::command]
 fn desktop_app_version(app: tauri::AppHandle) -> String {
@@ -21,7 +23,11 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![desktop_app_version, desktop_update_version])
+        .invoke_handler(tauri::generate_handler![
+            desktop_app_version,
+            desktop_update_version,
+            tracking::official_tracking
+        ])
         .run(tauri::generate_context!())
         .expect("failed to start Una Seller");
 }

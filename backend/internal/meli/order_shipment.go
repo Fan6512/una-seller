@@ -228,8 +228,8 @@ func (s *Service) fetchOrderShipmentDetails(ctx context.Context, token, path str
 	}
 	parsed, err := url.Parse(carrier.URL)
 	trackingURL := ""
-	if err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") &&
-		parsed.Hostname() != "" && parsed.User == nil && !strings.Contains(carrier.URL, "\\") {
+	if err == nil && parsed.Scheme == "https" && parsed.Hostname() != "" && parsed.User == nil &&
+		(parsed.Port() == "" || parsed.Port() == "443") && len(carrier.URL) <= 2048 && !strings.Contains(carrier.URL, "\\") {
 		trackingURL = parsed.String()
 	}
 	var valid []OrderShipmentEvent

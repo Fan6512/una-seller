@@ -220,6 +220,22 @@ func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 			t.Fatalf("search exposed details or lost summary: %+v", row.Shipment)
 		}
 	}
+	for _, filter := range []string{"fulfillment_delivered", "fulfillment_paid", "paid"} {
+		page, err := s.ListOrders(ctx, owner, store, scope, filter, "", 0)
+		search, searchErr := s.SearchOrders(ctx, owner, OrderSearchFilter{Store: store, Site: "MLB", Logistic: "remote", Status: filter})
+		if err != nil || searchErr != nil || len(page.Items) != len(search.Items) {
+			t.Fatalf("inconsistent fulfillment filters %s: %v / %v", filter, err, searchErr)
+		}
+		found := false
+		for _, row := range page.Items {
+			if row.ID == "10001" {
+				found = true
+			}
+		}
+		if found != (filter != "fulfillment_paid") {
+			t.Fatalf("incorrect delivered order inclusion for %s: %+v", filter, page.Items)
+		}
+	}
 	if calls.Load() != before {
 		t.Fatal("cached reads requested official API")
 	}
