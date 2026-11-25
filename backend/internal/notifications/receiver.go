@@ -20,19 +20,19 @@ const ingressHeader = "X-Una-Webhook-Ingress"
 const maxBody = 16 << 10
 
 var (
-	ErrScope = errors.New("notification scope not uniquely authorized")
-	idPattern = regexp.MustCompile(`^[1-9][0-9]{0,29}$`)
+	ErrScope     = errors.New("notification scope not uniquely authorized")
+	idPattern    = regexp.MustCompile(`^[1-9][0-9]{0,29}$`)
 	eventPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 )
 
 // Event is an allowlisted hint, never a platform URL or a business update.
 type Event struct {
 	ApplicationID string
-	UserID string
-	Topic string
-	ResourceID string
-	Key string
-	ReceivedAt time.Time
+	UserID        string
+	Topic         string
+	ResourceID    string
+	Key           string
+	ReceivedAt    time.Time
 }
 
 type Sink interface {
@@ -43,76 +43,123 @@ type Sink interface {
 func id(raw json.RawMessage) string {
 	s := string(raw)
 	if len(s) > 0 && s[0] == '"' {
-		if json.Unmarshal(raw, &s) != nil { return "" }
+		if json.Unmarshal(raw, &s) != nil {
+			return ""
+		}
 	}
-	if !idPattern.MatchString(s) { return "" }
+	if !idPattern.MatchString(s) {
+		return ""
+	}
 	return s
 }
 
 func parse(r io.Reader, appID string) (Event, error) {
 	var in struct {
-		ID string `json:"_id"`
+		ID            string          `json:"_id"`
 		ApplicationID json.RawMessage `json:"application_id"`
-		UserID json.RawMessage `json:"user_id"`
-		Topic string `json:"topic"`
-		Resource string `json:"resource"`
-		Received string `json:"received"`
+		UserID        json.RawMessage `json:"user_id"`
+		Topic         string          `json:"topic"`
+		Resource      string          `json:"resource"`
+		Received      string          `json:"received"`
 	}
 	bad := errors.New("invalid notification")
 	d := json.NewDecoder(r)
-	if d.Decode(&in) != nil || d.Decode(new(any)) != io.EOF { return Event{}, bad }
+	if d.Decode(&in) != nil || d.Decode(new(any)) != io.EOF {
+		return Event{}, bad
+	}
 	a, u := id(in.ApplicationID), id(in.UserID)
-	if a == "" || a != appID || u == "" { return Event{}, bad }
+	if a == "" || a != appID || u == "" {
+		return Event{}, bad
+	}
 	var prefix string
 	switch in.Topic {
-	case "marketplace_orders": prefix = "/marketplace/orders/"
-	case "marketplace_shipments": prefix = "/marketplace/shipments/"
-	default: return Event{}, bad
+	case "marketplace_orders":
+		prefix = "/marketplace/orders/"
+	case "marketplace_shipments":
+		prefix = "/marketplace/shipments/"
+	default:
+		return Event{}, bad
 	}
 	resource, ok := strings.CutPrefix(in.Resource, prefix)
-	if !ok || !idPattern.MatchString(resource) { return Event{}, bad }
+	if !ok || !idPattern.MatchString(resource) {
+		return Event{}, bad
+	}
 	received, err := time.Parse(time.RFC3339Nano, in.Received)
-	if err != nil || received.IsZero() { return Event{}, bad }
+	if err != nil || received.IsZero() {
+		return Event{}, bad
+	}
 	// Retry counters and sent timestamps can vary per delivery. An official ID
 	// is preferred; only when absent use the original received timestamp.
 	identity := "received:" + received.UTC().Format(time.RFC3339Nano)
 	if in.ID != "" {
-		if !eventPattern.MatchString(in.ID) { return Event{}, bad }
+		if !eventPattern.MatchString(in.ID) {
+			return Event{}, bad
+		}
 		identity = "id:" + in.ID
 	}
 	hash := sha256.Sum256([]byte(identity))
-	return Event{ApplicationID:a, UserID:u, Topic:in.Topic, ResourceID:resource,
-		Key:hex.EncodeToString(hash[:]), ReceivedAt:received.UTC()}, nil
+	return Event{ApplicationID: a, UserID: u, Topic: in.Topic, ResourceID: resource,
+		Key: hex.EncodeToString(hash[:]), ReceivedAt: received.UTC()}, nil
 }
 
 // NewReceiver requires a private ingress token injected by a trusted proxy
 // AFTER its verified source gate. It is NOT a Mercado Libre signature.
 // Never expose this header to untrusted clients or enable before source review.
 func NewReceiver(appID, ingressToken string, sink Sink) (http.Handler, error) {
-	if !idPattern.MatchString(appID) || len(ingressToken) < 32 || len(ingressToken)>256 || sink == nil {
+	if !idPattern.MatchString(appID) || len(ingressToken) < 32 || len(ingressToken) > 256 || sink == nil {
 		return nil, errors.New("notification receiver configuration invalid")
 	}
 	expected := sha256.Sum256([]byte(ingressToken))
 	slots := make(chan struct{}, 8)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control","no-store")
-		if r.Method != http.MethodPost { w.Header().Set("Allow","POST"); w.WriteHeader(http.StatusMethodNotAllowed); return }
-		provided := sha256.Sum256([]byte(r.Header.Get(ingressHeader)))
-		if subtle.ConstantTimeCompare(expected[:],provided[:]) != 1 { w.WriteHeader(http.StatusForbidden); return }
-		select {
-		case slots <- struct{}{}: defer func(){ <-slots }()
-		default: w.WriteHeader(http.StatusServiceUnavailable); return
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Connection", "close")
+			w.Header().Set("Allow", "POST")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
 		}
-		r.Body = http.MaxBytesReader(w,r.Body,maxBody)
-		event, err := parse(r.Body,appID)
-		if err != nil { w.WriteHeader(http.StatusBadRequest); return }
-		// Leave latency headroom for network/proxy. No upstream calls on ACK.
-		ctx,cancel := context.WithTimeout(r.Context(),350*time.Millisecond)
+		provided := sha256.Sum256([]byte(r.Header.Get(ingressHeader)))
+		if subtle.ConstantTimeCompare(expected[:], provided[:]) != 1 {
+			w.Header().Set("Connection", "close")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			w.Header().Set("Connection", "close")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		// Budget body reads and persistence together, with headroom for the proxy.
+		ctx, cancel := context.WithTimeout(r.Context(), 350*time.Millisecond)
 		defer cancel()
-		if err := sink.Enqueue(ctx,event); err != nil {
-			if errors.Is(err,ErrScope) { w.WriteHeader(http.StatusForbidden); return }
-			w.WriteHeader(http.StatusServiceUnavailable); return
+		controller := http.NewResponseController(w)
+		deadline, _ := ctx.Deadline()
+		if controller.SetReadDeadline(deadline) == nil {
+			defer controller.SetReadDeadline(time.Time{})
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		event, err := parse(r.Body, appID)
+		if err != nil {
+			w.Header().Set("Connection", "close")
+			if ctx.Err() != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if err := sink.Enqueue(ctx, event); err != nil {
+			if errors.Is(err, ErrScope) {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
 		}
 		w.WriteHeader(http.StatusOK)
-	}),nil
+	}), nil
 }

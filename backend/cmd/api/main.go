@@ -112,13 +112,20 @@ func main() {
 	}
 	handler := httpapi.HandlerWithAccountServices(store, verifier, meliService, translator, dictionary, aiCopy, accounts)
 	if os.Getenv("MELI_WEBHOOK_ENABLED") == "1" {
-		if db == nil || meliService == nil { log.Fatal("notifications need configured database and Mercado Libre OAuth") }
-		receiver, err := notifications.NewReceiver(id, os.Getenv("MELI_WEBHOOK_INGRESS_TOKEN"), notifications.PostgresInbox{DB:db})
-		if err != nil { log.Fatal(err) }
+		if db == nil || meliService == nil {
+			log.Fatal("notifications need configured database and Mercado Libre OAuth")
+		}
+		inbox := notifications.PostgresInbox{DB: db}
+		receiver, err := notifications.NewReceiver(id, os.Getenv("MELI_WEBHOOK_INGRESS_TOKEN"), inbox)
+		if err != nil {
+			log.Fatal(err)
+		}
 		mux := http.NewServeMux()
-		mux.Handle(notifications.Path,receiver)
-		mux.Handle("/",handler)
+		mux.Handle(notifications.Path, receiver)
+		mux.Handle("/", handler)
 		handler = mux
+		// WH-03 and later register real handlers. Until then only maintenance runs.
+		go notifications.NewWorker(inbox, id, nil).Run(context.Background(), log.Default())
 	}
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
