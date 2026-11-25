@@ -11,3 +11,10 @@ Default remains off. Enabled process requires explicit reviewed topic set, match
 - Only after separate approval modify official app topic subscription; reconcile callback configured and observed; rollback disables subscription/edge, preserve queued data and avoid deleting receipts. Report all results PASS/FAIL/NOT_RUN, no raw buyer text, token, secrets or IP logs.
 
 No production migration, Nginx install, enable, deployment or official writes executed by this PR.
+
+## 2026-11-26 read-only endpoint check
+
+- PASS: `GET /missed_feeds?app_id=$APP_ID&limit=10` returns 200 for the current CBT app; default page size is 10 and `topic` filtering is accepted. `marketplace_questions` returned 0; the first page contained `marketplace_item_competition` and `marketplace_items`, with callback codes 404/0 because the receiver is disabled.
+- BLOCKER: missed-feed `resource` is not the live notification shape. Observed `/marketplace/resource/items/{itemId}/` with trailing slash and a UUID `_id`, while live `marketplace_items` uses `/marketplace/items/{id}`. The messages example uses a bare message ID. Replay must normalize per topic and re-read through the allowlisted GET, never trust `request.data`. Unknown topics such as `marketplace_item_competition` must stay rejected.
+- FAIL: safe replay is not implemented, so no cursor advance, overlap or partial-page behavior can be tested.
+- NOT_RUN: Nginx syntax/rollback on a nonproduction host, real source-IP allowlist, public ACK p95/p99, retry and queue-health under edge 503.
