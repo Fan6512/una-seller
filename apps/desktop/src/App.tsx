@@ -9,6 +9,7 @@ import { cachedStores, checkStoreConnection, listStores, watchStoreList } from "
 import { checkStoresOnLogin, resolveManualStoreCheck, storeHealthFromList, type StoreHealth } from "./storeLoginCheck";
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
+import OperationsPage from "./OperationsPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
 import OwnProductsPage from "./OwnProductsPage";
 import { approveCollection } from "./ownProducts";
@@ -237,7 +238,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
   beginSync: () => (() => void) | undefined; syncCount: number;
 }) {
-  const [section, setSection] = useState<"collections" | "published" | "orders">("collections");
+  const [section, setSection] = useState<"collections" | "published" | "orders" | "operations">("collections");
   const [workspaceTab,setWorkspaceTab] = useState<"inbox"|"products">("inbox");
   const [showTransferred,setShowTransferred] = useState(false);
   const [checked,setChecked] = useState<Set<string>>(()=>new Set());
@@ -470,6 +471,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("collections"); }}>工作台</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("published"); }}>已刊登商品</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("orders"); }}>订单管理</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "operations"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("operations"); }}>运营中心</button>
           <button type="button" className="logout-action" aria-pressed={settings} onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("updates"); }}>{updates.update ? "设置 · 有更新" : "设置"}</button>
         </nav>
         <div className="topbar-spacer" />
@@ -518,6 +520,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         </>}
         {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+          : section === "operations" ? (!settings && <OperationsPage />)
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1></div>
