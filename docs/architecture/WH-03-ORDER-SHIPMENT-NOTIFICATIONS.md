@@ -122,10 +122,11 @@
 
 默认禁用不变，0015 仅提交迁移文件；不执行生产迁移、部署、启用、官方订阅或写入。
 
-### 补充复审：关联接口 401 下的已知多订单补偿（新 HEAD 待验收）
+### 补充复审：关联接口 401 下的已知多订单补偿（be97323 已验收）
 
 - 真实 GET 证据证明当前授权环境下关联接口 401，并未证明具体缺少哪一项 OAuth scope；四个样本各自只有一笔已知本地订单，不能据此断言所有货件为单订单。
 - 仅当关联接口无权限（401/403）或暂时没有关联（204/空数组）时，才允许使用货件自身 order_id 兜底。local_busy、429、超时、畸形及部分响应不走兜底。
 - 兜底订单仍经官方订单 GET 确认卖家、站点及当前 shipping.id。已在本地经官方订单回读建立关系的同店铺、同站点、同物流模式、同子卖家、同当前 shipment_id 的订单，在同一 fenced 事务内锁定后复用货件快照写入；保持总计 30 单硬上限，超限整笔回滚。不会从 pack_id 猜测其他订单，也不修改其他租户或更换货件后的订单。
 - 后到的独立订单通知通过官方订单 GET 确认 shipment_id 后，可继承同一精确范围内已知的最新本地货件快照；原有时间及当前货件保护生效，避免回退或跨范围继承。该措施不证明关联列表完整；未知订单仍依赖订单通知与 OPS-03 低频补偿。真实多订单货件、关联权限及补偿未验收；不得宣称全部关联已由官方接口确认。
-- 新增 `TestShipmentAssociationFallbackRejectsBusy`、`TestShipmentFallbackUpdatesKnownAndLateOrdersPostgres`。旧 HEAD `9af6b09` CI 四项及真实 PG 重启 PASS 是历史证据，新 HEAD 尚待 CI/隔离 PG 验收。生产连接池容量调整留作启用前独立门禁；30 笔硬上限不开发分批续跑。默认禁用，不执行生产迁移、部署或官方写入。
+- 新增 `TestShipmentAssociationFallbackRejectsBusy`、`TestShipmentFallbackUpdatesKnownAndLateOrdersPostgres`、`TestShipmentFallbackKeepsScopeAndBoundPostgres`（30 单边界整笔回滚、跨子卖家/站点不写入）。新 HEAD `be97323` 已在本地 Go 1.26.11 + 隔离 PostgreSQL 17.6 复验：`gofmt -l` 无输出，`go vet ./...`、`go build ./...` 通过，`go test -p 1 -count=1 ./...` 全绿（meli 43.1s、notifications 3.4s）；CI 四项 PASS（Go Backend 1m44s），persistence 阶段 before/down/after 三段实跑通过。生产连接池容量调整留作启用前独立门禁；30 笔硬上限不开发分批续跑。默认禁用，不执行生产迁移、部署或官方写入。
+- 存量风险（未改代码）：新增两条按主键前缀 `(store_id,site_id,logistic_type,seller_id)` 过滤 `shipment_id` 的查询，生产当前仅 73 笔订单，代价可忽略；订单量级显著上升后再评估 `(…,shipment_id)` 索引。批量人工同步按 `updated_asc` 加锁，与兜底事务的 `order_id` 升序加锁在极端交错下可能被 PostgreSQL 判定死锁；双方均可重试且无数据覆盖。

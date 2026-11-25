@@ -708,6 +708,83 @@ func TestShipmentAssociationFallbackRejectsBusy(t *testing.T) {
 	}
 }
 
+func TestShipmentFallbackKeepsScopeAndBoundPostgres(t *testing.T) {
+	var delivered atomic.Bool
+	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/marketplace/shipments/801":
+			status, tracking := "shipped", "TRACK801"
+			if delivered.Load() {
+				status, tracking = "delivered", "TRACK801-LATE"
+			}
+			fmt.Fprintf(w, `{"id":801,"order_id":10001,"sender_id":0,"status":%q,
+"tracking_number":%q,"logistic":{"type":"remote"},"last_updated":"2026-11-22T00:00:00Z"}`, status, tracking)
+		case "/shipments/801/orders":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			fmt.Fprint(w, notifiedOrderFixture("10001", "2026-11-21T01:00:00Z", "paid", "801"))
+		}
+	})
+	insert := func(id, seller, site string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := c.db.Exec(ctx, `INSERT INTO app.meli_orders
+(store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,shipment_id)
+VALUES ($1::uuid,$2,'remote',$3,$4,'paid','USD',1,now(),now(),'801')`,
+			c.store, site, seller, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The fallback order itself is created by its own order notification.
+	resource, err := c.prepare(t, c.job("marketplace_orders", "10001", "987654"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.apply(t, resource); err != nil {
+		t.Fatal(err)
+	}
+	// 29 in-scope siblings plus the fallback order fill the 30-order bound.
+	for i := 2; i <= 30; i++ {
+		insert(fmt.Sprintf("100%02d", i), "987654", "MLB")
+	}
+	insert("90001", "987655", "MLB") // same shipment, other child seller
+	insert("90002", "987654", "MLM") // same child seller, other site
+
+	resource, err = c.prepare(t, c.job("marketplace_shipments", "801", "987654"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.apply(t, resource); err != nil {
+		t.Fatalf("30 known orders must fit the bound: %v", err)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_orders WHERE store_id=$1 AND shipment_id='801'
+AND shipment_snapshot->>'tracking_number'='TRACK801'`, c.store); got != 30 {
+		t.Fatalf("in-scope snapshots=%d want 30", got)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_orders WHERE store_id=$1
+AND order_id IN ('90001','90002') AND shipment_snapshot IS NOT NULL`, c.store); got != 0 {
+		t.Fatalf("out-of-scope order updated: %d", got)
+	}
+
+	// A thirty-first known order exceeds the hard bound; the whole fenced
+	// transaction must roll back instead of writing a partial set.
+	insert("10031", "987654", "MLB")
+	delivered.Store(true)
+	resource, err = c.prepare(t, c.job("marketplace_shipments", "801", "987654"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.apply(t, resource); !errors.Is(err, ErrOrderInvalidResponse) {
+		t.Fatalf("overflow not rejected: %v", err)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_orders WHERE store_id=$1
+AND shipment_snapshot->>'status'='delivered'`, c.store); got != 0 {
+		t.Fatalf("overflow was not rolled back: %d", got)
+	}
+}
+
 func TestShipmentFallbackUpdatesKnownAndLateOrdersPostgres(t *testing.T) {
 	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
