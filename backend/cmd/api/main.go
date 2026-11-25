@@ -115,9 +115,15 @@ func main() {
 		if db == nil || meliService == nil {
 			log.Fatal("notifications need configured database and Mercado Libre OAuth")
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := meliService.EnableSharedOrderCoordination(ctx)
+		cancel()
+		if err != nil {
+			log.Fatal("shared order coordination unavailable: ", err)
+		}
 		inbox := notifications.PostgresInbox{DB: db}
 		// WH-03 must register both real read-only handlers before activation.
-		worker := notifications.NewWorker(inbox, id, nil)
+		worker := notifications.NewWorker(inbox, id, meliService.NotificationHandlers())
 		if err := worker.ValidateActivation(); err != nil {
 			log.Fatal(err)
 		}

@@ -110,7 +110,8 @@ type OrderReview struct {
 func (r *OrderReview) Error() string { return "order_needs_review" }
 
 type OrderRateLimitError struct {
-	until time.Time
+	until  time.Time
+	shared bool
 }
 
 func (e *OrderRateLimitError) Error() string { return "order rate limited" }
@@ -141,14 +142,35 @@ func orderReadResource(path string) string {
 
 // Pace order reads across scopes in this process and apply upstream cooldowns
 // before another request can start, including concurrent syncs from other stores.
-func (s *Service) orderGET(ctx context.Context, token, path string, target any) (int, error) {
-	if !s.orderRequests.TryLock() {
-		// A concurrent local request is not an upstream 429.
-		return http.StatusConflict, ErrOrderBusy
+func (s *Service) orderGET(ctx context.Context, token, path string, target any) (status int, err error) {
+	if s.sharedOrderCoordination {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+	}
+	if err := s.orderRequests.acquire(ctx, isBackgroundOrderRead(ctx)); err != nil {
+		if errors.Is(err, ErrOrderBusy) {
+			return http.StatusConflict, err
+		}
+		return 0, err
 	}
 	defer s.orderRequests.Unlock()
+	finish, err := s.beginSharedOrderRead(ctx)
+	if err != nil {
+		if errors.Is(err, ErrOrderBusy) {
+			return http.StatusConflict, err
+		}
+		return 0, err
+	}
+	if finish != nil {
+		defer func() {
+			if finishErr := finish(); finishErr != nil {
+				status, err = 0, finishErr
+			}
+		}()
+	}
 	if time.Now().Before(s.orderRetryUntil) {
-		cooldown := &OrderRateLimitError{until: s.orderRetryUntil}
+		cooldown := &OrderRateLimitError{until: s.orderRetryUntil, shared: s.sharedOrderCoordination}
 		if orderReadResource(path) == "billing" {
 			slog.Info("order read rate limited", "source", "local_cooldown", "resource", "billing", "retry_after_seconds", cooldown.RetryAfter())
 		}
@@ -179,7 +201,7 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 		s.orderNextSearch = now.Add(orderSearchRequestInterval)
 	}
 	var response listingGETTiming
-	status, err := s.listingGET(ctx, token, path, target, &response)
+	status, err = s.listingGET(ctx, token, path, target, &response)
 	if status == http.StatusTooManyRequests {
 		now := time.Now()
 		until, dateErr := http.ParseTime(response.retryAfter)
@@ -190,8 +212,11 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 			}
 			until = now.Add(delay)
 		}
+		if s.sharedOrderCoordination {
+			until = laterOrderTime(until, now.Add(time.Minute))
+		}
 		s.orderRetryUntil = until
-		cooldown := &OrderRateLimitError{until: until}
+		cooldown := &OrderRateLimitError{until: until, shared: s.sharedOrderCoordination}
 		slog.Warn("order read rate limited", "source", "upstream", "resource", orderReadResource(path),
 			"upstream_http_status", response.httpStatus, "retry_after_seconds", cooldown.RetryAfter())
 		return status, cooldown
@@ -676,23 +701,7 @@ WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND seller_id=$4 AND
 		return OrderSyncResult{}, ErrOrderBusy
 	}
 	for _, rec := range records {
-		items, jsonErr := json.Marshal(rec.Items)
-		if jsonErr != nil {
-			return OrderSyncResult{}, jsonErr
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO app.meli_orders
-(store_id,site_id,logistic_type,seller_id,order_id,pack_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,order_items)
-VALUES($1::uuid,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9::numeric,$10,$11,NULLIF($12,''),$13::jsonb)
-ON CONFLICT (store_id,site_id,logistic_type,seller_id,order_id) DO UPDATE
-SET pack_id=EXCLUDED.pack_id,status=EXCLUDED.status,currency_id=EXCLUDED.currency_id,
-total_amount=EXCLUDED.total_amount,date_created=EXCLUDED.date_created,
-last_updated=EXCLUDED.last_updated,shipment_id=EXCLUDED.shipment_id,
-shipment_snapshot=CASE WHEN meli_orders.shipment_id=EXCLUDED.shipment_id THEN meli_orders.shipment_snapshot END,
-order_items=`+orderItemsWithSavedImages("EXCLUDED.order_items", "meli_orders.order_items")+`,updated_at=now()
-WHERE app.meli_orders.last_updated<=EXCLUDED.last_updated`,
-			store, scope.Site, scope.Logistic, childSeller, rec.ID, rec.PackID, rec.Status,
-			rec.CurrencyID, rec.TotalAmount, rec.DateCreated, rec.LastUpdated, rec.ShipmentID, string(items))
-		if err != nil {
+		if err = upsertOrderRecord(ctx, tx, store, scope, childSeller, rec); err != nil {
 			return OrderSyncResult{}, err
 		}
 	}

@@ -389,8 +389,8 @@ func TestNotificationPostgresWorker(t *testing.T) {
 	}
 	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET status='connected' WHERE id=$1`, testStoreA)
 	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
-		WHERE store_id=$1 AND resource_id='899' AND attempts=3 AND last_failure='scope_unavailable'
-		  AND available_at BETWEEN now()+interval '18 seconds' AND now()+interval '21 seconds'`, testStoreA)
+		WHERE store_id=$1 AND resource_id='899' AND attempts=1 AND last_failure='scope_unavailable'
+		  AND available_at BETWEEN now()+interval '58 seconds' AND now()+interval '61 seconds'`, testStoreA)
 
 	ready()
 	limited := NewWorker(p, testApp, map[string]Prepare{testOrder: func(context.Context, Job) (VerifiedResource, error) {
@@ -406,7 +406,7 @@ func TestNotificationPostgresWorker(t *testing.T) {
 		t.Fatal("cooldown blocked another store")
 	}
 	mustExec(t, ctx, p, `UPDATE app.meli_notification_cooldowns SET available_at=now() WHERE store_id=$1`, testStoreA)
-	for range 4 {
+	for range 7 {
 		ready()
 		run(NewWorker(p, testApp, map[string]Prepare{testOrder: func(context.Context, Job) (VerifiedResource, error) {
 			return VerifiedResource{}, errors.New("synthetic failure")
@@ -468,6 +468,9 @@ func TestNotificationPostgresRestart(t *testing.T) {
 		if err := w.retry(ctx, cooling, &RateLimited{RetryAfter: time.Hour}); err != nil {
 			t.Fatal(err)
 		}
+		// The shared application-wide coordinator must also survive a true restart.
+		mustExec(t, ctx, p, `INSERT INTO app.meli_order_read_coordination(application_id,retry_until)
+VALUES($1,now()+interval '1 hour') ON CONFLICT(application_id) DO UPDATE SET retry_until=EXCLUDED.retry_until`, testApp)
 	case "down":
 		if err := p.DB.Ping(ctx); err == nil {
 			t.Fatal("database must be stopped")
@@ -477,12 +480,18 @@ func TestNotificationPostgresRestart(t *testing.T) {
 		t.Logf("stopped PostgreSQL HTTP 503 after %s", time.Since(start))
 	case "after":
 		defer cleanStores(t, ctx, p)
+		defer mustExec(t, ctx, p, `DELETE FROM app.meli_order_read_coordination WHERE application_id=$1`, testApp)
+		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_order_read_coordination WHERE application_id=$1 AND retry_until>now()`, testApp)
 		assertCount(t, ctx, p, 2, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1`, testStoreA)
 		assertACK(t, h, 200, testOrder, "888", testChildA, "crash")
 		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND resource_id='888' AND attempts=1 AND generation=1 AND lease_token IS NOT NULL`, testStoreA)
 		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_cooldowns WHERE store_id=$1 AND available_at > now()`, testStoreB)
 		// Advance the lease to avoid a wall-clock wait in CI.
 		mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET lease_until=now()-interval '1 second' WHERE store_id=$1 AND resource_id='888'`, testStoreA)
+		if _, err := w.claim(ctx); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("shared application cooldown did not block claim after restart: %v", err)
+		}
+		mustExec(t, ctx, p, `UPDATE app.meli_order_read_coordination SET retry_until=now()-interval '1 second' WHERE application_id=$1`, testApp)
 		if err := w.runOnce(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -492,4 +501,168 @@ func TestNotificationPostgresRestart(t *testing.T) {
 	default:
 		t.Fatalf("unknown TEST_RESTART_PHASE %q", phase)
 	}
+}
+
+// A persisted cooldown protects one store across topics, never another store,
+// and releases exactly at its boundary instead of waiting for a new receipt.
+func TestNotificationCooldownBoundaryPostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	ready := func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID,
+			Apply: func(context.Context, LocalWriter) error { return nil }}, nil
+	}
+	worker := NewWorker(p, testApp, map[string]Prepare{testOrder: ready, testShipment: ready})
+	assertACK(t, h, 200, testOrder, "997", testChildA, "cooldown-a")
+	assertACK(t, h, 200, testShipment, "897", testChildA, "cooldown-b")
+	j, err := worker.claim(ctx)
+	if err != nil || j.Topic != testOrder || j.ResourceID != "997" {
+		t.Fatalf("unexpected first claim: %+v %v", j, err)
+	}
+	if err := worker.retry(ctx, j, &RateLimited{RetryAfter: 90 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_cooldowns
+		WHERE store_id=$1 AND available_at BETWEEN now()+interval '85 seconds' AND now()+interval '91 seconds'`, testStoreA)
+	if _, err := worker.claim(ctx); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cooldown leaked another topic of the same store: %v", err)
+	}
+
+	assertACK(t, h, 200, testShipment, "896", testChildB, "cooldown-c")
+	other, err := worker.claim(ctx)
+	if err != nil || other.ResourceID != "896" {
+		t.Fatalf("cooldown blocked another store: %+v %v", other, err)
+	}
+
+	// Advance the persisted boundary instead of sleeping in CI.
+	mustExec(t, ctx, p, `UPDATE app.meli_notification_cooldowns SET available_at=now()-interval '1 second' WHERE store_id=$1`, testStoreA)
+	released, err := worker.claim(ctx)
+	if err != nil || released.ResourceID != "897" || released.StoreID != testStoreA {
+		t.Fatalf("cooldown did not release at its boundary: %+v %v", released, err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+		WHERE store_id=$1 AND resource_id='997' AND last_failure='rate_limited' AND dead_at IS NULL`, testStoreA)
+}
+
+// A handler that outlives its budget must not commit or lose the job: the lease
+// expires and the next worker pass retries the same delivery.
+func TestNotificationTimeoutKeepsLeasePostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, testOrder, "995", testChildA, "timeout")
+	blocked := NewWorker(p, testApp, map[string]Prepare{testOrder: func(ctx context.Context, _ Job) (VerifiedResource, error) {
+		<-ctx.Done()
+		return VerifiedResource{}, ctx.Err()
+	}})
+	short, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if err := blocked.runOnce(short); err == nil {
+		t.Fatal("expired handler budget reported as success")
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+		WHERE store_id=$1 AND resource_id='995' AND attempts=1 AND lease_until > now() AND dead_at IS NULL`, testStoreA)
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_cooldowns WHERE store_id=$1`, testStoreA)
+
+	mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET lease_until=now()-interval '1 second'
+		WHERE store_id=$1 AND resource_id='995'`, testStoreA)
+	var applied int
+	recovered := NewWorker(p, testApp, map[string]Prepare{testOrder: func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID,
+			Apply: func(context.Context, LocalWriter) error { applied++; return nil }}, nil
+	}})
+	if err := recovered.runOnce(ctx); err != nil || applied != 1 {
+		t.Fatalf("expired lease was not retried: applied=%d err=%v", applied, err)
+	}
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND resource_id='995'`, testStoreA)
+}
+
+func TestNotificationDeferredClaimsAreRefunded(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, testOrder, "993", testChildA, "deferred")
+	worker := NewWorker(p, testApp, map[string]Prepare{testOrder: func(context.Context, Job) (VerifiedResource, error) {
+		return VerifiedResource{}, &Deferred{Reason: DeferBusy, Delay: 2 * time.Second}
+	}})
+	for range 10 {
+		if err := worker.runOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+WHERE store_id=$1 AND resource_id='993' AND attempts=0 AND lease_token IS NULL
+AND dead_at IS NULL AND last_failure='local_busy' AND available_at>now()`, testStoreA)
+		mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET available_at=now()
+WHERE store_id=$1 AND resource_id='993'`, testStoreA)
+	}
+	mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET pending_since=now()-interval '25 hours'
+WHERE store_id=$1 AND resource_id='993'`, testStoreA)
+	if err := worker.runOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+WHERE store_id=$1 AND resource_id='993' AND attempts=0 AND dead_at IS NOT NULL`, testStoreA)
+}
+
+// A pending association waits 1, 2, 4, ... minutes instead of polling every
+// minute, and the cap keeps the projection bounded.
+func TestNotificationDeferredBackoffPostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, testShipment, "991", testChildA, "backoff")
+	ready := func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID}, nil
+	}
+	worker := NewWorker(p, testApp, map[string]Prepare{testOrder: ready, testShipment: ready})
+	for _, tc := range []struct {
+		age   string
+		delay time.Duration
+	}{
+		{"0 minutes", time.Minute},
+		{"40 minutes", 16 * time.Minute},
+		{"3 hours", time.Hour},
+	} {
+		mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs
+SET pending_since=now()-interval '`+tc.age+`', available_at=now()
+WHERE store_id=$1 AND resource_id='991'`, testStoreA)
+		j, err := worker.claim(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := worker.retry(ctx, j, &Deferred{Reason: DeferAssociation, Delay: time.Minute}); err != nil {
+			t.Fatal(err)
+		}
+		var wait float64
+		if err := p.DB.QueryRow(ctx, `SELECT extract(epoch from available_at-now())
+FROM app.meli_notification_jobs WHERE id=$1`, j.ID).Scan(&wait); err != nil {
+			t.Fatal(err)
+		}
+		if time.Duration(wait*float64(time.Second)) < tc.delay-30*time.Second ||
+			time.Duration(wait*float64(time.Second)) > tc.delay+30*time.Second {
+			t.Fatalf("age %s waited %.0fs, want %s", tc.age, wait, tc.delay)
+		}
+	}
+}
+
+func TestNotificationPermanentScopeDeadLettersImmediately(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, testOrder, "992", testChildA, "permanent-scope")
+	worker := NewWorker(p, testApp, map[string]Prepare{testOrder: func(context.Context, Job) (VerifiedResource, error) {
+		return VerifiedResource{}, ErrPermanentScope
+	}})
+	if err := worker.runOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+WHERE store_id=$1 AND resource_id='992' AND attempts=1 AND dead_at IS NOT NULL
+AND last_failure='scope_rejected' AND lease_token IS NULL`, testStoreA)
 }
