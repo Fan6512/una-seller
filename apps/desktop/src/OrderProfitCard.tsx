@@ -6,6 +6,7 @@ type BillingPreview = {
   items: Array<{
     order_id: string;
     available: boolean;
+    checked_at?: string;
     payments: Array<{ status: string; money_release_status: string }>;
     taxes: Array<{ type: string; original_usd?: string; refunded_usd?: string }>;
     charges: Array<{
@@ -18,9 +19,12 @@ type BillingPreview = {
   }>;
 };
 
-export type OrderBillingCache = Map<string, {
-  value: BillingPreview["items"][number]; checked: number;
-}>;
+type BillingEntry = { value: BillingPreview["items"][number]; checked: number | null };
+
+function checkedAt(value: string | undefined): number | null {
+  const time = value ? Date.parse(value) : NaN;
+  return Number.isFinite(time) ? time : null;
+}
 
 function signedUSD(value: string | undefined, sign = "") {
   if (!value) return "待核实";
@@ -34,18 +38,15 @@ function signedUSD(value: string | undefined, sign = "") {
   return (cents === 0n ? "" : negative ? "-" : sign) + amount;
 }
 
-export default function OrderProfitCard({ order, scope, disabled, cache, cacheKey, rateLimit }: {
+export default function OrderProfitCard({ order, scope, disabled, rateLimit }: {
   order: OrderRecord;
   scope: OrderScope | null;
   disabled: boolean;
-  cache: OrderBillingCache;
-  cacheKey: string;
   rateLimit: {until:number};
 }) {
-  const [preview, setPreview] = useState(() => {
-    const entry = cache.get(cacheKey);
-    return entry && Date.now() - entry.checked < 5 * 60_000 ? entry : null;
-  });
+  const [preview, setPreview] = useState<BillingEntry | null>(null);
+  const [cacheError, setCacheError] = useState("");
+  const [loadingCache, setLoadingCache] = useState(false);
   const billing = preview?.value;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -65,9 +66,47 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
   }, [cooldownUntil]);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
+  const cacheRead = useRef<AbortController | null>(null);
+  const storeID = scope?.storeId, site = scope?.site, logistic = scope?.logistic;
+  const orderID = order.order_id;
+  useEffect(() => {
+    if (!storeID || !site || !logistic) return;
+    const request = new AbortController();
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]);
+    cacheRead.current = request;
+    setLoadingCache(true);
+    setCacheError("");
+    setPreview(null);
+    const query = new URLSearchParams({ site, logistic_type: logistic });
+    void storeRequest<BillingPreview>("/api/v1/stores/" + encodeURIComponent(storeID) +
+      "/orders/" + encodeURIComponent(orderID) + "/billing-cache?" + query, "GET", signal, false, undefined,
+      () => "无法读取已保存账单").then(response => {
+        if (signal.aborted) return;
+        if (response.items.length !== 1 || response.items[0].order_id !== orderID) {
+          throw new Error("已保存账单与当前订单不一致");
+        }
+        const value = response.items[0];
+        const checked = checkedAt(value.checked_at);
+        if (value.available && checked === null) throw new Error("已保存账单缺少有效更新时间");
+        if (value.available) setPreview({ value, checked });
+      }).catch(problem => {
+        if (!request.signal.aborted) setCacheError(signal.aborted ? "读取已保存账单超时" :
+          problem instanceof Error ? problem.message : "无法读取已保存账单");
+      }).finally(() => {
+        if (cacheRead.current === request) {
+          cacheRead.current = null;
+          setLoadingCache(false);
+        }
+      });
+    return () => { request.abort(); if (cacheRead.current === request) cacheRead.current = null; };
+  }, [storeID, site, logistic, orderID]);
 
   async function readBilling() {
     if (!scope || disabled || cooldown || rateLimit.until>Date.now() || active.current) return;
+    cacheRead.current?.abort();
+    cacheRead.current = null;
+    setLoadingCache(false);
+    setCacheError("");
     const request = new AbortController();
     active.current = request;
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(22_000)]);
@@ -87,14 +126,14 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
       if (response.items.length !== 1 || response.items[0].order_id !== order.order_id) {
         throw new Error("平台账单与当前订单不一致");
       }
-      const entry = { value: response.items[0], checked: Date.now() };
-      cache.delete(cacheKey);
-      if (cache.size >= 24) {
-        const oldest = cache.keys().next();
-        if (!oldest.done) cache.delete(oldest.value);
+      const value = response.items[0];
+      const checked = checkedAt(value.checked_at);
+      if (!value.available || checked === null) {
+        setPreview(previous => previous?.checked != null ? previous : { value, checked: null });
+        setError(value.available ? "本次账单不完整，未保存" : "官方本次未返回账单");
+      } else {
+        setPreview({ value, checked });
       }
-      cache.set(cacheKey, entry);
-      setPreview(entry);
     } catch (problem) {
       if (!request.signal.aborted) {
         if (problem instanceof StoreRequestError && problem.status === 429) {
@@ -136,7 +175,9 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
         onClick={() => void readBilling()}>{busy ? "读取中…" : cooldown ? "限流冷却中" : "读取官方账单"}</button>
     </div>
     {cooldown && <p className="orders-muted" role="status">账单冷却剩余约 {remaining} 秒，不会自动重试。</p>}
-    {error && <p className="orders-alert" role="alert">{error}{billing && "。下方显示上一次读取的账单。"}</p>}
+    {loadingCache && <p className="orders-muted" role="status">正在读取已保存账单…</p>}
+    {cacheError && <p className="orders-alert" role="alert">{cacheError}</p>}
+    {error && <p className="orders-alert" role="alert">{error}{preview?.checked != null && "。下方保留上一次成功保存的账单。"}</p>}
     <dl className="orders-detail-fields">
       <dt>商品价格</dt><dd>{orderUSD(order.sales_amount_usd)}</dd>
       {shipping && <>
@@ -150,7 +191,8 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
       <dt>结算核账状态</dt><dd>{status}</dd>
       <dt>采购成本</dt><dd>{order.purchase_cost_cny == null ? "待补录" : orderMoney(order.purchase_cost_cny, "CNY")}</dd>
       <dt>实际利润</dt><dd>待核算</dd>
-      {preview && <><dt>账单最近读取</dt><dd title="北京时间">{orderDate(new Date(preview.checked).toISOString())}</dd></>}
+      {preview?.checked != null && <><dt>账单最近成功保存</dt><dd title="北京时间">{orderDate(new Date(preview.checked).toISOString())}</dd></>}
+      {preview && preview.checked === null && billing?.available && <><dt>账单保存状态</dt><dd>本次预览未保存</dd></>}
     </dl>
     {billing?.available && <>
       {billing.payments.length > 0 && <p className="orders-muted">

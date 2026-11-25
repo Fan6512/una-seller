@@ -44,6 +44,9 @@ var userServiceCredentialsSQL string
 //go:embed 0012_cbt_c0_evidence.sql
 var cbtC0EvidenceSQL string
 
+//go:embed 0013_order_billing_snapshot.sql
+var orderBillingSnapshotSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -98,6 +101,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, cbtC0EvidenceSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply CBT C0 evidence schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, orderBillingSnapshotSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply order billing snapshot schema: %w", err)
 	}
 	return nil
 }

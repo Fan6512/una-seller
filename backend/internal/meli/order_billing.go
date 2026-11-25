@@ -61,6 +61,7 @@ type BillingOrderPreview struct {
 	Reconciliation string               `json:"reconciliation"`
 	ChargeGroups   []BillingChargeGroup `json:"charge_groups,omitempty"`
 	Shipping       *BillingShipping     `json:"shipping,omitempty"`
+	CheckedAt      *time.Time           `json:"checked_at,omitempty"`
 }
 type BillingPreviewPage struct {
 	Items        []BillingOrderPreview `json:"items"`
@@ -299,7 +300,8 @@ func billingShippingDebit(charges []BillingCharge, shipment string) (amount, det
 	return amount, detailID
 }
 
-// PreviewOrderBilling is an explicitly triggered, read-only batch (max 60).
+// PreviewOrderBilling is an explicitly triggered official read (max 60).
+// A successful complete single-order preview also updates the local snapshot.
 // Every order must currently belong to the owner's verified marketplace child.
 func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, scope OrderScope,
 	ids []string) (BillingPreviewPage, error) {
@@ -334,6 +336,7 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 	if !scoped {
 		return BillingPreviewPage{}, ErrOrderNotFound
 	}
+	startedAt := time.Now().UTC()
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var raw json.RawMessage
@@ -372,6 +375,17 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 			return BillingPreviewPage{}, ErrOrderAuthorizationChanged
 		}
 		item.Shipping = shipping
+	}
+	// Preserve A1 batch behavior. The desktop requests one order at a time.
+	// Never replace the last successful snapshot with missing billing or a
+	// partial shipment-cost response (including a costs request failure).
+	if len(ids) == 1 && page.Items[0].Available && (shipment == "" ||
+		(page.Items[0].Shipping != nil && page.Items[0].Shipping.SellerNetCostUSD != "")) {
+		item, err := s.saveOrderBillingSnapshot(ctx, owner, store, scope, child, auth.SellerID, shipment, startedAt, page.Items[0])
+		if err != nil {
+			return BillingPreviewPage{}, err
+		}
+		page.Items[0] = item
 	}
 	return page, nil
 }

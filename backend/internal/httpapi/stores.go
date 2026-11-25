@@ -93,6 +93,10 @@ func (a storeAPI) storeAction(w http.ResponseWriter, r *http.Request) {
 		a.orderBillingPreview(w, r, orderPath[0])
 		return
 	}
+	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && orderPath[3] == "billing-cache" {
+		a.orderBillingCache(w, r, orderPath[0], orderPath[2])
+		return
+	}
 	if len(orderPath) == 4 && orderPath[0] != "" && orderPath[1] == "orders" && orderPath[2] != "" && (orderPath[3] == "sla" || orderPath[3] == "shipment") {
 		a.orderLogistics(w, r, orderPath[0], orderPath[2], orderPath[3])
 		return
