@@ -126,7 +126,7 @@ func (p PostgresInbox) Enqueue(ctx context.Context, e Event) error {
 
 type QueueStats struct {
 	Receipts, GlobalReceipts, Jobs, Pending, Leased, Dead, Unregistered, Cooling, ExpiredLeases int
-	OldestPending                                                                             time.Duration
+	OldestPending                                                                               time.Duration
 }
 
 func (p PostgresInbox) stats(ctx context.Context, appID string, topics []string) (QueueStats, error) {
