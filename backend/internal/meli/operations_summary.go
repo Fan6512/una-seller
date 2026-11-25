@@ -6,23 +6,23 @@ import (
 )
 
 type OperationsStoreSummary struct {
-	StoreID           string `json:"store_id"`
-	Nickname          string `json:"nickname"`
-	Connected         bool   `json:"connected"`
-	PaidOrders        int    `json:"paid_orders"`
-	CachedUnanswered  int    `json:"cached_unanswered"`
-	IncomingMessages  int    `json:"incoming_messages_7d"`
-	OpenClaims        int    `json:"open_claims"`
-	PausedItems       int    `json:"paused_items"`
-	PendingJobs       int    `json:"pending_jobs"`
-	DeadJobs          int    `json:"dead_jobs"`
+	StoreID          string `json:"store_id"`
+	Nickname         string `json:"nickname"`
+	Connected        bool   `json:"connected"`
+	PaidOrders       int    `json:"paid_orders"`
+	CachedUnanswered int    `json:"cached_unanswered"`
+	IncomingMessages int    `json:"incoming_messages_7d"`
+	OpenClaims       int    `json:"open_claims"`
+	PausedItems      int    `json:"paused_items"`
+	PendingJobs      int    `json:"pending_jobs"`
+	DeadJobs         int    `json:"dead_jobs"`
 }
 
 type OperationsSummary struct {
-	Stores []OperationsStoreSummary `json:"stores"`
-	CheckedAt time.Time `json:"checked_at"`
-	Truncated bool `json:"truncated"`
-	CacheOnly bool `json:"cache_only"`
+	Stores    []OperationsStoreSummary `json:"stores"`
+	CheckedAt time.Time                `json:"checked_at"`
+	Truncated bool                     `json:"truncated"`
+	CacheOnly bool                     `json:"cache_only"`
 }
 
 // A local, owner-scoped summary. Never calls the provider or infers unread
