@@ -23,7 +23,26 @@ var (
 	ErrScope            = errors.New("notification scope not uniquely authorized")
 	ErrScopeUnavailable = errors.New("known notification scope temporarily unavailable")
 	idPattern           = regexp.MustCompile(`^[1-9][0-9]{0,29}$`)
+	messageIDPattern    = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
 )
+
+// Keep the receiver and activation registry on the same fixed allowlist.
+var topicPaths = map[string]string{
+	"marketplace_orders":    "/marketplace/orders/",
+	"marketplace_shipments": "/marketplace/shipments/",
+	"marketplace_questions": "/marketplace/questions/",
+	"marketplace_messages":  "/marketplace/messages/",
+}
+
+func ValidResourceID(topic, resource string) bool {
+	if _, ok := topicPaths[topic]; !ok {
+		return false
+	}
+	if topic == "marketplace_messages" {
+		return messageIDPattern.MatchString(resource)
+	}
+	return idPattern.MatchString(resource)
+}
 
 // Event is an allowlisted hint, never a platform URL or a business update.
 type Event struct {
@@ -71,17 +90,9 @@ func parse(r io.Reader, appID string) (Event, error) {
 	if a == "" || a != appID || u == "" {
 		return Event{}, bad
 	}
-	var prefix string
-	switch in.Topic {
-	case "marketplace_orders":
-		prefix = "/marketplace/orders/"
-	case "marketplace_shipments":
-		prefix = "/marketplace/shipments/"
-	default:
-		return Event{}, bad
-	}
+	prefix, supported := topicPaths[in.Topic]
 	resource, ok := strings.CutPrefix(in.Resource, prefix)
-	if !ok || !idPattern.MatchString(resource) {
+	if !supported || !ok || !ValidResourceID(in.Topic, resource) {
 		return Event{}, bad
 	}
 	received, err := time.Parse(time.RFC3339Nano, in.Received)
