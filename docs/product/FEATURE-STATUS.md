@@ -30,8 +30,8 @@
 | AI 真实服务 | 三语标题/详情代码已合并；真实 Key、已保存测试商品与 Windows 操作验收尚缺 |
 | CBT 刊登 | C0 生产只读取证 PASS，当前店铺分类 standard_up；C1 已进入开发阶段，实施 PR 待建，真实商品创建、官方图片上传及发布记录未验收 |
 | CBT 测试账号 | 一个真实账号、五站点 MLB/MLM/MLC/MCO/MLA 均为 remote、UP enabled、net_proceeds；business_model 脱敏为 other。最新只读回读 2026-11-24 14:39:47（北京时间），原始枚举及卖家后台交叉核实仍待完成 |
-| 桌面端 | Windows 已覆盖安装 V0.4；V0.4 签名 Pre-release `desktop-test-v0.4.0` 已发布（构建 run 45364449099，更新签名 minisign 验证 PASS）；公网 OTA 接口 PASS。覆盖安装、登录保留、检查更新按钮及测试版开关、重启保留 PASS；实际跨版本 OTA 下载/验签/安装待下一版本验收。V0.5 三个功能 PR 已合并；#92 最新 HEAD 的隔离未签名 NSIS QA 构建 PASS（安装包版本仍为 0.4.0，loopback API），不等于 V0.5 已发布或 GUI/OTA 已验收。AI/词典整体 QA 和 macOS 实机仍待验收 |
-| 部署 | #66 Go API 823e6056 已生产部署（据负责人报告）；0010 已迁移，0011/0012 保留；9 单真实 Shipment 后端验收 PASS。C0 已回读；V0.4 四标签及手动 C0 实测 PASS，自动重授权探测未验收；ORD-04 Windows 部分通过，#90 修订已合并、待新版实测；据负责人现场报告，#90/#49/#92 已于 2026-11-25 10:51:41（北京时间）集中升级生产 Go API 至 `1bb50192`，无新增迁移；服务正常、NRestarts=0、无回滚，构建/磁盘/运行进程哈希一致；旧二进制双备份校验、新加密数据库归档隔离恢复 PASS（直连备份挂起后改用生产会话池）；回环/公网、鉴权、C0、OTA 双通道及同机业务 PASS；V0.5 签名测试版待授权发布；V0.4 已发布为 Pre-release，正式发布和真实官方写入仍需单独审批 |
+| 桌面端 | Windows 已覆盖安装 V0.4；V0.4 签名 Pre-release `desktop-test-v0.4.0` 已发布（构建 run 45364449099，更新签名 minisign 验证 PASS）；公网 OTA 接口 PASS。覆盖安装、登录保留、检查更新按钮及测试版开关、重启保留 PASS；实际跨版本 OTA 下载/验签/安装待下一版本验收。V0.5 三个功能 PR 已合并；#92 最新 HEAD 的隔离未签名 NSIS QA 构建 PASS（安装包版本仍为 0.4.0，loopback API），不等于 V0.5 已发布或 GUI/OTA 已验收。V0.5 签名测试版已发布为 Pre-release（`desktop-test-v0.5.0`，0.5.0；构建 run 45542860330），安装包 SHA-256 `898ec6ae…`、minisign/Ed25519 验签 PASS、公网测试通道缓存刷新后返回 0.5.0、默认通道仍 204；Windows 实机跨版本 OTA 与 V0.5 功能待验收。AI/词典整体 QA 和 macOS 实机仍待验收 |
+| 部署 | #66 Go API 823e6056 已生产部署（据负责人报告）；0010 已迁移，0011/0012 保留；9 单真实 Shipment 后端验收 PASS。C0 已回读；V0.4 四标签及手动 C0 实测 PASS，自动重授权探测未验收；ORD-04 Windows 部分通过，#90 修订已合并、待新版实测；据负责人现场报告，#90/#49/#92 已于 2026-11-25 10:51:41（北京时间）集中升级生产 Go API 至 `1bb50192`，无新增迁移；服务正常、NRestarts=0、无回滚，构建/磁盘/运行进程哈希一致；旧二进制双备份校验、新加密数据库归档隔离恢复 PASS（直连备份挂起后改用生产会话池）；回环/公网、鉴权、C0、OTA 双通道及同机业务 PASS；V0.5 签名测试版已发布为 Pre-release（`desktop-test-v0.5.0`），未设置 Latest、正式渠道仍为 `desktop-v0.1.1`；V0.4 已发布为 Pre-release，正式发布和真实官方写入仍需单独审批 |
 
 ## 三、已完成（限定范围内真实验收通过）
 
@@ -58,7 +58,7 @@
 | TR-02 | CBT 全量分类中文离线词典、增量更新与人工覆盖 | 代码已合并；中文 0/10,954 | [#72](https://github.com/Fan6512/una-seller/pull/72) | 先五批真实试译、核对质量与额度，随后断点续跑并记录覆盖率；不因没有密钥假报 PASS |
 | AI-01 | 根据产品事实生成 EN/MX/BR 三语 SEO 标题 | 代码已合并；真实 AI 调用待验收 | [#71](https://github.com/Fan6512/una-seller/pull/71) | 使用真实保存的商品生成、分别采纳；MX/BR 不超过 60 字符且不得编造属性 |
 | AI-02 | 英文卖点与详情独立采纳，按母版翻译 ES/PT，译文过期提醒 | 代码已合并；真实服务与 Windows 读回待验收 | [#71](https://github.com/Fan6512/una-seller/pull/71) | 从已保存英文描述翻译；人工核对数字/单位，手改后检测过期，重启读回 |
-| DESK-01 | V0.3 编辑器、正式版/可选测试版更新通道 | 代码已合并，V0.4 Pre-release 已发布。公网 OTA 接口 PASS，V0.4 覆盖安装及检查更新等 5/5 PASS；跨版本 OTA 待验收；V0.5 #92 隔离 QA 构建 PASS，生产升级后双通道 OTA 接口复验 PASS（现场报告），签名版本待发布 | [#29](https://github.com/Fan6512/una-seller/pull/29)、[#65](https://github.com/Fan6512/una-seller/pull/65)、[#92](https://github.com/Fan6512/una-seller/pull/92) / [#28](https://github.com/Fan6512/una-seller/issues/28) | 公网 `/api/v1/desktop/updates` 带 `X-Una-Include-Prerelease: 1` 返回 200（`0.4.0`），默认通道返回 204，两种响应均带 `Cache-Control: no-store`。现有 V0.3 无正式 Updater，已手动覆盖 V0.4；下一测试版核对 OTA 下载、验签、安装重启及实际通道选择。正式 Release 需单独授权 |
+| DESK-01 | V0.3 编辑器、正式版/可选测试版更新通道 | 代码已合并，V0.4 Pre-release 已发布。公网 OTA 接口 PASS，V0.4 覆盖安装及检查更新等 5/5 PASS；跨版本 OTA 待验收；V0.5 #92 隔离 QA 构建 PASS，生产升级后双通道 OTA 接口复验 PASS（现场报告），V0.5 签名测试版已发布，实机跨版本 OTA 待验收 | [#29](https://github.com/Fan6512/una-seller/pull/29)、[#65](https://github.com/Fan6512/una-seller/pull/65)、[#92](https://github.com/Fan6512/una-seller/pull/92) / [#28](https://github.com/Fan6512/una-seller/issues/28) | 公网 `/api/v1/desktop/updates` 带 `X-Una-Include-Prerelease: 1` 返回 200（`0.4.0`），默认通道返回 204，两种响应均带 `Cache-Control: no-store`。现有 V0.3 无正式 Updater，已手动覆盖 V0.4；V0.5 测试版发布后默认通道 204、测试通道返回 0.5.0，两者均 `no-store`，清单安装包/签名公网下载与 SHA-256 一致；实机安装重启及实际通道选择待验收。正式 Release 需单独授权 |
 
 ### B. 已刊登管理、订单与财务
 
@@ -115,6 +115,7 @@
 
 | 日期 | 变更 | 依据 |
 | --- | --- | --- |
+| 2026-11-25 | V0.5 Windows 签名测试版发布为 Pre-release（`desktop-test-v0.5.0`，0.5.0）：PR #93 合并提交 `c55b322` 后 main CI PASS，`desktop-production` 审批通过，签名构建 run 45542860330 PASS；安装包 SHA-256 `898ec6ae…`、minisign/Ed25519 验签 PASS、Key ID 与 V0.4 一致，`latest.json` 与五处版本文件一致；公网默认通道 204、测试通道缓存 TTL 刷新后返回 0.5.0，均 `no-store`；未设置 Latest、未部署 Go API、未重建未签名 QA 包；实机 OTA 与功能待负责人验收 | [#93](https://github.com/Fan6512/una-seller/pull/93)；[构建 run](https://github.com/Fan6512/una-seller/actions/runs/45542860330)；[Release](https://github.com/Fan6512/una-seller/releases/tag/desktop-test-v0.5.0)；[发布报告](../architecture/DESKTOP-V05-TEST-RELEASE-REPORT-20261125.md) |
 | 2026-11-25 | V0.5 生产 Go API 10:51:41（北京时间）切换至 `1bb50192`：恢复点、服务与哈希、鉴权/C0/OTA、同机业务、订单与账单只读抽测、工作台读取及历史数据比对 PASS；NRestarts=0、无回滚、无新增迁移；实时物流/SLA 刷新、独立费用对账、旧客户端全流程、GUI/跨版本 OTA NOT_RUN。签名测试版待授权 | 负责人现场部署报告；脱敏完整报告本地提交 `bcc5751` 尚未推送，仓库部署 SHA 已独立核对 |
 | 2026-11-25 | V0.5 功能开发收口：#90 订单修订、#49 A1 官方账单、#92 工作台及 Windows 洁净构建全部合入 main；候选 CI 和 #92 Windows QA PASS；未部署生产、未发布 V0.5、未人工验收 GUI/OTA。真实 Family/刊登 payload、净收益/实际到账/分摊及 A2 保持待完成 | [#90](https://github.com/Fan6512/una-seller/pull/90) fb2b438f；[#49](https://github.com/Fan6512/una-seller/pull/49) 954644b1；[#92](https://github.com/Fan6512/una-seller/pull/92) 6b7c2c54；[Windows QA](https://github.com/Fan6512/una-seller/actions/runs/45532958238)；负责人批准 |
 | 2026-11-24 | 负责人批准 V0.5 FIX-01～08：美元销售额、后台销售编号、净收益及详情费用、新订单主图自动补全、官方物流受限网页弹窗、北京时间、精确 SLA、综合履约状态及服务端筛选。#90 已开始 FIX-06/07/08（候选 CI 待确认），FIX-01/02/03 待真实只读取证，FIX-04/05 待实现；财务沿 #49，未合并/部署/发布 | [#90](https://github.com/Fan6512/una-seller/pull/90)、[#49](https://github.com/Fan6512/una-seller/pull/49)；负责人确认 |
