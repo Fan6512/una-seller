@@ -22,6 +22,8 @@ func (s *Service) NotificationHandlers() map[string]notifications.Prepare {
 		"marketplace_shipments": s.prepareShipmentNotification,
 		"marketplace_questions": s.prepareCustomerNotification,
 		"marketplace_messages":  s.prepareCustomerNotification,
+		"marketplace_claims":    s.prepareMarketplaceStatusNotification,
+		"marketplace_items":     s.prepareMarketplaceStatusNotification,
 	}
 }
 

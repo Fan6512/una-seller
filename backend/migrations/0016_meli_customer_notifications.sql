@@ -5,7 +5,7 @@ DECLARE tbl text;
 BEGIN
     FOREACH tbl IN ARRAY ARRAY['meli_notification_inbox','meli_notification_jobs'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_constraint
-            WHERE conrelid=to_regclass('app.' || tbl) AND conname=tbl || '_wh04_resource_check') THEN
+            WHERE conrelid=to_regclass('app.' || tbl) AND conname IN (tbl || '_wh04_resource_check',tbl || '_wh05_resource_check')) THEN
             EXECUTE format('ALTER TABLE app.%I DROP CONSTRAINT IF EXISTS %I',tbl,tbl || '_topic_check');
             EXECUTE format('ALTER TABLE app.%I DROP CONSTRAINT IF EXISTS %I',tbl,tbl || '_resource_id_check');
             EXECUTE format('ALTER TABLE app.%I ADD CONSTRAINT %I CHECK (
