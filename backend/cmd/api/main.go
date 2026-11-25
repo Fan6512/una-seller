@@ -12,6 +12,7 @@ import (
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/httpapi"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
+	"github.com/Fan6512/una-seller/backend/internal/notifications"
 	"github.com/Fan6512/una-seller/backend/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -109,6 +110,16 @@ func main() {
 	if accounts == nil && os.Getenv("UNA_SELLER_CLOUD") == "1" {
 		log.Print("WARNING: account AI/translation key management is disabled: UNA_SELLER_SERVICE_CREDENTIALS_KEY is not configured")
 	}
-	server := &http.Server{Addr: addr, Handler: httpapi.HandlerWithAccountServices(store, verifier, meliService, translator, dictionary, aiCopy, accounts), ReadHeaderTimeout: 5 * time.Second}
+	handler := httpapi.HandlerWithAccountServices(store, verifier, meliService, translator, dictionary, aiCopy, accounts)
+	if os.Getenv("MELI_WEBHOOK_ENABLED") == "1" {
+		if db == nil || meliService == nil { log.Fatal("notifications need configured database and Mercado Libre OAuth") }
+		receiver, err := notifications.NewReceiver(id, os.Getenv("MELI_WEBHOOK_INGRESS_TOKEN"), notifications.PostgresInbox{DB:db})
+		if err != nil { log.Fatal(err) }
+		mux := http.NewServeMux()
+		mux.Handle(notifications.Path,receiver)
+		mux.Handle("/",handler)
+		handler = mux
+	}
+	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }

@@ -47,6 +47,9 @@ var cbtC0EvidenceSQL string
 //go:embed 0013_order_billing_snapshot.sql
 var orderBillingSnapshotSQL string
 
+//go:embed 0014_meli_notification_inbox.sql
+var notificationInboxSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -105,6 +108,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, orderBillingSnapshotSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply order billing snapshot schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, notificationInboxSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply notification inbox schema: %w", err)
 	}
 	return nil
 }
