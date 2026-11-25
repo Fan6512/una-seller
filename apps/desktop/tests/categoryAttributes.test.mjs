@@ -68,9 +68,9 @@ window.fetch = (path, options) => {
     technical_requirement_names: id === "CBT2" ? { STYLE: "Style" } : undefined,
     path: [{ id: "CBT1", name: "Home" }, { id, name: id === "CBT1" ? "Jugs" : "Other" }],
     attributes: id === "CBT1" ? fields : id === "CBT2" ? [
-      fields[0],
-      { ...fields[2], allowed_units: [{ id: "ml", name: "mL" }] },
-      { ...fields[3], values: [{ id: 300, name: "Plastic" }] },
+      fields.find(rule => rule.id === "BRAND"),
+      { ...fields.find(rule => rule.id === "CAPACITY"), allowed_units: [{ id: "ml", name: "mL" }] },
+      { ...fields.find(rule => rule.id === "MATERIAL"), values: [{ id: 300, name: "Plastic" }] },
       {id:"READONLY_CODE",name:"Read-only code",value_type:"string",tags:{read_only:true}},
       {id:"SPECIAL_GRID",name:"Special grid",value_type:"string",tags:{size_grid_required:true}},
     ] : id === "CBT1055" ? [
@@ -176,6 +176,8 @@ try {
     deferredTechnical.textContent.includes("Read-only code（平台依赖／只读")&&
     deferredTechnical.textContent.includes("Special grid（暂无可编辑控件"),"required technical fields without editable controls were omitted");
   await loaded("option", "塑料 · Plastic");
+  await loaded("small","当前已读取规则未标记 MODEL 必填");
+  assert(![...document.querySelectorAll("label")].some(node=>node.textContent.includes("Model · 必填")),"MODEL required status leaked across categories");
   assert(newBrand.value === "" && working.length === 4 && working.every(field => field.category_id === "CBT1"),
     "changing category accepted or lost historical values");
   assert((await loaded("label", "Material")).querySelector("select").value === "", "historical enum was applied to the wrong category");
