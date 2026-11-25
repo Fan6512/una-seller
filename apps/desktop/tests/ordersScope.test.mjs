@@ -13,7 +13,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
-  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel } from "/src/orders.ts";
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate, officialTrackingURL, orderUSD, orderFulfillmentStatus } from "/src/orders.ts";
 
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const waitFor = async (check, message) => {
@@ -37,6 +37,12 @@ const deferred = [];
 const purchaseRequests = [];
 const purchaseFilters = [];
 const searchRequests = [];
+const imageRequests = [];
+let exerciseImages = false;
+let distinctImageItems = false;
+let pauseOrderRefresh = false;
+const pausedRefreshes = [];
+const statusReads = [];
 const order = { order_id: "102", status: "paid", order_items: [
     { item_id: "MLB101", title: "Original title without translation", quantity: 1, unit_price: "12", currency_id: "USD" },
   ], total_amount: "12", currency_id: "USD",
@@ -50,7 +56,7 @@ const shipmentDetails = {
   shipment_id: order.shipment_id, status: "delivered", tracking_number: "OFFICIAL-TRACK-102",
   checked_at: "2026-11-24T04:00:00Z", first_mile_carrier: "Fixture first mile",
   shipped_at: "2026-11-21T04:00:00Z", delivered_at: "2026-11-24T03:30:00Z",
-  details: { checked_at: "2026-11-24T04:00:00Z", carrier_name: "Fixture official carrier", tracking_url: "https://example.invalid/track/102",
+  details: { checked_at: "2026-11-24T04:00:00Z", carrier_name: "Fixture official carrier", tracking_url: "https://www.jtexpress.com.br/track/102",
     history: [{ status: "shipped", date: "2026-11-21T04:00:00Z" },
       { status: "delivered", date: "2026-11-24T03:30:00Z" }] },
 };
@@ -62,6 +68,10 @@ for (const [status, substatus, label] of [
 window.fetch = (path, options) => {
   const { pathname, searchParams } = new URL(path, location.href);
   if (pathname === "/api/v1/stores") return Promise.resolve(Response.json({ items: stores }));
+  if (decodeURIComponent(pathname).endsWith("/image-refresh")) {
+    if (exerciseImages) return new Promise(resolve => imageRequests.push({ resolve, path, signal: options.signal }));
+    return Promise.resolve(Response.json({ error: "order_image_unavailable" }, { status: 404 }));
+  }
   if (pathname.endsWith("/orders/200002/shipment")) {
     assert(searchParams.get("details") === "1", "selected order must request detail mode");
     return new Promise((resolve) => pendingShipmentDetails.push({ resolve, path, signal: options.signal }));
@@ -92,6 +102,7 @@ window.fetch = (path, options) => {
     return Promise.resolve(Response.json(order));
   }
   if (pathname.endsWith("/orders/102/refresh")) {
+    if (pauseOrderRefresh) return new Promise(resolve => pausedRefreshes.push(resolve));
     order.status = "partially_refunded";
     return Promise.resolve(Response.json(order));
   }
@@ -116,9 +127,14 @@ window.fetch = (path, options) => {
   if (pathname.endsWith("/orders")) {
     const filter = new URL(path, location.href).searchParams.get("purchase") ?? "";
     purchaseFilters.push(filter);
+    const status = searchParams.get("status") ?? "";
+    statusReads.push(status);
     const linked = { ...order, order_id: "103", shipment_id: "",
-      purchase_order_id: "12345678", purchase_cost_cny: "16" };
-    const rows = filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked];
+      purchase_order_id: "12345678", purchase_cost_cny: "16",
+      ...(distinctImageItems ? { order_items: [{ ...order.order_items[0], item_id: "MLB702" }] } : {}) };
+    const rows = (filter === "linked" ? [linked] : filter === "unlinked" ? [order] : [order, linked])
+      .filter(row => !status || (status.startsWith("fulfillment_") ?
+        "fulfillment_" + orderFulfillmentStatus(row) === status : row.status === status));
     return Promise.resolve(Response.json({ items: rows, has_more: false, purchase_filter: filter }));
   }
    if (pathname.endsWith("/sync-state")) return Promise.resolve(Response.json({ next_offset: 0, can_reset: false }));
@@ -295,6 +311,11 @@ try {
   assert(orderStatusLabel("partially_refunded") === "部分退款", "partial refund label missing");
   assert(displayOrderStatus({ ...order, purchase_order_id: "12345678" }) === "已付款",
     "purchase link must not replace the official paid label");
+  assert(displayOrderStatus({ ...order, shipment: shipmentDetails }) === "已签收", "delivered order must display fulfillment state");
+  assert(displayOrderStatus({ ...order, status: "refunded", shipment: shipmentDetails }) === "已退款", "refund must win over delivery");
+  assert(displayOrderStatus({ ...order, shipment: { ...shipmentDetails, shipment_id: "stale" } }) === "已付款", "stale shipment must not change order state");
+  assert(displayOrderStatus({ ...order, shipment: { ...shipmentDetails, status: "ready_to_ship", substatus: "printed" } }) === "标签已打印", "printed label must not imply dispatch");
+  assert(orderDate("2026-11-09T16:14:00-03:00").includes("2026/11/10") && orderDate("2026-11-09T16:14:00-03:00").includes("03:14"), "Beijing timezone must be independent of machine timezone");
   assert(hasProcurement({ ...order, purchase_order_id: "12345678" }), "purchase badge predicate incorrect");
   assert(!hasProcurement(order), "unlinked order must not be marked procured");
   assert(orderVariationText({ item_id: "MLM111", title: "", variation_id: "998" }) ===
@@ -318,6 +339,8 @@ try {
     ...order, status: "paid", dispatch_sla_status: status,
     dispatch_deadline: new Date(now + hours * 3600_000).toISOString(),
   });
+  assert(dispatchDeadlineLabel(sample(42), now, "remote").countdown === "剩余1天18小时", "show remaining days and hours");
+  assert(dispatchDeadlineLabel({ ...sample(-2), shipment: shipmentDetails }, now, "remote").countdown === "已签收", "delivered orders must not show expired countdown");
   assert(dispatchDeadlineLabel(sample(24), now, "remote").state === "neutral",
     "24h must not be red");
   assert(dispatchDeadlineLabel(sample(23.9), now, "remote").state === "late",
@@ -352,8 +375,13 @@ try {
   await waitFor(() => shipmentFetchCount === 1 &&
     document.querySelector(".orders-shipping-refs")?.textContent.includes("OFFICIAL-TRACK-102") &&
     document.querySelector(".orders-shipping-refs")?.textContent.includes("运输中") &&
-    document.querySelector(".orders-status")?.textContent.includes("已付款"),
-    "shipment and payment states were not displayed independently");
+    document.querySelector(".orders-status")?.textContent.includes("运输中"),
+    "main order state must follow current shipment");
+  const stateFilter = label => [...document.querySelectorAll(".orders-tabs button")].find(item => item.textContent === label);
+  flushSync(() => stateFilter("运输中").click());
+  await waitFor(() => statusReads.at(-1) === "fulfillment_in_transit" && document.querySelectorAll(".orders-id").length === 1,
+    "server transport filter did not select the expected order");
+  const transportReads = statusReads.length;
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "real order detail modal did not open after purchase modal closed");
@@ -367,23 +395,41 @@ try {
     document.querySelector(".orders-detail-fields time")?.dateTime === shipmentDetails.shipped_at &&
     document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier"),
     "single-order shipment refresh did not show carrier and dispatch time");
+  await waitFor(() => statusReads.length > transportReads && statusReads.at(-1) === "fulfillment_in_transit" &&
+    document.querySelectorAll(".orders-id").length === 0 && document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
+    "single-order delivery must requery the filtered list without closing details");
   const detailsFields = document.querySelector(".orders-detail-fields");
   assert(detailsFields.textContent.includes("OFFICIAL-TRACK-102") &&
     detailsFields.textContent.includes("物流最近核验") &&
     detailsFields.textContent.includes("首程承运商Fixture first mile") &&
     [...detailsFields.querySelectorAll("time")].some(time => time.dateTime === shipmentDetails.delivered_at),
     "tracking, first-mile carrier and exact receipt time must stay distinct");
-  assert(detailsFields.querySelector("a")?.href === shipmentDetails.details.tracking_url,
-    "official carrier tracking link is missing");
+  const trackingActions = [...detailsFields.querySelectorAll("button")];
+  const browserTracking = trackingActions.find(button => button.textContent === "在浏览器中打开");
+  const opened = [];
+  window.open = (...args) => opened.push(args);
+  browserTracking?.click();
+  assert(trackingActions.some(button => button.textContent === "官方物流查询") &&
+    trackingActions.some(button => button.textContent === "复制地址") &&
+    opened[0]?.[0] === shipmentDetails.details.tracking_url && opened[0]?.[2] === "noopener,noreferrer",
+    "carrier actions must offer popup, clipboard and safe browser fallback");
+  assert(officialTrackingURL("file:///tmp/example") === "" &&
+    officialTrackingURL("https://10.0.0.1/track") === "" &&
+    officialTrackingURL("https://u@jtexpress.com.br/track") === "", "unsafe tracking address accepted");
+  assert(orderUSD("11.28") === "USD 11.28" && orderUSD() === "待核实" &&
+    orderUSD("22.59000003") === "USD 22.59" && orderUSD("9.995") === "USD 10.00", "USD display must round exactly and fail closed");
   const timeline = [...document.querySelectorAll(".orders-detail-block h3")]
     .find(item => item.textContent === "官方物流时间轴");
   assert(timeline?.parentElement.querySelectorAll("time").length === 2 &&
-    !document.querySelector(".orders-shipping-refs").textContent.includes("Fixture official carrier"),
+    !document.querySelector(".orders-shipping-refs")?.textContent.includes("Fixture official carrier"),
     "timeline must be rendered inside the selected detail");
   const beforeReopen = shipmentFetchCount;
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   await waitFor(() => !document.querySelector("dialog.orders-modal:not(.orders-purchase-modal)")?.open,
     "detail did not close");
+  flushSync(() => stateFilter("全部订单").click());
+  await waitFor(() => statusReads.at(-1) === "" && document.querySelector(".orders-id")?.textContent === "102",
+    "all orders were not restored after leaving the transport filter");
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => document.querySelector(".orders-detail-fields")?.textContent.includes("Fixture official carrier") &&
     [...document.querySelectorAll(".orders-detail-block h3")].some(item => item.textContent === "官方物流时间轴"),
@@ -489,6 +535,110 @@ try {
   await new Promise(resolve => setTimeout(resolve, 20));
   assert(!document.querySelector(".orders-detail-fields")?.textContent.includes("Stale carrier"),
     "delayed result escaped the store selection guard");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  exerciseImages = true;
+  const testingThumbnail = "https://http2.mlstatic.com/D_700-I.jpg";
+  select("订单店铺", "one");
+  select("站点和物流模式", "MLB|remote");
+  const imageField = searchInput();
+  flushSync(() => {
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    nativeSetter.call(imageField, "");
+    imageField.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  order.order_items[0] = { ...order.order_items[0], item_id: "MLB700" };
+  flushSync(() => submitSearch().click());
+  await waitFor(() => imageRequests.length === 1, "new order did not start non-blocking image backfill");
+  assert(document.querySelectorAll(".orders-id").length === 2, "image read blocked order rows");
+  const staleImage = imageRequests.shift();
+  select("订单店铺", "two");
+  await waitFor(() => imageRequests.length === 1, "next store did not start independent image backfill");
+  const matchingImage = imageRequests.shift();
+  assert(staleImage.signal.aborted && staleImage.path.includes("/stores/one/") &&
+    matchingImage.path.includes("/stores/two/"), "image work did not follow the store scope");
+  staleImage.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: "https://http2.mlstatic.com/stale.jpg" }] }));
+  matchingImage.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: testingThumbnail }] }));
+  await waitFor(() => document.querySelectorAll(".orders-product-preview img").length === 2,
+    "same-shop orders for one item did not share the image");
+  assert([...document.querySelectorAll(".orders-product-preview img")].every(img => img.src === testingThumbnail) &&
+    imageRequests.length === 0, "late image update or repeat item request escaped its scope");
+  // A user operation interrupts automatic images without changing the view.
+  distinctImageItems = true;
+  order.order_items[0] = { ...order.order_items[0], item_id: "MLB701" };
+  flushSync(() => [...document.querySelectorAll(".orders-heading-actions button")].find(btn => btn.textContent === "刷新订单").click());
+  await waitFor(() => imageRequests.length === 1, "new automatic image batch missing");
+  const interrupted = imageRequests.shift();
+  pauseOrderRefresh = true;
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-detail-summary") && !document.querySelector(".orders-detail-refresh").disabled,
+    "order detail not ready for image interruption");
+  flushSync(() => document.querySelector(".orders-detail-refresh").click());
+  await waitFor(() => pausedRefreshes.length === 1 && interrupted.signal.aborted, "user refresh did not cancel images");
+  interrupted.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: "https://http2.mlstatic.com/interrupted.jpg" }] }));
+  pausedRefreshes.shift()(Response.json(order));
+  pauseOrderRefresh = false;
+  await waitFor(() => imageRequests.length === 1, "automatic images did not resume on the same view");
+  const resumed = imageRequests.shift();
+  resumed.resolve(Response.json({ ...order, order_items: [{ ...order.order_items[0], image_url: testingThumbnail }] }));
+  await waitFor(() => imageRequests.length === 1, "unattempted image was not processed after interruption");
+  const remaining = imageRequests.shift();
+  assert(decodeURIComponent(new URL(remaining.path, location.href).pathname).endsWith("/orders/103/image-refresh"),
+    "remaining distinct item was not requested: " + remaining.path);
+  remaining.resolve(Response.json({ error: "order_rate_limited" }, { status: 429 }));
+  await waitFor(() => [...document.querySelectorAll(".orders-heading-actions button")].some(btn => btn.textContent === "补全本页主图"),
+    "image batch did not stop after rate limit");
+  await new Promise(resolve => setTimeout(resolve, 500));
+  assert(imageRequests.length === 0, "rate-limited automatic batch retried itself");
+  // Exercise actual layout and the visible money / Pack / review fields.
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  const tabs = document.querySelector(".orders-tabs");
+  const originalWidth = tabs.style.width;
+  for (const width of [1024, 1280, 1440]) {
+    tabs.style.width = width + "px";
+    const bounds = tabs.getBoundingClientRect();
+    assert(getComputedStyle(tabs).flexWrap === "wrap" &&
+      [...tabs.querySelectorAll("button")].every(btn => {
+        const rect = btn.getBoundingClientRect();
+        return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
+      }), "order status toolbar overflow at " + width);
+  }
+  tabs.style.width = originalWidth;
+  exerciseImages = false;
+  order.pack_id = "920";
+  order.sales_amount_usd = "22.59000003";
+  order.order_items = [{ ...order.order_items[0], quantity: 2, image_url: testingThumbnail }];
+  flushSync(() => [...document.querySelectorAll(".orders-heading-actions button")].find(btn => btn.textContent === "刷新订单").click());
+  await waitFor(() => document.querySelectorAll(".orders-id").length === 2 &&
+    [...document.querySelectorAll(".orders-id")].every(btn => btn.textContent === "920") &&
+    document.querySelector(".orders-money")?.textContent === "USD 22.59", "Pack ID or rounded list sale missing");
+  const packRows = [...document.querySelectorAll(".orders-id")].map(btn => btn.closest("tr"));
+  assert(packRows[0].textContent.includes("内部 Order ID：102") && packRows[1].textContent.includes("内部 Order ID：103") &&
+    packRows[0].querySelector(".orders-product-meta").textContent.includes("2 件") &&
+    packRows[0].querySelector(".orders-money").title.includes("22.59000003"), "Pack rows, exact sale tooltip or count incorrect");
+  flushSync(() => packRows[0].querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector("#orders-detail-title")?.textContent === "920" &&
+    document.querySelector(".orders-detail-summary strong")?.textContent === "USD 22.59" &&
+    [...document.querySelectorAll(".orders-detail-fields button")].some(btn => btn.textContent.includes("102") && btn.textContent.includes("复制")),
+    "detail must expose Pack and internal Order ID copy");
+  assert(document.querySelector(".orders-detail-summary strong").title.includes("22.59000003"), "detail exact sale missing");
+  flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
+  delete order.sales_amount_usd;
+  order.order_items_review_required = true;
+  order.order_items = [...order.order_items, { ...order.order_items[0] },
+    { ...order.order_items[0], item_id: "MLB703", unit_price: "" }];
+  flushSync(() => [...document.querySelectorAll(".orders-heading-actions button")].find(btn => btn.textContent === "刷新订单").click());
+  await waitFor(() => document.querySelector(".orders-money")?.textContent === "待核实" &&
+    document.querySelector(".orders-product-meta")?.textContent.includes("件数待核实"), "legacy review list must not show unverified total");
+  flushSync(() => document.querySelector(".orders-id").click());
+  await waitFor(() => document.querySelector(".orders-detail-summary strong")?.textContent === "待核实" &&
+    document.querySelector(".orders-detail-block h3")?.textContent.includes("件数待核实") &&
+    document.querySelector(".orders-alert")?.textContent.includes("无法确认是否重复") &&
+    document.querySelectorAll(".orders-line-item").length === 3, "legacy review detail must retain all lines and withhold totals");
+  const missingPrice = [...document.querySelectorAll(".orders-line-content span")]
+    .find(span => span.textContent.includes("待核实 ×"));
+  assert(missingPrice && !missingPrice.hasAttribute("title") &&
+    !document.querySelector(".orders-detail-summary strong").hasAttribute("title"),
+    "missing monetary values must not show an empty exact-money tooltip");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";
