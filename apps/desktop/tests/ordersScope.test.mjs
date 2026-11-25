@@ -115,13 +115,15 @@ window.fetch = (path, options) => {
         { detail_id: "91", type: "CHARGE", subtype: "CCSI", amount: "11.10", currency: "USD", shipment_id: "80001" },
         { detail_id: "94", type: "CHARGE", subtype: "CCSI", amount: "2.45", currency: "USD", shipment_id: "80002" },
         { detail_id: "92", type: "BONUS", subtype: "CCSI", amount: "-1.12", currency: "USD", reversal_of: "91" },
-        { detail_id: "93", type: "CHARGE", amount: "1.25", currency: "BRL" },
+        { detail_id: "93", type: "CHARGE", subtype: "LOCAL_ONLY", amount: "1.25", currency: "BRL" },
+        { detail_id: "95", type: "CHARGE", amount: "0.40", currency: "USD" },
       ],
       shipping: { buyer_cost_usd: "7.72", seller_charge_usd: "11.10", seller_net_cost_usd: "3.38",
         seller_charge_detail_id: "91" },
       charge_groups: [
         { type: "CHARGE", subtype: "CCSI", currency: "USD", original_total: "13.55" },
-        { type: "CHARGE", currency: "BRL", original_total: "1.25" },
+        { type: "CHARGE", subtype: "LOCAL_ONLY", currency: "BRL", original_total: "1.25" },
+        { type: "BONUS", subtype: "CCSI", currency: "USD", original_total: "-1.12" },
         { type: "CHARGE", currency: "USD", original_total: "0.40" },
       ],
     }] }));
@@ -482,7 +484,7 @@ try {
     "mixed shipping group must expose remaining charges without showing a misleading subtotal");
   assert(profit().textContent.includes("不可相加或重复扣减") && profit().textContent.includes("同货件多单时未分摊") &&
     profit().textContent.includes("已批准 / 待释放"), "shipping scope and payment status must be explicit");
-  const subtotal = [...profit().querySelectorAll("dl")].find(dl => dl.textContent.includes("小计（BRL）"));
+  const subtotal = [...profit().querySelectorAll("dl")].find(dl => dl.textContent.includes("CHARGE 小计"));
   assert(subtotal && getComputedStyle(subtotal).display === "grid" && subtotal.children.length === 4,
     "subtotal groups must be direct grid pairs");
   const pairs = [...subtotal.children];
@@ -491,7 +493,10 @@ try {
     assert(pairs[i].tagName === "DT" && pairs[i+1].tagName === "DD" && Math.abs(label.top-value.top)<1 &&
       value.left >= label.right, "subtotal grid label and value must share a row");
   }
-  assert(subtotal.textContent.includes("小计（USD）") && subtotal.textContent.includes("待核实（未折算 USD）"), "subtotal currency must be explicit");
+  assert(subtotal.textContent.includes("USD 0.40") && subtotal.textContent.includes("-USD 1.12") &&
+    profit().textContent.includes("部分官方费用缺少已核实的美元金额，暂不展示") &&
+    !["BRL", "LOCAL_ONLY", "1.25", "USD 待核实"].some(value => profit().textContent.includes(value)),
+    "non-USD subtotals and line items must stay hidden while confirmed USD rows remain visible");
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => profit()?.textContent.includes("-USD 3.38"),

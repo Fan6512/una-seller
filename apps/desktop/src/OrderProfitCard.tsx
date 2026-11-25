@@ -102,10 +102,12 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
   const status = !billing ? "待读取官方账单" : !billing.available ? "官方未返回账单" :
     pendingRelease ? "账单有待释放款项" : "账单待对账确认";
   const shipping = billing?.shipping;
-  const otherCharges = billing?.charges.filter(charge => !shipping?.seller_charge_detail_id ||
-    charge.detail_id !== shipping.seller_charge_detail_id) ?? [];
-  const otherGroups = billing?.charge_groups?.filter(group => !shipping?.seller_charge_detail_id ||
-    group.type !== "CHARGE" || group.subtype !== "CCSI" || group.currency !== "USD") ?? [];
+  const otherCharges = billing?.charges.filter(charge => charge.currency === "USD" &&
+    (!shipping?.seller_charge_detail_id || charge.detail_id !== shipping.seller_charge_detail_id)) ?? [];
+  const otherGroups = billing?.charge_groups?.filter(group => group.currency === "USD" &&
+    (!shipping?.seller_charge_detail_id || group.type !== "CHARGE" || group.subtype !== "CCSI")) ?? [];
+  const hasUnverifiedUSDCharges = Boolean(billing?.charges.some(charge => charge.currency !== "USD") ||
+    billing?.charge_groups?.some(group => group.currency !== "USD"));
   // The upstream subtotal includes the shipping debit shown above. Do not
   // silently hide other debits in that same group or subtract rounded values.
   const hasAdditionalShippingCharges = Boolean(shipping?.seller_charge_detail_id && otherCharges.some(charge =>
@@ -140,11 +142,12 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
             payment.money_release_status === "pending" ? "待释放" : payment.money_release_status === "released" ? "已释放" : payment.money_release_status].filter(Boolean).join(" / ") || "未知").join("；")}
       </p>}
       <h4>官方费用、退款及冲正明细</h4>
-      {!otherCharges.length && !billing.taxes.length && <p className="orders-muted">平台未返回其他费用或税务明细。</p>}
+      {!otherCharges.length && !billing.taxes.length && !hasUnverifiedUSDCharges && <p className="orders-muted">平台未返回其他费用或税务明细。</p>}
+      {hasUnverifiedUSDCharges && <p className="orders-muted">部分官方费用缺少已核实的美元金额，暂不展示。</p>}
       {otherGroups.length > 0 && <dl className="orders-detail-fields">
         {otherGroups.map(group => <Fragment key={[group.currency, group.type, group.subtype].join("|")}>
-          <dt>{[group.type, group.subtype].filter(Boolean).join(" / ")} 小计（{group.currency}）</dt>
-          <dd>{group.currency === "USD" ? signedUSD(group.original_total) : "待核实（未折算 USD）"}</dd>
+          <dt>{[group.type, group.subtype].filter(Boolean).join(" / ")} 小计</dt>
+          <dd>{signedUSD(group.original_total)}</dd>
         </Fragment>)}
       </dl>}
       {hasAdditionalShippingCharges && <p className="orders-muted">其他同类物流扣项逐项展示；原小计包含上方已展示的运费，不再显示混合小计。</p>}
@@ -152,7 +155,7 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
         <summary>查看官方项目</summary>
         <ul>{otherCharges.map((charge, index) => <li key={charge.detail_id ?? "charge-" + index}>
           {[charge.type, charge.subtype, charge.status].filter(Boolean).join(" · ")}
-          {" "}{charge.currency === "USD" ? signedUSD(charge.amount) : "USD 待核实"}
+          {" "}{signedUSD(charge.amount)}
           {charge.reversal_of && <small> · 关联费用 {charge.reversal_of}</small>}
         </li>)}
         {billing.taxes.map((tax, index) => <li key={"tax-" + index}>
