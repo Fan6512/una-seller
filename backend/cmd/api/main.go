@@ -125,12 +125,30 @@ func main() {
 			log.Fatal("shared order coordination unavailable: ", err)
 		}
 		inbox := notifications.PostgresInbox{DB: db}
-		// All accepted topics must register real read-only handlers before activation.
-		worker := notifications.NewWorker(inbox, id, meliService.NotificationHandlers())
-		if err := worker.ValidateActivation(); err != nil {
+		topics, err := notifications.ParseEnabledTopics(os.Getenv("MELI_WEBHOOK_TOPICS"))
+		if err != nil {
 			log.Fatal(err)
 		}
-		receiver, err := notifications.NewReceiver(id, os.Getenv("MELI_WEBHOOK_INGRESS_TOKEN"), inbox)
+		all := meliService.NotificationHandlers()
+		enabled := make(map[string]notifications.Prepare)
+		for _, topic := range topics {
+			enabled[topic] = all[topic]
+		}
+		if os.Getenv("MELI_COMPENSATION_ENABLED") == "1" &&
+			(enabled["marketplace_orders"] == nil || enabled["marketplace_shipments"] == nil) {
+			log.Fatal("compensation requires order and shipment topics")
+		}
+		checkCtx, checkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = inbox.CheckActivationSchema(checkCtx)
+		checkCancel()
+		if err != nil {
+			log.Fatal("notification activation schema preflight failed")
+		}
+		worker := notifications.NewWorker(inbox, id, enabled)
+		if err := worker.ValidateTopicsActivation(topics); err != nil {
+			log.Fatal(err)
+		}
+		receiver, err := notifications.NewReceiverForTopics(id, os.Getenv("MELI_WEBHOOK_INGRESS_TOKEN"), inbox, topics)
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -104,6 +104,22 @@ func (w *Worker) ValidateActivation() error {
 	return nil
 }
 
+// ValidateTopicsActivation verifies the exact explicitly enabled topics;
+// a partial production worker cannot accept an unregistered event.
+func (w *Worker) ValidateTopicsActivation(topics []string) error {
+	if len(topics) == 0 || len(w.topics) != len(topics) {
+		return errors.New("notification activation requires exact enabled topic handlers")
+	}
+	seen := make(map[string]bool)
+	for _, topic := range topics {
+		if seen[topic] || w.handlers[topic] == nil {
+			return errors.New("notification activation requires exact enabled topic handlers")
+		}
+		seen[topic] = true
+	}
+	return nil
+}
+
 func (w *Worker) Run(ctx context.Context, logger *log.Logger) {
 	// Deliberately single-flight, at most one claim per second per process.
 	// Keep a single consumer until real traffic validates pacing and capacity.
