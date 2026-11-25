@@ -624,7 +624,8 @@ try {
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   delete order.sales_amount_usd;
   order.order_items_review_required = true;
-  order.order_items = [...order.order_items, { ...order.order_items[0] }];
+  order.order_items = [...order.order_items, { ...order.order_items[0] },
+    { ...order.order_items[0], item_id: "MLB703", unit_price: "" }];
   flushSync(() => [...document.querySelectorAll(".orders-heading-actions button")].find(btn => btn.textContent === "刷新订单").click());
   await waitFor(() => document.querySelector(".orders-money")?.textContent === "待核实" &&
     document.querySelector(".orders-product-meta")?.textContent.includes("件数待核实"), "legacy review list must not show unverified total");
@@ -632,7 +633,12 @@ try {
   await waitFor(() => document.querySelector(".orders-detail-summary strong")?.textContent === "待核实" &&
     document.querySelector(".orders-detail-block h3")?.textContent.includes("件数待核实") &&
     document.querySelector(".orders-alert")?.textContent.includes("无法确认是否重复") &&
-    document.querySelectorAll(".orders-line-item").length === 2, "legacy review detail must retain both lines and withhold totals");
+    document.querySelectorAll(".orders-line-item").length === 3, "legacy review detail must retain all lines and withhold totals");
+  const missingPrice = [...document.querySelectorAll(".orders-line-content span")]
+    .find(span => span.textContent.includes("待核实 ×"));
+  assert(missingPrice && !missingPrice.hasAttribute("title") &&
+    !document.querySelector(".orders-detail-summary strong").hasAttribute("title"),
+    "missing monetary values must not show an empty exact-money tooltip");
   document.body.dataset.result = "pass";
 } catch (error) {
   document.body.dataset.result = "fail";
