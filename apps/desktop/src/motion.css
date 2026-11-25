@@ -1,0 +1,112 @@
+/* One motion language for state changes. No layout-property transitions,
+   no blanket will-change, no per-row entrance animation. */
+:root {
+  --motion-fast: 100ms;
+  --motion-standard: 160ms;
+  --motion-enter: 200ms;
+  --motion-modal: 220ms;
+  --motion-ease: cubic-bezier(.2,.8,.2,1);
+  --motion-press-ease: cubic-bezier(.2,0,.2,1);
+}
+
+/* Interaction feedback: do not animate font metrics or layout. */
+:where(.app-shell, .login-page) :is(button, a, input, select, textarea, summary),
+.search-box, .password-field, .product-card-tile, .published-item,
+.listing-variant-image-options label, .capture-pill, .store-status,
+.store-type-label, .connection-indicator, .connection-dot, .published-state,
+.orders-purchase-badge, .localized-title-count, .published-char-counter {
+  transition-property: background-color, border-color, color, opacity;
+  transition-duration: var(--motion-standard);
+  transition-timing-function: var(--motion-ease);
+}
+:where(.app-shell, .login-page) :is(.primary-button, .primary-action, .login-submit,
+.refresh-button, .logout-action, .store-health-button, .page-actions button,
+.gallery-arrows button, .gallery-thumb, .orders-main-button,
+.orders-table-action, .orders-detail-head button, .listing-variant-images-button,
+.listing-gallery-actions button, .localized-title-actions button) {
+  transition-property: background-color, border-color, color, opacity, transform;
+}
+:where(.app-shell, .login-page) :is(.primary-button, .primary-action, .login-submit,
+.refresh-button, .logout-action, .store-health-button, .page-actions button,
+.gallery-arrows button, .gallery-thumb, .orders-main-button,
+.orders-table-action, .orders-detail-head button, .listing-variant-images-button,
+.listing-gallery-actions button, .localized-title-actions button):active:not(:disabled) {
+  transform: scale(.98);
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--motion-press-ease);
+}
+
+/* Stable type metrics when switching a selected tab or validation state. */
+.settings-navigation button, .settings-navigation button[aria-pressed="true"],
+.workbench-tabs button, .workbench-tabs button[aria-selected="true"],
+.orders-tabs button, .orders-tabs button[aria-pressed="true"],
+.published-view-switch button, .published-view-switch button.active,
+.orders-procurement-toolbar button, .orders-procurement-toolbar button[aria-pressed="true"],
+.localized-title-count, .localized-title-count.title-over-limit {
+  font-weight: 600;
+}
+
+/* Reveal only bounded regions or newly mounted detail content, never rows. */
+.login-card, .product-detail > .detail-toolbar, .published-detail-card > .published-detail-header,
+.listing-gallery-preview > div, .listing-variant-image-picker-head,
+[data-motion-entry="content"] {
+  animation: una-content-in var(--motion-enter) var(--motion-ease);
+}
+.page-heading, .account-settings > .account-card, .store-link-panel,
+.loading-state, .empty-state, .load-error, .published-empty, .orders-empty,
+.orders-detail-loading, .orders-review, .workspace-feedback, .orders-notice,
+.orders-alert, .orders-purchase-success, .working-draft-success,
+.working-draft-error, .store-feedback, .account-message, .login-error,
+.listing-fields-note[role="status"], .listing-validation,
+.published-form-warning[role="alert"], [data-motion-image="ready"] {
+  animation: una-feedback-in var(--motion-standard) var(--motion-ease);
+}
+@keyframes una-content-in {
+  from { opacity: .86; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes una-feedback-in {
+  from { opacity: .72; }
+  to { opacity: 1; }
+}
+
+/* A hidden page stays hidden and mounted; no state/focus reset or delayed close. */
+[data-motion-view="true"]:not([hidden]) > :is(.published-page, .orders-page) > .page-heading {
+  animation: una-feedback-in var(--motion-standard) var(--motion-ease);
+}
+
+/* Native modal semantics stay in control. Exit is immediate because closing
+   existing dialogs also clears sensitive detail state and returns focus. */
+dialog.orders-modal[open] {
+  animation: una-dialog-in var(--motion-modal) var(--motion-ease);
+}
+dialog.orders-modal[open]::backdrop {
+  animation: una-feedback-in var(--motion-standard) var(--motion-ease);
+}
+@keyframes una-dialog-in {
+  from { opacity: .72; transform: translateY(6px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Only genuine in-flight indicators loop. Native progress, checkboxes and
+   resizing remain direct and precise. Numeric labels never interpolate data. */
+.spinner { animation: una-spin 800ms linear infinite; }
+@keyframes una-spin { to { transform: rotate(360deg); } }
+.motion-value, .gallery-count, .published-char-counter, .localized-title-count,
+.list-meta, .orders-money, .orders-tabs-meta, .published-browser-count {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+  :where(.app-shell, .login-page) :is(button, a):active {
+    transform: none !important;
+  }
+  .spinner {
+    border-top-color: var(--ui-accent);
+  }
+}

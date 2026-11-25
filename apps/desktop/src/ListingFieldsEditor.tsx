@@ -241,7 +241,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     return <>
       <label className="listing-field listing-active-title">
         <span>{label}</span>
-        <textarea key={siteTitleMode+":"+lang} rows={3} disabled={disabled}
+        <textarea data-motion-entry="content" key={siteTitleMode+":"+lang} rows={3} disabled={disabled}
           value={value.titles[lang]}
           onChange={e=>setLocalizedTitle(lang,e.target.value)}
           placeholder="填写商品标题"/>
@@ -266,7 +266,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   </div>;
   const renderDescription=(lang:"en"|"es"|"pt")=><>
     <label className="listing-field">{languages.find(item=>item.key===lang)!.label}商品描述
-      <textarea key={siteTitleMode+":description:"+lang} rows={5} disabled={disabled} value={value.descriptions?.[lang]??""}
+      <textarea data-motion-entry="content" key={siteTitleMode+":description:"+lang} rows={5} disabled={disabled} value={value.descriptions?.[lang]??""}
         onChange={e=>setLocalizedDescription(lang,e.target.value)} placeholder="填写纯文本商品描述"/>
       <small>{listingTextCount(value.descriptions?.[lang]??"")} / 20000 字符</small>
     </label>
@@ -445,7 +445,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           <button type="button" onClick={()=>setImagePreview(null)}>关闭预览</button>
         </div>
         {/^https:\/\//i.test(images[imagePreview].url)?
-          <img src={images[imagePreview].url} alt={"图片 "+(imagePreview+1)+" 大图"} referrerPolicy="no-referrer"/>:
+          <img key={images[imagePreview].url} src={images[imagePreview].url} alt={"图片 "+(imagePreview+1)+" 大图"} referrerPolicy="no-referrer"
+            onLoad={event=>{event.currentTarget.dataset.motionImage="ready";}}/>:
           <span>该图片还没有有效的 HTTPS 链接。</span>}
       </div>}
     </fieldset>

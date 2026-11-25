@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MotionValue } from "./motion";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
@@ -49,13 +50,16 @@ function CapturePill({ status }: { status: string }) {
   return <span className={"capture-pill " + style}>{label}</span>;
 }
 
-function ProductImage({ src, alt, className = "", eager = false }: { src: string | null; alt: string; className?: string; eager?: boolean }) {
+function ProductImage({ src, alt, className = "", eager = false, reveal = false }: { src: string | null; alt: string; className?: string; eager?: boolean; reveal?: boolean }) {
   const [failed, setFailed] = useState(false);
+  const [loadedSource, setLoadedSource] = useState<string | null>(null);
   useEffect(() => setFailed(false), [src]);
   if (!src || failed) {
     return <span className={"image-fallback " + className} role="img" aria-label="暂无商品图片"><Icon name="image" size={24} /></span>;
   }
-  return <img className={className} src={src} alt={alt} loading={eager ? "eager" : "lazy"} referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+  return <img className={className} src={src} alt={alt} loading={eager ? "eager" : "lazy"} referrerPolicy="no-referrer"
+    data-motion-image={reveal && loadedSource === src ? "ready" : undefined}
+    onLoad={reveal ? () => setLoadedSource(src) : undefined} onError={() => setFailed(true)} />;
 }
 
 // The cloud database retains original source URLs for auditability. Displaying a
@@ -100,10 +104,10 @@ function ProductGallery({ images, title }: { images: CollectionDetail["images"];
   return (
     <div className="gallery">
       <div className="gallery-stage">
-        <ProductImage key={selected.url} src={selected.url} alt={title + "，图片 " + (active + 1)} className="gallery-main" eager />
+        <ProductImage key={selected.url} src={selected.url} alt={title + "，图片 " + (active + 1)} className="gallery-main" eager reveal />
         {images.length > 1 && (
           <>
-            <span className="gallery-count">{active + 1} / {images.length}</span>
+            <span className="gallery-count"><MotionValue value={`${active + 1} / ${images.length}`} /></span>
             <div className="gallery-arrows">
               <button type="button" aria-label="上一张图片" disabled={active === 0} onClick={() => setActive((n) => Math.max(0, n - 1))}><Icon name="left" size={17} /></button>
               <button type="button" aria-label="下一张图片" disabled={active === images.length - 1} onClick={() => setActive((n) => Math.min(images.length - 1, n + 1))}><Icon name="right" size={17} /></button>
@@ -516,8 +520,8 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             }
           }} />}
         </>}
-        {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
-          : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+        {section === "published" ? <div hidden={settings} data-motion-view="true"><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+          : section === "orders" ? <div hidden={settings} data-motion-view="true"><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1></div>
@@ -532,7 +536,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           <label><input type="checkbox" checked={showTransferred} disabled={approving}
             onClick={e=>{if(draftDirty&&!leavingDirty())e.preventDefault();}}
             onChange={e=>{setShowTransferred(e.target.checked);setOffset(0);setChecked(new Set());}} /> 包含已转入来源</label>
-          <span>已勾选 {checked.size} 件</span>
+          <span>已勾选 <MotionValue value={checked.size} /> 件</span>
           <button type="button" className="approval-select-current" disabled={!selectedId||approving||!items.some(item=>item.id===selectedId)}
             aria-pressed={selectedId!==null&&checked.has(selectedId)}
             onClick={()=>{
@@ -586,7 +590,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             </div>
             {items.length > 0 && !listError && (
               <div className="list-footer">
-                <span>第 {pageNumber} 页</span>
+                <span>第 <MotionValue value={pageNumber} /> 页</span>
                 <div className="page-actions">
                   <button type="button" disabled={offset === 0 || listLoading || draftDirty || approving} aria-label="上一页" onClick={() => {setChecked(new Set());setOffset((n) => Math.max(0, n - PAGE_SIZE));}}><Icon name="left" size={17} />上一页</button>
                   <button type="button" disabled={!hasMore || listLoading || draftDirty || approving} aria-label="下一页" onClick={() => {setChecked(new Set());setOffset((n) => n + PAGE_SIZE);}}>下一页<Icon name="right" size={17} /></button>

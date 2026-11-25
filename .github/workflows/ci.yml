@@ -176,6 +176,9 @@ jobs:
       - name: Verify readable and bounded API errors
         run: node --experimental-strip-types --test tests/apiErrors.test.mjs
 
+      - name: Verify shared desktop motion invariants
+        run: node --test tests/motion.test.mjs
+
       - name: TypeScript check and Vite build
         run: npm run build
 
