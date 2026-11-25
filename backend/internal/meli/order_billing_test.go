@@ -162,6 +162,10 @@ func TestOfficialBillingChecksOwnerAndMappingBeforeAndAfterRead(t *testing.T) {
 	if !errors.Is(err, ErrOrderNotFound) || calls.Load() != 0 {
 		t.Fatalf("foreign order reached platform: %v", err)
 	}
+	cache, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || len(cache.Items) != 1 || cache.Items[0].Available || cache.Items[0].Reconciliation != "not_cached" || calls.Load() != 0 {
+		t.Fatalf("empty cache contacted platform or returned a bill: %+v %v", cache, err)
+	}
 	page, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
 	if err != nil || len(page.Items) != 1 || page.NetIncomeUSD != nil || calls.Load() != 2 {
 		t.Fatalf("unexpected billing preview: %+v %v", page, err)
@@ -176,10 +180,30 @@ func TestOfficialBillingChecksOwnerAndMappingBeforeAndAfterRead(t *testing.T) {
 	if strings.Contains(string(encoded), "998877") {
 		t.Fatal("shipping receiver identity escaped sanitization")
 	}
+	cache, err = service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || len(cache.Items) != 1 || cache.NetIncomeUSD != nil || calls.Load() != 2 ||
+		cache.Items[0].CheckedAt == nil || cache.Items[0].Shipping == nil ||
+		cache.Items[0].Shipping.SellerNetCostUSD != "3.38" {
+		t.Fatalf("successful bill not persisted or cache contacted upstream: %+v %v", cache, err)
+	}
+	if _, err := service.GetCachedOrderBilling(ctx, "00000000-0000-4000-8000-000000000099", store, scope, "10001"); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("foreign owner cached billing: %v", err)
+	}
 	revoke.Store(true)
 	page, err = service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
 	if !errors.Is(err, ErrOrderAuthorizationChanged) || len(page.Items) != 0 {
 		t.Fatalf("revoked mapping leaked billing: %+v %v", page, err)
+	}
+	if _, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001"); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("revoked mapping cached billing: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET marketplaces_status='verified' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || len(restored.Items) != 1 || restored.Items[0].CheckedAt == nil ||
+		!restored.Items[0].CheckedAt.Equal(*cache.Items[0].CheckedAt) {
+		t.Fatalf("failed refresh did not preserve successful snapshot: %+v %v", restored, err)
 	}
 }
 
