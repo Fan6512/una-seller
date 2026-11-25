@@ -618,3 +618,43 @@ WHERE store_id=$1 AND shipment_id='801' AND shipment_snapshot->>'status'='shippe
 		t.Fatalf("only %d linked orders committed", got)
 	}
 }
+
+func TestNotificationLateAssociationPostgres(t *testing.T) {
+	var ready atomic.Bool
+	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/marketplace/shipments/801":
+			fmt.Fprint(w, shipmentPayload("801", "987654", "MLB", "shipped", "2026-11-22T00:00:00Z"))
+		case "/shipments/801/orders":
+			if !ready.Load() {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			fmt.Fprint(w, linksBody(linkRow("10001", "700", "987654")))
+		case "/marketplace/orders/10001":
+			fmt.Fprint(w, notifiedOrderFixture("10001", "2026-11-21T01:00:00Z", "paid", "801"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	job := c.job("marketplace_shipments", "801", "987654")
+	_, err := c.prepare(t, job)
+	var deferred *notifications.Deferred
+	if !errors.As(err, &deferred) || deferred.Reason != notifications.DeferAssociation || deferred.Delay != time.Minute {
+		t.Fatalf("late association not deferred: %v", err)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_orders WHERE store_id=$1`, c.store); got != 0 {
+		t.Fatalf("late association wrote %d orders", got)
+	}
+	ready.Store(true)
+	resource, err := c.prepare(t, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.apply(t, resource); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_orders WHERE store_id=$1 AND shipment_id='801'`, c.store); got != 1 {
+		t.Fatalf("late association not recovered: %d", got)
+	}
+}

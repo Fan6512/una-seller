@@ -468,6 +468,9 @@ func TestNotificationPostgresRestart(t *testing.T) {
 		if err := w.retry(ctx, cooling, &RateLimited{RetryAfter: time.Hour}); err != nil {
 			t.Fatal(err)
 		}
+		// The shared application-wide coordinator must also survive a true restart.
+		mustExec(t, ctx, p, `INSERT INTO app.meli_order_read_coordination(application_id,retry_until)
+VALUES($1,now()+interval '1 hour') ON CONFLICT(application_id) DO UPDATE SET retry_until=EXCLUDED.retry_until`, testApp)
 	case "down":
 		if err := p.DB.Ping(ctx); err == nil {
 			t.Fatal("database must be stopped")
@@ -477,12 +480,18 @@ func TestNotificationPostgresRestart(t *testing.T) {
 		t.Logf("stopped PostgreSQL HTTP 503 after %s", time.Since(start))
 	case "after":
 		defer cleanStores(t, ctx, p)
+		defer mustExec(t, ctx, p, `DELETE FROM app.meli_order_read_coordination WHERE application_id=$1`, testApp)
+		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_order_read_coordination WHERE application_id=$1 AND retry_until>now()`, testApp)
 		assertCount(t, ctx, p, 2, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1`, testStoreA)
 		assertACK(t, h, 200, testOrder, "888", testChildA, "crash")
 		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND resource_id='888' AND attempts=1 AND generation=1 AND lease_token IS NOT NULL`, testStoreA)
 		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_cooldowns WHERE store_id=$1 AND available_at > now()`, testStoreB)
 		// Advance the lease to avoid a wall-clock wait in CI.
 		mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET lease_until=now()-interval '1 second' WHERE store_id=$1 AND resource_id='888'`, testStoreA)
+		if _, err := w.claim(ctx); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("shared application cooldown did not block claim after restart: %v", err)
+		}
+		mustExec(t, ctx, p, `UPDATE app.meli_order_read_coordination SET retry_until=now()-interval '1 second' WHERE application_id=$1`, testApp)
 		if err := w.runOnce(ctx); err != nil {
 			t.Fatal(err)
 		}
