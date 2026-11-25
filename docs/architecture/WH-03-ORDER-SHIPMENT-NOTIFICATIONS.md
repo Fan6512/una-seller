@@ -76,6 +76,24 @@
 - 0015 增加私有应用级读取节奏、搜索节奏与冷却表。Webhook 启用时，人工与后台均使用相同协调器；单次官方 GET（包括节奏等待）最长 15 秒，锁随 PostgreSQL 事务释放。429 统一至少冷却 60 秒，尽可能在客户端取消后仍持久化；队列领取检查应用冷却，协调器已持久化的 429 不再重复写入店铺冷却。已有店铺级冷却仅作为旧任务/非共享调用的保护。所有参与同一应用的进程必须使用协调器；协调器默认禁用时仍沿用人工旧行为。生产连接池、故障、时钟和跨进程互斥待隔离及真实拓扑复验；进程崩溃在收到 429 与数据库提交之间仍存在窗口。
 - 已知暂不可用授权、正常请求竞争、204/空关联、429 释放租约并退还本次失败额度，延迟重调度；24 小时仍不可用则保留死信，后续补偿。明确官方 seller/sender 身份冲突直接死信；不明确的映射/站点仍失败关闭并受普通重试上限。普通失败及失效租约仍最多 8 次领取。
 - 每个货件支持最多 30 个唯一订单的有界顺序回读，全部校验通过后一次 fenced 事务提交；新增 11 单测试。没有实现持久化分批续跑，超过 30 或长期超时仍失败关闭，需后续实现分批续跑/补偿，不得报告已完成该能力。真实 CBT 关联接口、site_id、字段、权限与大货件样本仍 NOT_RUN。
-- CI persistence 路径扩展到 notifications、订单/货件/账单写入和协调模块。新增人工优先、应用级互斥/持久冷却、延迟退还额度/超龄死信、永久身份冲突及 11 单回归。新 HEAD 的 gofmt、完整 CI、隔离 PG（含重启、数据库失败时不得发官方请求）尚待执行确认。
+- CI persistence 路径扩展到 notifications、订单/货件/账单写入和协调模块。新增人工优先、应用级互斥/持久冷却、延迟退还额度/超龄死信、永久身份冲突及 11 单回归。
+
+### 92f86299 复验结果
+
+隔离 PostgreSQL 17.6（独立数据目录，`127.0.0.1:55432/una_seller_test`）+ Go 1.26.11：
+
+- `gofmt -l` 无输出，`go vet ./...`、`go build ./...` 通过；`go test -p 1 -count=1 ./...` 全绿（meli 40.8s、notifications 3.5s）。本轮 CI 见 PR #100 checks，不以本地结果代替。
+- 三阶段重启（before → 停库 → down → after）实跑通过：停库期间 ACK 503；重启后应用级 `retry_until`、店铺冷却与租约均保留，`claim` 在冷却期内拒绝领取，清除后任务继续。
+- 新增 `TestSharedOrderReadCancellationReleasesLock`：节奏等待中取消不触达官方，advisory lock 随事务释放，另一进程可立即取得。
+- 新增 `TestSharedOrderReadRequiresDatabase`：协调库不可用时 `orderGET` 在发请求前失败，官方调用数 0。
+- 新增 `TestNotificationDeferredClaimsAreRefunded`、`TestNotificationPermanentScopeDeadLettersImmediately`、`TestNotificationElevenLinkedOrdersPostgres`、`TestNotificationLateAssociationPostgres`；普通失败仍为 8 次领取（`TestNotificationPostgresWorker`）。
+
+复验确认的部署前置与边界（不阻塞默认禁用合并）：
+
+- 连接池：`collections.Open` 固定 `MaxConns=3`，启用以 0015 后单次官方 GET 会占 1 条连接最长 15 秒（约占池 1/3）。生产启用前必须复核池大小与其他长查询，否则可能排队到 15 秒超时。
+- 协调器只随 `MELI_WEBHOOK_ENABLED=1` 启用：任何同时服务人工订单读取、但未开 Webhook 的进程都会绕过应用级节奏与冷却。多进程部署必须统一开启。
+- 空关联/204 与暂不可用任务按 1 分钟固定间隔重调度，24 小时内约 1440 次领取、每次最多 2 次官方 GET；符合“不烧重试额度”的设计，但会持续消耗配额，后续可改为指数退避。
+- 时钟：`greatest()` 合并持久化时间戳，任一进程时钟超前会拉长其他进程的等待；跨机部署需 NTP 校验。
+- 真实 CBT 关联接口、seller_id/site_id 实际取值、字段变体与权限本轮 **NOT_RUN**：本机与现有主机均未持有 CBT 卖家 access token（探针需 `MELI_CBT_PROBE_TOKEN`），且验收禁止官方写入、订阅变更与生产迁移，因此只有官方文档核对与合成响应，不冒充联调。
 
 默认禁用不变，0015 仅提交迁移文件；不执行生产迁移、部署、启用、官方订阅或写入。
