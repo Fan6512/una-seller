@@ -8,7 +8,7 @@ import {
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
-import OrderProfitCard, { type OrderBillingCache } from "./OrderProfitCard";
+import OrderProfitCard from "./OrderProfitCard";
 import TranslatedOrderTitle, { useOrderTitleTranslations } from "./TranslatedOrderTitle";
 import "./orders.css";
 
@@ -239,7 +239,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const detailDialogRef = useRef<HTMLDialogElement>(null);
   const purchaseDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<OrderRecord | null>(null);
-  const billingCache = useRef<OrderBillingCache>(new Map());
   const billingCooldown = useRef({until:0});
   const [detailError, setDetailError] = useState("");
   const [trackingError, setTrackingError] = useState("");
@@ -1210,7 +1209,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                 </ol> : <p className="orders-muted">{detail.shipment.details.history
                   ? "平台暂无物流事件。" : "平台未提供物流历史。"}</p>}
               </section>}
-              <OrderProfitCard key={billingKey} cacheKey={billingKey} cache={billingCache.current} rateLimit={billingCooldown.current}
+              <OrderProfitCard key={billingKey} rateLimit={billingCooldown.current}
                 order={detail} scope={selectedRowScope ?? scope}
                 disabled={running || Boolean(logisticsAction) || refreshingOrder || installingUpdate}/>
               <section className="orders-detail-block">
