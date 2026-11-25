@@ -2,14 +2,20 @@ package meli
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Fan6512/una-seller/backend/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestBillingPreviewSanitizesAndDoesNotInventNet(t *testing.T) {
@@ -289,4 +295,365 @@ func TestBillingWrappedRateLimitUsesExistingOrderCooldown(t *testing.T) {
 			}
 		}
 	}
+}
+
+func insertBillingTestOrder(t *testing.T, ctx context.Context, db *pgxpool.Pool, store, seller, shipment string) {
+	t.Helper()
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,order_items)
+ VALUES ($1::uuid,'MLB','remote',$2,'10001','paid','USD',20,now(),now(),$3,'[]')`, store, seller, shipment); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func billingTestSeller(t *testing.T, ctx context.Context, db *pgxpool.Pool, store string) string {
+	t.Helper()
+	var seller string
+	if err := db.QueryRow(ctx, `SELECT seller_id FROM app.meli_store_connections WHERE id=$1::uuid`, store).Scan(&seller); err != nil {
+		t.Fatal(err)
+	}
+	return seller
+}
+
+func TestCachedBillingIsScopedToStoreAndShipment(t *testing.T) {
+	service, db, owner, store := setupRefreshTest(t)
+	ctx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+	defer stop()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET access_token_expires_at=now()+interval '1 hour' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	otherAccess, err := service.cipher.Seal("synthetic_other_access", tokenAAD(owner, "555001", "access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRefresh, err := service.cipher.Seal("synthetic_other_refresh", tokenAAD(owner, "555001", "refresh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var otherStore string
+	if err := db.QueryRow(ctx, `INSERT INTO app.meli_store_connections
+ (owner_user_id,seller_id,access_token_ciphertext,refresh_token_ciphertext,access_token_expires_at,marketplaces,marketplaces_status)
+ VALUES ($1::uuid,'555001',$2,$3,now()+interval '1 hour',
+ '[{"user_id":555002,"site_id":"MLB","logistic_type":"remote"}]','verified') RETURNING id::text`,
+		owner, otherAccess, otherRefresh).Scan(&otherStore); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = db.Exec(c, "DELETE FROM app.meli_store_connections WHERE id=$1::uuid", otherStore)
+	})
+	insertBillingTestOrder(t, ctx, db, store, "987654", "80001")
+	insertBillingTestOrder(t, ctx, db, otherStore, "555002", "80001")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/order/details"):
+			_, _ = w.Write([]byte(`{"results":[{"order_id":10001,"payment_info":[{"status":"approved","money_release_status":"pending"}],
+			 "details":[{"charge_info":{"detail_id":91,"detail_amount":11.10,"detail_type":"CHARGE","detail_sub_type":"CCSI","debited_from_operation":"YES"},
+			 "currency_info":{"currency_id":"USD"},"shipping_info":{"shipping_id":80001}}]}]}`))
+		case strings.HasSuffix(r.URL.Path, "/costs") && strings.Contains(r.URL.Path, "/80002/"):
+			_, _ = w.Write([]byte(`{"currency_id":"USD","senders":[{"user_id":987654,"cost":4.00}],"receiver":{"cost":7.72}}`))
+		case strings.HasSuffix(r.URL.Path, "/costs"):
+			_, _ = w.Write([]byte(`{"currency_id":"USD","senders":[{"user_id":987654,"cost":3.38}],"receiver":{"cost":7.72}}`))
+		default:
+			t.Errorf("unexpected upstream path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	service.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+
+	page, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Shipping == nil || page.Items[0].Shipping.SellerNetCostUSD != "3.38" {
+		t.Fatalf("initial official bill: %+v %v", page, err)
+	}
+	cached, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || len(cached.Items) != 1 || !cached.Items[0].Available || cached.Items[0].CheckedAt == nil ||
+		cached.Items[0].Shipping == nil || cached.Items[0].Shipping.SellerNetCostUSD != "3.38" {
+		t.Fatalf("store snapshot: %+v %v", cached, err)
+	}
+	// The same order number in another store must not read this snapshot.
+	other, err := service.GetCachedOrderBilling(ctx, owner, otherStore, scope, "10001")
+	if err != nil || len(other.Items) != 1 || other.Items[0].Available || other.Items[0].Reconciliation != "not_cached" ||
+		other.Items[0].CheckedAt != nil {
+		t.Fatalf("cross-store snapshot leak: %+v %v", other, err)
+	}
+	// A changed shipment invalidates the old snapshot instead of reusing its costs.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET shipment_id='80002' WHERE store_id=$1::uuid AND order_id='10001'`, store); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || len(changed.Items) != 1 || changed.Items[0].Available || changed.Items[0].Reconciliation != "not_cached" {
+		t.Fatalf("stale shipment snapshot served: %+v %v", changed, err)
+	}
+	page, err = service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Shipping == nil || page.Items[0].Shipping.SellerNetCostUSD != "4.00" {
+		t.Fatalf("official bill after shipment change: %+v %v", page, err)
+	}
+	rebound, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || len(rebound.Items) != 1 || !rebound.Items[0].Available || rebound.Items[0].Shipping == nil ||
+		rebound.Items[0].Shipping.SellerNetCostUSD != "4.00" || rebound.Items[0].CheckedAt == nil {
+		t.Fatalf("snapshot not rebound to current shipment: %+v %v", rebound, err)
+	}
+}
+
+func TestLateBillingResponseKeepsNewestSnapshot(t *testing.T) {
+	service, db, owner, store := setupRefreshTest(t)
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	insertBillingTestOrder(t, ctx, db, store, "987654", "80001")
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	started := time.Now().UTC().Add(-time.Minute)
+	newest := BillingOrderPreview{OrderID: "10001", Available: true, Reconciliation: "review_required",
+		Payments: []BillingPayment{}, Taxes: []BillingTax{},
+		Charges: []BillingCharge{{DetailID: "91", Type: "CHARGE", Amount: "2.00", Currency: "USD"}}}
+	stale := newest
+	stale.Charges = []BillingCharge{{DetailID: "91", Type: "CHARGE", Amount: "1.00", Currency: "USD"}}
+	parent := billingTestSeller(t, ctx, db, store)
+	saved, err := service.saveOrderBillingSnapshot(ctx, owner, store, scope, "987654", parent, "80001", started.Add(time.Second), newest)
+	if err != nil || saved.CheckedAt == nil {
+		t.Fatalf("newest snapshot not saved: %+v %v", saved, err)
+	}
+	late, err := service.saveOrderBillingSnapshot(ctx, owner, store, scope, "987654", parent, "80001", started, stale)
+	if err != nil || late.Charges[0].Amount != "2.00" || !late.CheckedAt.Equal(*saved.CheckedAt) {
+		t.Fatalf("late response overwrote newer snapshot: %+v %v", late, err)
+	}
+	cached, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || cached.Items[0].Charges[0].Amount != "2.00" {
+		t.Fatalf("stored snapshot changed by late response: %+v %v", cached, err)
+	}
+	if _, err = service.saveOrderBillingSnapshot(ctx, "00000000-0000-4000-8000-000000000099", store, scope,
+		"987654", parent, "80001", started.Add(2*time.Second), stale); !errors.Is(err, ErrOrderAuthorizationChanged) {
+		t.Fatalf("foreign owner wrote snapshot: %v", err)
+	}
+}
+
+func TestPartialBillingResponsePreservesSnapshot(t *testing.T) {
+	service, db, owner, store := setupRefreshTest(t)
+	ctx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+	defer stop()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET access_token_expires_at=now()+interval '1 hour' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	insertBillingTestOrder(t, ctx, db, store, "987654", "80001")
+	var costsDown, billingMissing atomic.Bool
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/costs"):
+			if costsDown.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(`{"currency_id":"USD","senders":[{"user_id":987654,"cost":3.38}],"receiver":{"cost":7.72}}`))
+		case strings.HasSuffix(r.URL.Path, "/order/details"):
+			if billingMissing.Load() {
+				_, _ = w.Write([]byte(`{"results":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[{"order_id":10001,"payment_info":[],"details":[
+			 {"charge_info":{"detail_id":91,"detail_amount":11.10,"detail_type":"CHARGE","detail_sub_type":"CCSI"},
+			  "currency_info":{"currency_id":"USD"},"shipping_info":{"shipping_id":80001}}]}]}`))
+		default:
+			t.Errorf("unexpected upstream path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	service.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	if page, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"}); err != nil ||
+		page.Items[0].Shipping == nil || page.Items[0].Shipping.SellerNetCostUSD != "3.38" {
+		t.Fatalf("initial bill: %+v %v", page, err)
+	}
+	saved, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || !saved.Items[0].Available {
+		t.Fatalf("initial snapshot: %+v %v", saved, err)
+	}
+	checked := *saved.Items[0].CheckedAt
+
+	costsDown.Store(true)
+	page, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
+	if err != nil || !page.Items[0].Available || page.Items[0].Shipping == nil || page.Items[0].Shipping.SellerNetCostUSD != "" {
+		t.Fatalf("partial shipping cost response: %+v %v", page, err)
+	}
+	afterCosts, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || !afterCosts.Items[0].CheckedAt.Equal(checked) || afterCosts.Items[0].Shipping.SellerNetCostUSD != "3.38" {
+		t.Fatalf("partial response replaced snapshot: %+v %v", afterCosts, err)
+	}
+
+	costsDown.Store(false)
+	billingMissing.Store(true)
+	page, err = service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
+	if err != nil || page.Items[0].Available {
+		t.Fatalf("missing billing response: %+v %v", page, err)
+	}
+	afterMissing, err := service.GetCachedOrderBilling(ctx, owner, store, scope, "10001")
+	if err != nil || !afterMissing.Items[0].CheckedAt.Equal(checked) || afterMissing.Items[0].Shipping.SellerNetCostUSD != "3.38" {
+		t.Fatalf("missing response replaced snapshot: %+v %v", afterMissing, err)
+	}
+	if calls.Load() < 5 {
+		t.Fatalf("partial refreshes skipped the platform: calls=%d", calls.Load())
+	}
+}
+
+func TestConcurrentBillingPreviewIsSingleFlight(t *testing.T) {
+	service, db, owner, store := setupRefreshTest(t)
+	ctx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+	defer stop()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET access_token_expires_at=now()+interval '1 hour' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	insertBillingTestOrder(t, ctx, db, store, "987654", "80001")
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if strings.HasSuffix(r.URL.Path, "/order/details") {
+			entered <- struct{}{}
+			<-release
+			_, _ = w.Write([]byte(`{"results":[{"order_id":10001,"payment_info":[],"details":[]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"currency_id":"USD","senders":[{"user_id":987654,"cost":3.38}],"receiver":{"cost":7.72}}`))
+	}))
+	defer server.Close()
+	service.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"})
+		done <- err
+	}()
+	<-entered
+	if _, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"}); !errors.Is(err, ErrOrderBusy) {
+		t.Fatalf("concurrent refresh not rejected: %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("first refresh failed: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("concurrent refresh reached platform %d times", calls.Load())
+	}
+}
+
+func TestBillingRateLimitSetsCooldown(t *testing.T) {
+	service, db, owner, store := setupRefreshTest(t)
+	ctx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+	defer stop()
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET access_token_expires_at=now()+interval '1 hour' WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	insertBillingTestOrder(t, ctx, db, store, "987654", "80001")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"too many requests"}`))
+	}))
+	defer server.Close()
+	service.apiURL = server.URL
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	var cooldown *OrderRateLimitError
+	if _, err := service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"}); !errors.As(err, &cooldown) {
+		t.Fatalf("upstream 429 not surfaced as cooldown: %v", err)
+	}
+	retry, err := strconv.Atoi(cooldown.RetryAfter())
+	if err != nil || retry < 1 || retry > 120 {
+		t.Fatalf("retry-after out of range: %q", cooldown.RetryAfter())
+	}
+	if _, err = service.PreviewOrderBilling(ctx, owner, store, scope, []string{"10001"}); !errors.As(err, &cooldown) {
+		t.Fatalf("local cooldown not enforced: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("cooldown still reached platform: calls=%d", calls.Load())
+	}
+}
+
+func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
+	phase := os.Getenv("TEST_RESTART_PHASE")
+	if phase == "" {
+		t.Skip("executed separately with a real PostgreSQL restart")
+	}
+	if phase != "before" && phase != "after" {
+		t.Fatalf("invalid TEST_RESTART_PHASE %q", phase)
+	}
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatal("TEST_DATABASE_URL is required for PostgreSQL restart test")
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+	defer stop()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const owner = "3b1c0000-0000-4000-8000-0000000000a7"
+	const store = "3b1c0000-0000-4000-8000-0000000000a8"
+	if phase == "before" {
+		if err := migrations.Apply(ctx, db); err != nil {
+			t.Fatal(err)
+		}
+		service, err := NewService(db, Config{ClientID: "synthetic", ClientSecret: "synthetic",
+			RedirectURI:        "https://example.invalid" + CallbackPath,
+			TokenEncryptionKey: base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901"))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		access, err := service.cipher.Seal("synthetic_restart_access", tokenAAD(owner, "900777", "access"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		refresh, err := service.cipher.Seal("synthetic_restart_refresh", tokenAAD(owner, "900777", "refresh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Exec(ctx, `DELETE FROM app.meli_store_connections WHERE id=$1::uuid`, store); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Exec(ctx, `INSERT INTO app.users(id) VALUES($1::uuid) ON CONFLICT DO NOTHING`, owner); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Exec(ctx, `INSERT INTO app.meli_store_connections
+ (id,owner_user_id,seller_id,access_token_ciphertext,refresh_token_ciphertext,access_token_expires_at,marketplaces,marketplaces_status)
+ VALUES ($1::uuid,$2::uuid,'900777',$3,$4,now()+interval '1 hour',
+ '[{"user_id":900778,"site_id":"MLB","logistic_type":"remote"}]','verified')`, store, owner, access, refresh); err != nil {
+			t.Fatal(err)
+		}
+		insertBillingTestOrder(t, ctx, db, store, "900778", "80001")
+		saved, err := service.saveOrderBillingSnapshot(ctx, owner, store, OrderScope{Site: "MLB", Logistic: "remote"},
+			"900778", "900777", "80001", time.Now().UTC(), BillingOrderPreview{OrderID: "10001", Available: true,
+				Reconciliation: "review_required", Payments: []BillingPayment{}, Taxes: []BillingTax{},
+				Charges:  []BillingCharge{{DetailID: "91", Type: "CHARGE", Amount: "11.10", Currency: "USD"}},
+				Shipping: &BillingShipping{SellerNetCostUSD: "3.38"}})
+		if err != nil || saved.CheckedAt == nil {
+			t.Fatalf("restart fixture not saved: %+v %v", saved, err)
+		}
+		t.Logf("billing snapshot persisted before restart: checked_at=%s", saved.CheckedAt.Format(time.RFC3339Nano))
+		return
+	}
+	service, err := NewService(db, Config{ClientID: "synthetic", ClientSecret: "synthetic",
+		RedirectURI:        "https://example.invalid" + CallbackPath,
+		TokenEncryptionKey: base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached, err := service.GetCachedOrderBilling(ctx, owner, store, OrderScope{Site: "MLB", Logistic: "remote"}, "10001")
+	if err != nil || len(cached.Items) != 1 || !cached.Items[0].Available || cached.Items[0].CheckedAt == nil ||
+		cached.Items[0].Shipping == nil || cached.Items[0].Shipping.SellerNetCostUSD != "3.38" {
+		t.Fatalf("snapshot missing after restart: %+v %v", cached, err)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM app.meli_store_connections WHERE id=$1::uuid`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM app.users WHERE id=$1::uuid`, owner); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("billing snapshot survived PostgreSQL restart: checked_at=%s", cached.Items[0].CheckedAt.Format(time.RFC3339Nano))
 }
