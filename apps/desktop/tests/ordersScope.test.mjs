@@ -49,6 +49,7 @@ const order = { order_id: "102", status: "paid", order_items: [
   shipment_id: "87123456" };
 let slaFetchCount = 0;
 let billingFetches = 0;
+let billingRateLimited = false;
 let shipmentFetchCount = 0;
 let shipmentDetailsCount = 0;
 let cachedShipmentDetails;
@@ -107,6 +108,7 @@ window.fetch = (path, options) => {
     const q = new URL(path, location.href).searchParams;
     assert(q.get("site") === "MLB" && q.get("logistic_type") === "remote", "billing used the wrong scope");
     assert(JSON.parse(options.body).order_ids.join(",") === "102", "billing requested the wrong order");
+    if (billingRateLimited) return Promise.resolve(Response.json({ error: "order_rate_limited" }, { status: 429 }));
     return Promise.resolve(Response.json({ net_income_usd: null, items: [{ order_id: "102", available: true,
       payments: [{ status: "approved", money_release_status: "pending" }], taxes: [],
       charges: [
@@ -120,6 +122,7 @@ window.fetch = (path, options) => {
       charge_groups: [
         { type: "CHARGE", subtype: "CCSI", currency: "USD", original_total: "13.55" },
         { type: "CHARGE", currency: "BRL", original_total: "1.25" },
+        { type: "CHARGE", currency: "USD", original_total: "0.40" },
       ],
     }] }));
   }
@@ -477,12 +480,30 @@ try {
   assert(profit().textContent.includes("同类物流扣项逐项展示") && profit().querySelector("details")?.open &&
     profit().textContent.includes("USD 2.45") && !profit().textContent.includes("USD 13.55"),
     "mixed shipping group must expose remaining charges without showing a misleading subtotal");
-  assert(profit().textContent.includes("不可相加或重复扣减"), "shipping cost bases need an explicit warning");
+  assert(profit().textContent.includes("不可相加或重复扣减") && profit().textContent.includes("同货件多单时未分摊") &&
+    profit().textContent.includes("已批准 / 待释放"), "shipping scope and payment status must be explicit");
+  const subtotal = [...profit().querySelectorAll("dl")].find(dl => dl.textContent.includes("小计（BRL）"));
+  assert(subtotal && getComputedStyle(subtotal).display === "grid" && subtotal.children.length === 4,
+    "subtotal groups must be direct grid pairs");
+  const pairs = [...subtotal.children];
+  for (let i = 0; i < pairs.length; i += 2) {
+    const label = pairs[i].getBoundingClientRect(), value = pairs[i+1].getBoundingClientRect();
+    assert(pairs[i].tagName === "DT" && pairs[i+1].tagName === "DD" && Math.abs(label.top-value.top)<1 &&
+      value.left >= label.right, "subtotal grid label and value must share a row");
+  }
+  assert(subtotal.textContent.includes("小计（USD）") && subtotal.textContent.includes("待核实（未折算 USD）"), "subtotal currency must be explicit");
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   flushSync(() => document.querySelector(".orders-id").click());
   await waitFor(() => profit()?.textContent.includes("-USD 3.38"),
     "reopening the same scoped detail did not reuse the recent billing snapshot");
   assert(billingFetches === 1, "reopening detail made another official Billing request");
+  billingRateLimited = true;
+  flushSync(() => profit().querySelector("button").click());
+  await waitFor(() => billingFetches === 2 && profit().querySelector("button").disabled &&
+    profit().querySelector("button").textContent === "限流冷却中" && profit().textContent.includes("平台暂时限流"),
+    "rate limit must stop manual billing retries");
+  assert(profit().textContent.includes("-USD 3.38"), "rate limited read must retain prior scoped bill");
+  billingRateLimited = false;
 
   // Issue #53: numeric Order ID crosses sites; title searches respect selected site.
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());

@@ -43,6 +43,10 @@ func (a storeAPI) orderBillingPreview(w http.ResponseWriter, r *http.Request, st
 		writeJSON(w, http.StatusOK, page)
 		return
 	}
+	writeOrderBillingError(w, err)
+}
+
+func writeOrderBillingError(w http.ResponseWriter, err error) {
 	status := http.StatusBadGateway
 	code := meli.OrderErrorCode(err)
 	switch {

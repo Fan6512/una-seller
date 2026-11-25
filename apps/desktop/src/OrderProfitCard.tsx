@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { orderDate, orderMoney, orderUSD, type OrderRecord, type OrderScope } from "./orders";
-import { storeRequest } from "./stores";
+import { StoreRequestError, storeRequest } from "./stores";
 
 type BillingPreview = {
   items: Array<{
@@ -48,11 +48,17 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
   const billing = preview?.value;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
+  useEffect(() => {
+    if (!cooldown) return;
+    const timer = window.setTimeout(() => setCooldown(false), 60_000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
 
   async function readBilling() {
-    if (!scope || disabled || active.current) return;
+    if (!scope || disabled || cooldown || active.current) return;
     const request = new AbortController();
     active.current = request;
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(22_000)]);
@@ -82,6 +88,7 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
       setPreview(entry);
     } catch (problem) {
       if (!request.signal.aborted) {
+        if (problem instanceof StoreRequestError && problem.status === 429) setCooldown(true);
         setError(signal.aborted ? "查询账单超时，请稍后手动读取" :
           problem instanceof Error ? problem.message : "查询账单失败");
       }
@@ -107,17 +114,17 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
   return <section className="orders-detail-block" aria-label="订单账单与利润">
     <div className="orders-detail-block-title">
       <h3>订单账单与利润</h3>
-      <button type="button" className="orders-table-action" disabled={busy || disabled || !scope}
-        onClick={() => void readBilling()}>{busy ? "读取中…" : "读取官方账单"}</button>
+      <button type="button" className="orders-table-action" disabled={busy || cooldown || disabled || !scope}
+        onClick={() => void readBilling()}>{busy ? "读取中…" : cooldown ? "限流冷却中" : "读取官方账单"}</button>
     </div>
     {error && <p className="orders-alert" role="alert">{error}{billing && "。下方显示上一次读取的账单。"}</p>}
     <dl className="orders-detail-fields">
       <dt>商品价格</dt><dd>{orderUSD(order.sales_amount_usd)}</dd>
       {shipping && <>
-        <dt>物流运输（货件净成本）</dt><dd>{signedUSD(shipping.seller_net_cost_usd, "-")}</dd>
+        <dt>物流运输（本货件净成本）</dt><dd>{signedUSD(shipping.seller_net_cost_usd, "-")}</dd>
         <dt>　买家承担运费</dt><dd>{signedUSD(shipping.buyer_cost_usd, "+")}</dd>
         <dt>　卖家承担运费（账单原额）</dt><dd>{signedUSD(shipping.seller_charge_usd, "-")}</dd>
-        <dt>运费说明</dt><dd>同一货件的不同费用口径，不可相加或重复扣减。</dd>
+        <dt>运费说明</dt><dd>以下运费为本货件相关金额；同货件多单时未分摊，不可跨订单累加。同一货件的不同费用口径，不可相加或重复扣减。</dd>
       </>}
       <dt>当前官方总计</dt><dd>待核账</dd>
       <dt>实际结算回款</dt><dd>{pendingRelease ? "待释放，待核账" : "待核账"}</dd>
@@ -129,15 +136,16 @@ export default function OrderProfitCard({ order, scope, disabled, cache, cacheKe
     {billing?.available && <>
       {billing.payments.length > 0 && <p className="orders-muted">
         官方款项状态：{billing.payments.map(payment =>
-          [payment.status, payment.money_release_status].filter(Boolean).join(" / ") || "未知").join("；")}
+          [payment.status === "approved" ? "已批准" : payment.status,
+            payment.money_release_status === "pending" ? "待释放" : payment.money_release_status === "released" ? "已释放" : payment.money_release_status].filter(Boolean).join(" / ") || "未知").join("；")}
       </p>}
       <h4>官方费用、退款及冲正明细</h4>
       {!otherCharges.length && !billing.taxes.length && <p className="orders-muted">平台未返回其他费用或税务明细。</p>}
       {otherGroups.length > 0 && <dl className="orders-detail-fields">
-        {otherGroups.map(group => <div key={[group.currency, group.type, group.subtype].join("|")}>
-          <dt>{[group.type, group.subtype].filter(Boolean).join(" / ")} 小计</dt>
-          <dd>{group.currency === "USD" ? signedUSD(group.original_total) : "USD 待核实"}</dd>
-        </div>)}
+        {otherGroups.map(group => <Fragment key={[group.currency, group.type, group.subtype].join("|")}>
+          <dt>{[group.type, group.subtype].filter(Boolean).join(" / ")} 小计（{group.currency}）</dt>
+          <dd>{group.currency === "USD" ? signedUSD(group.original_total) : "待核实（未折算 USD）"}</dd>
+        </Fragment>)}
       </dl>}
       {hasAdditionalShippingCharges && <p className="orders-muted">其他同类物流扣项逐项展示；原小计包含上方已展示的运费，不再显示混合小计。</p>}
       {(otherCharges.length > 0 || billing.taxes.length > 0) && <details open={hasAdditionalShippingCharges || undefined}>

@@ -223,3 +223,32 @@ func TestProfitFromVerifiedNetUSD(t *testing.T) {
 		t.Fatal("unverified receipt accepted")
 	}
 }
+
+func TestBillingWrappedRateLimitUsesExistingOrderCooldown(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		body string
+		want int
+	}{
+		{"/billing/integration/group/ML/order/details?order_ids=11", "[REPORTING_CORE_API][ML_DETAILS_BY_ORDER][429]", http.StatusTooManyRequests},
+		{"/billing/integration/group/ML/order/details?order_ids=11", "ordinary bad request [429]", http.StatusBadRequest},
+		{"/marketplace/orders/11", "[REPORTING_CORE_API][ML_DETAILS_BY_ORDER][429]", http.StatusBadRequest},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		s := &Service{apiURL: server.URL, client: server.Client()}
+		var raw json.RawMessage
+		status, err := s.orderGET(context.Background(), "synthetic", tc.path, &raw)
+		server.Close()
+		if status != tc.want {
+			t.Fatalf("status=%d want=%d err=%v", status, tc.want, err)
+		}
+		if tc.want == http.StatusTooManyRequests {
+			if OrderErrorCode(err) != "order_rate_limited" || time.Until(s.orderRetryUntil) < 50*time.Second {
+				t.Fatalf("wrapped Billing limit not classified or cooled down: %v", err)
+			}
+		}
+	}
+}
