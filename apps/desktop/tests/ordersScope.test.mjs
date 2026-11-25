@@ -49,6 +49,8 @@ const order = { order_id: "102", status: "paid", order_items: [
   shipment_id: "87123456" };
 let slaFetchCount = 0;
 let billingFetches = 0;
+let billingCacheReads = 0;
+let savedBilling = null;
 let billingRateLimited = false;
 let shipmentFetchCount = 0;
 let dueShipmentIDs = [];
@@ -112,13 +114,23 @@ window.fetch = (path, options) => {
     order.dispatch_checked_at = new Date().toISOString();
     return Promise.resolve(Response.json(order));
   }
+  if (pathname.endsWith("/billing-cache")) {
+    assert(options.method === "GET", "billing cache must be read-only");
+    const id = pathname.split("/").at(-2);
+    if (id === "102" && searchParams.get("site") === "MLB" && searchParams.get("logistic_type") === "remote") {
+      billingCacheReads++;
+      if (savedBilling) return Promise.resolve(Response.json(savedBilling));
+    }
+    return Promise.resolve(Response.json({ net_income_usd: null, items: [{ order_id: id, available: false,
+      reconciliation: "not_cached", payments: [], taxes: [], charges: [] }] }));
+  }
   if (pathname.endsWith("/orders/billing-preview")) {
     billingFetches++;
     const q = new URL(path, location.href).searchParams;
     assert(q.get("site") === "MLB" && q.get("logistic_type") === "remote", "billing used the wrong scope");
     assert(JSON.parse(options.body).order_ids.join(",") === "102", "billing requested the wrong order");
     if (billingRateLimited) return Promise.resolve(Response.json({ error: "order_rate_limited" }, { status: 429, headers:{"Retry-After":"120"} }));
-    return Promise.resolve(Response.json({ net_income_usd: null, items: [{ order_id: "102", available: true,
+    savedBilling = { net_income_usd: null, items: [{ order_id: "102", available: true, checked_at: "2026-11-24T04:00:00Z",
       payments: [{ status: "approved", money_release_status: "pending" }], taxes: [],
       charges: [
         { detail_id: "91", type: "CHARGE", subtype: "CCSI", amount: "11.10", currency: "USD", shipment_id: "80001" },
@@ -135,7 +147,8 @@ window.fetch = (path, options) => {
         { type: "BONUS", subtype: "CCSI", currency: "USD", original_total: "-1.12" },
         { type: "CHARGE", currency: "USD", original_total: "0.40" },
       ],
-    }] }));
+    }] };
+    return Promise.resolve(Response.json(savedBilling));
   }
   if (pathname.endsWith("/orders/102/refresh")) {
     if (pauseOrderRefresh) return new Promise(resolve => pausedRefreshes.push(resolve));
@@ -509,6 +522,7 @@ try {
     "nonexistent finance settings should not be visible");
   const profit = () => document.querySelector('section[aria-label="订单账单与利润"]');
   assert(billingFetches === 0 && profit()?.textContent.includes("待核账"), "billing ran automatically or invented net proceeds");
+  await waitFor(() => billingCacheReads > 0, "opening order must read local billing cache");
   flushSync(() => profit().querySelector("button").click());
   await waitFor(() => billingFetches === 1 && profit()?.textContent.includes("-USD 3.38") &&
     profit()?.textContent.includes("+USD 7.72") && profit()?.textContent.includes("-USD 11.10") &&
@@ -535,10 +549,12 @@ try {
     profit().textContent.includes("部分官方费用缺少已核实的美元金额，暂不展示") &&
     !["BRL", "LOCAL_ONLY", "1.25", "USD 待核实"].some(value => profit().textContent.includes(value)),
     "non-USD subtotals and line items must stay hidden while confirmed USD rows remain visible");
+  const beforeBillingReopen = billingCacheReads;
   flushSync(() => document.querySelector('button[aria-label="关闭订单详情"]').click());
   flushSync(() => document.querySelector(".orders-id").click());
-  await waitFor(() => profit()?.textContent.includes("-USD 3.38"),
-    "reopening the same scoped detail did not reuse the recent billing snapshot");
+  await waitFor(() => billingCacheReads > beforeBillingReopen && profit()?.textContent.includes("-USD 3.38") &&
+    profit()?.textContent.includes("账单最近成功保存") && profit()?.textContent.includes("2026/11/24 12:00"),
+    "reopening detail must read the persisted server snapshot and timestamp");
   assert(billingFetches === 1, "reopening detail made another official Billing request");
   billingRateLimited = true;
   flushSync(() => profit().querySelector("button").click());
