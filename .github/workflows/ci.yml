@@ -99,7 +99,7 @@ jobs:
           TEST_RESTART_PHASE: before
         run: go test -v -p 1 -count=1 -run '^(TestPostgresProcessRestartPersistence|TestBillingSnapshotPostgresRestartPersistence|TestNotificationPostgresRestart)$' ./internal/collections ./internal/meli ./internal/notifications
 
-      - name: Restart PostgreSQL 17 service container
+      - name: Stop PostgreSQL 17, verify offline ACK, and restart
         if: needs.changes.outputs.persistence == 'true'
         run: |
           container="${{ job.services.postgres.id }}"

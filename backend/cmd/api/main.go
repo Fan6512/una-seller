@@ -116,6 +116,11 @@ func main() {
 			log.Fatal("notifications need configured database and Mercado Libre OAuth")
 		}
 		inbox := notifications.PostgresInbox{DB: db}
+		// WH-03 must register both real read-only handlers before activation.
+		worker := notifications.NewWorker(inbox, id, nil)
+		if err := worker.ValidateActivation(); err != nil {
+			log.Fatal(err)
+		}
 		receiver, err := notifications.NewReceiver(id, os.Getenv("MELI_WEBHOOK_INGRESS_TOKEN"), inbox)
 		if err != nil {
 			log.Fatal(err)
@@ -124,8 +129,7 @@ func main() {
 		mux.Handle(notifications.Path, receiver)
 		mux.Handle("/", handler)
 		handler = mux
-		// WH-03 and later register real handlers. Until then only maintenance runs.
-		go notifications.NewWorker(inbox, id, nil).Run(context.Background(), log.Default())
+		go worker.Run(context.Background(), log.Default())
 	}
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())

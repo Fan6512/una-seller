@@ -68,6 +68,10 @@ func TestReceiverValidatesBeforeDurableACK(t *testing.T) {
 	if got := post("POST", sample, token); got != 503 {
 		t.Fatal("storage failure acknowledged")
 	}
+	s.err = ErrScopeUnavailable
+	if got := post("POST", sample, token); got != 503 {
+		t.Fatal("temporarily unavailable seller must be retryable")
+	}
 	s.err = ErrScope
 	if got := post("POST", sample, token); got != 403 {
 		t.Fatal("unmapped seller acknowledged")
@@ -80,5 +84,38 @@ func TestReceiverRequiresExplicitConfiguration(t *testing.T) {
 	}
 	if _, err := NewReceiver("", "synthetic-private-ingress-token-for-tests", &captureSink{}); err == nil {
 		t.Fatal("empty app accepted")
+	}
+}
+
+func TestOpaqueNotificationID(t *testing.T) {
+	body := strings.Replace(sample, "event123", "event:/v2.测试+id=", 1)
+	first, err := parse(strings.NewReader(body), "2069392825111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := parse(strings.NewReader(strings.Replace(body, `"attempts":1`, `"attempts":2`, 1)), "2069392825111111")
+	if err != nil || retry.Key != first.Key || len(first.Key) != 64 {
+		t.Fatal("opaque ID must hash consistently on retry")
+	}
+}
+
+func TestWorkerActivationRequiresAllAcceptedTopics(t *testing.T) {
+	prepare := func(context.Context, Job) (VerifiedResource, error) {
+		return VerifiedResource{}, nil
+	}
+	for _, handlers := range []map[string]Prepare{
+		nil,
+		{"marketplace_orders": prepare},
+		{"marketplace_shipments": prepare},
+		{"marketplace_orders": prepare, "marketplace_shipments": nil},
+	} {
+		if err := NewWorker(PostgresInbox{}, "123", handlers).ValidateActivation(); err == nil {
+			t.Fatal("incomplete handler registry accepted")
+		}
+	}
+	if err := NewWorker(PostgresInbox{}, "123", map[string]Prepare{
+		"marketplace_orders": prepare, "marketplace_shipments": prepare,
+	}).ValidateActivation(); err != nil {
+		t.Fatal(err)
 	}
 }

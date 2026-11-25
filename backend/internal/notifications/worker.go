@@ -67,7 +67,21 @@ func NewWorker(inbox PostgresInbox, appID string, handlers map[string]Prepare) *
 	return w
 }
 
+// ValidateActivation is required before exposing the receiver. Every currently
+// accepted topic must have a real handler; otherwise a disabled deployment
+// could fill its global queue with jobs that cannot be consumed.
+func (w *Worker) ValidateActivation() error {
+	for _, topic := range []string{"marketplace_orders", "marketplace_shipments"} {
+		if w.handlers[topic] == nil {
+			return errors.New("notification activation requires all accepted topic handlers")
+		}
+	}
+	return nil
+}
+
 func (w *Worker) Run(ctx context.Context, logger *log.Logger) {
+	// Deliberately single-flight, at most one claim per second per process.
+	// Do not increase concurrency before WH-03 shares the official API limiter.
 	poll := time.NewTicker(time.Second)
 	defer poll.Stop()
 	maintenance := time.NewTicker(time.Minute)
@@ -83,9 +97,12 @@ func (w *Worker) Run(ctx context.Context, logger *log.Logger) {
 			logger.Printf("notification queue diagnostics failed: %s", failureCode(err))
 			return
 		}
-		logger.Printf("notification queue receipts=%d jobs_total=%d pending=%d leased=%d dead=%d unregistered=%d cooling=%d expired_leases=%d oldest_pending=%s capacity=%d",
-			stats.Receipts, stats.Jobs, stats.Pending, stats.Leased, stats.Dead, stats.Unregistered,
+		logger.Printf("notification queue receipts=%d receipts_global=%d jobs_total=%d pending=%d leased=%d dead=%d unregistered=%d cooling=%d expired_leases=%d oldest_pending=%s capacity=%d",
+			stats.Receipts, stats.GlobalReceipts, stats.Jobs, stats.Pending, stats.Leased, stats.Dead, stats.Unregistered,
 			stats.Cooling, stats.ExpiredLeases, stats.OldestPending, queueCapacity)
+		if stats.Unregistered > 0 || stats.GlobalReceipts >= queueCapacity*8/10 || stats.Jobs >= queueCapacity*8/10 {
+			logger.Print("WARNING: notification queue backlog or capacity requires operator review")
+		}
 	}
 	report()
 	for {
@@ -253,6 +270,8 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 	switch {
 	case errors.Is(cause, ErrScope):
 		reason = "scope_rejected"
+	case errors.Is(cause, ErrScopeUnavailable):
+		reason = "scope_unavailable"
 	case errors.As(cause, &limited):
 		reason = "rate_limited"
 		cooldown = max(time.Minute, limited.RetryAfter)

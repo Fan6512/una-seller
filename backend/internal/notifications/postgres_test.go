@@ -164,7 +164,7 @@ func TestNotificationPostgresACKAndCapacity(t *testing.T) {
 		wg.Wait()
 		slices.Sort(durations)
 		t.Logf("loopback HTTP + PostgreSQL ACK %s n=%d concurrency=%d p50=%s p95=%s p99=%s max=%s",
-			name, requests, concurrency, durations[47], durations[91], durations[95], durations[95])
+			name, requests, concurrency, durations[(requests*50+99)/100-1], durations[(requests*95+99)/100-1], durations[(requests*99+99)/100-1], durations[requests-1])
 		if durations[requests-1] >= 500*time.Millisecond {
 			t.Error("isolated ACK exceeded 500 ms")
 		}
@@ -223,6 +223,41 @@ func TestNotificationPostgresACKAndCapacity(t *testing.T) {
 	assertACK(t, h, 503, testOrder, "997", testChildA, "new-job-over-capacity")
 	assertCount(t, ctx, p, queueCapacity, `SELECT count(*) FROM app.meli_notification_jobs`)
 	assertCount(t, ctx, p, queueCapacity-498, `SELECT count(*) FROM app.meli_notification_inbox`)
+}
+
+func TestNotificationPostgresAdmissionScopeAndStats(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+
+	assertACK(t, h, 403, testOrder, "998", "999999", "unknown")
+	for _, status := range []string{"reauth_required", "refresh_unknown", "disconnected"} {
+		mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET status=$1 WHERE id=$2`, status, testStoreA)
+		assertACK(t, h, 503, testOrder, "998", testParentA, "retry")
+		assertACK(t, h, 503, testOrder, "998", testChildA, "retry")
+	}
+	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET status='connected',marketplaces_status='unverified' WHERE id=$1`, testStoreA)
+	assertACK(t, h, 503, testOrder, "998", testChildA, "retry")
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1`, testStoreA)
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1`, testStoreA)
+	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET marketplaces_status='verified' WHERE id=$1`, testStoreA)
+	assertACK(t, h, 200, testOrder, "998", testChildA, "retry")
+
+	const otherApp = "2069392825111112"
+	event, err := parse(strings.NewReader(strings.Replace(eventBody(testOrder, "998", testChildA, "other-app"), testApp, otherApp, 1)), otherApp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Enqueue(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range []string{testApp, otherApp} {
+		stats, err := p.stats(ctx, app, []string{testOrder, testShipment})
+		if err != nil || stats.Receipts != 1 || stats.GlobalReceipts < 2 || stats.Pending != 1 {
+			t.Fatalf("application receipt counts not isolated: %+v %v", stats, err)
+		}
+	}
 }
 
 func TestNotificationPostgresWorker(t *testing.T) {
@@ -354,7 +389,7 @@ func TestNotificationPostgresWorker(t *testing.T) {
 	}
 	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET status='connected' WHERE id=$1`, testStoreA)
 	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
-		WHERE store_id=$1 AND resource_id='899' AND attempts=3 AND last_failure='scope_rejected'
+		WHERE store_id=$1 AND resource_id='899' AND attempts=3 AND last_failure='scope_unavailable'
 		  AND available_at BETWEEN now()+interval '18 seconds' AND now()+interval '21 seconds'`, testStoreA)
 
 	ready()

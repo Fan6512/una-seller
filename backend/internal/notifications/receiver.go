@@ -20,9 +20,31 @@ const ingressHeader = "X-Una-Webhook-Ingress"
 const maxBody = 16 << 10
 
 var (
-	ErrScope     = errors.New("notification scope not uniquely authorized")
-	idPattern    = regexp.MustCompile(`^[1-9][0-9]{0,29}$`)
-	eventPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	ErrScope            = errors.New("notification scope not uniquely authorized")
+	ErrScopeUnavailable = errors.New("known notification scope temporarily unavailable")
+	idPattern           = regexp.MustCompile(`^[1-9][0-9]{0,29}// Package notifications owns the inbound Mercado Libre CBT event inbox.
+package notifications
+
+import (
+	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const Path = "/api/v1/mercadolibre/notifications"
+const ingressHeader = "X-Una-Webhook-Ingress"
+const maxBody = 16 << 10
+
+var (
+	)
 )
 
 // Event is an allowlisted hint, never a platform URL or a business update.
@@ -92,9 +114,7 @@ func parse(r io.Reader, appID string) (Event, error) {
 	// is preferred; only when absent use the original received timestamp.
 	identity := "received:" + received.UTC().Format(time.RFC3339Nano)
 	if in.ID != "" {
-		if !eventPattern.MatchString(in.ID) {
-			return Event{}, bad
-		}
+		// Opaque official ID: bounded by the body limit, hashed and never stored raw.
 		identity = "id:" + in.ID
 	}
 	hash := sha256.Sum256([]byte(identity))

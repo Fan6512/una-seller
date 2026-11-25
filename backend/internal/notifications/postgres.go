@@ -25,13 +25,14 @@ type storeScope struct {
 	storeID, ownerID, parentID string
 }
 
-// Lock the verified mapping through admission or the final scoped write.
+// Lock candidate mappings through admission or the final scoped write. A known
+// but unavailable account is retryable; an unknown/ambiguous identity is not.
 func resolveScope(ctx context.Context, tx pgx.Tx, seller string) (storeScope, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT c.id::text, c.owner_user_id::text, c.seller_id
+		SELECT c.id::text, c.owner_user_id::text, c.seller_id,
+		       c.status='connected' AND c.marketplaces_status='verified'
 		FROM app.meli_store_connections c
-		WHERE c.status='connected' AND c.marketplaces_status='verified'
-		  AND (c.seller_id=$1 OR EXISTS (
+		WHERE (c.seller_id=$1 OR EXISTS (
 			SELECT 1 FROM jsonb_array_elements(c.marketplaces) m(value)
 			WHERE m.value->>'user_id'=$1
 		  ))
@@ -39,10 +40,14 @@ func resolveScope(ctx context.Context, tx pgx.Tx, seller string) (storeScope, er
 	if err != nil {
 		return storeScope{}, err
 	}
-	matches, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (storeScope, error) {
-		var scope storeScope
-		err := row.Scan(&scope.storeID, &scope.ownerID, &scope.parentID)
-		return scope, err
+	type candidate struct {
+		scope storeScope
+		ready bool
+	}
+	matches, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (candidate, error) {
+		var c candidate
+		err := row.Scan(&c.scope.storeID, &c.scope.ownerID, &c.scope.parentID, &c.ready)
+		return c, err
 	})
 	if err != nil {
 		return storeScope{}, err
@@ -50,7 +55,10 @@ func resolveScope(ctx context.Context, tx pgx.Tx, seller string) (storeScope, er
 	if len(matches) != 1 {
 		return storeScope{}, ErrScope
 	}
-	return matches[0], nil
+	if !matches[0].ready {
+		return storeScope{}, ErrScopeUnavailable
+	}
+	return matches[0].scope, nil
 }
 
 // Enqueue atomically records a unique delivery and advances its resource job.
@@ -117,15 +125,16 @@ func (p PostgresInbox) Enqueue(ctx context.Context, e Event) error {
 }
 
 type QueueStats struct {
-	Receipts, Jobs, Pending, Leased, Dead, Unregistered, Cooling, ExpiredLeases int
-	OldestPending                                                               time.Duration
+	Receipts, GlobalReceipts, Jobs, Pending, Leased, Dead, Unregistered, Cooling, ExpiredLeases int
+	OldestPending                                                                             time.Duration
 }
 
 func (p PostgresInbox) stats(ctx context.Context, appID string, topics []string) (QueueStats, error) {
 	var stats QueueStats
 	var oldestSeconds int64
 	err := p.DB.QueryRow(ctx, `
-		SELECT (SELECT count(*) FROM app.meli_notification_inbox),
+		SELECT (SELECT count(*) FROM app.meli_notification_inbox WHERE application_id=$1),
+		       (SELECT count(*) FROM app.meli_notification_inbox),
 		       (SELECT count(*) FROM app.meli_notification_jobs),
 		       count(*) FILTER (WHERE j.dead_at IS NULL AND (j.lease_until IS NULL OR j.lease_until <= now())),
 		       count(*) FILTER (WHERE j.lease_until > now()),
@@ -139,7 +148,7 @@ func (p PostgresInbox) stats(ctx context.Context, appID string, topics []string)
 		LEFT JOIN app.meli_notification_cooldowns c
 		    USING (store_id,owner_user_id,parent_seller_id,application_id)
 		WHERE j.application_id=$1`, appID, topics).Scan(
-		&stats.Receipts, &stats.Jobs, &stats.Pending, &stats.Leased, &stats.Dead, &stats.Unregistered,
+		&stats.Receipts, &stats.GlobalReceipts, &stats.Jobs, &stats.Pending, &stats.Leased, &stats.Dead, &stats.Unregistered,
 		&stats.Cooling, &stats.ExpiredLeases, &oldestSeconds)
 	stats.OldestPending = time.Duration(oldestSeconds) * time.Second
 	return stats, err
