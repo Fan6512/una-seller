@@ -170,11 +170,16 @@ type shipmentOrderLink struct {
 	SellerID json.Number `json:"seller_id"`
 }
 
-// A shipment can precede its orders. Use the documented hosted association
-// endpoint, never the removed shipment.order_id or a guessed pack identifier.
+// A shipment can precede its orders. Prefer the documented hosted association
+// endpoint. Real CBT shipments still expose shipment.order_id, so a single
+// linked order is used when the association endpoint is not permitted (401/403)
+// or has no rows yet; a multi-order pack is never guessed.
 func (s *Service) readShipmentOrderLinks(ctx context.Context, token, shipmentID string) ([]shipmentOrderLink, error) {
 	var rows []shipmentOrderLink
 	status, err := s.orderGET(ctx, token, "/shipments/"+shipmentID+"/orders", &rows)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return nil, &notifications.Deferred{Cause: ErrOrderShipmentDenied, Reason: notifications.DeferAuthorization, Delay: time.Minute}
+	}
 	if status == http.StatusNoContent || (status == http.StatusOK && err == nil && len(rows) == 0) {
 		return nil, &notifications.Deferred{Cause: ErrOrderInvalidResponse, Reason: notifications.DeferAssociation, Delay: time.Minute}
 	}
@@ -228,13 +233,19 @@ func (s *Service) prepareShipmentNotification(ctx context.Context, job notificat
 		return notifications.VerifiedResource{}, notifications.ErrScope
 	}
 	checkedAt := time.Now().UTC().Truncate(time.Microsecond)
-	snapshot, sender, site, err := s.fetchShipmentSnapshot(ctx, auth.AccessToken, job.ResourceID, checkedAt, false)
+	snapshot, sender, site, shipmentOrderID, err := s.fetchShipmentSnapshot(ctx, auth.AccessToken, job.ResourceID, checkedAt, false)
 	if err != nil {
 		return notifications.VerifiedResource{}, notificationAuthError(err)
 	}
 	links, err := s.readShipmentOrderLinks(ctx, auth.AccessToken, job.ResourceID)
 	if err != nil {
-		return notifications.VerifiedResource{}, err
+		// Real CBT shipments still return one order_id. Use it only when the
+		// association is unavailable or empty, never to fill a partial list.
+		var deferred *notifications.Deferred
+		if shipmentOrderID == "" || !errors.As(err, &deferred) {
+			return notifications.VerifiedResource{}, err
+		}
+		links = []shipmentOrderLink{{OrderID: json.Number(shipmentOrderID)}}
 	}
 	orders := make([]notifiedOrder, 0, len(links))
 	for _, link := range links {
@@ -244,10 +255,12 @@ func (s *Service) prepareShipmentNotification(ctx context.Context, job notificat
 		}
 		// All orders must establish the same forward shipment, seller, site
 		// and exact logistics scope. Mixed/ambiguous shipments fail closed.
-		if link.SellerID.String() != order.seller && link.SellerID.String() != auth.SellerID {
+		// A fallback link, a zero sender and an absent site are unknown, not
+		// contradictions: real CBT shipments return sender_id 0 and no site.
+		if link.SellerID != "" && link.SellerID.String() != order.seller && link.SellerID.String() != auth.SellerID {
 			return notifications.VerifiedResource{}, notifications.ErrPermanentScope
 		}
-		if sender != auth.SellerID && sender != order.seller {
+		if sender != "" && sender != "0" && sender != auth.SellerID && sender != order.seller {
 			return notifications.VerifiedResource{}, notifications.ErrPermanentScope
 		}
 		if site != "" && site != order.scope.Site {

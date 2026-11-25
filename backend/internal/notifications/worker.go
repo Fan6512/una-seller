@@ -298,6 +298,7 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 	var deferred *Deferred
 	refund := false
 	terminal := false
+	backoff := false
 	reason := "handler_failed"
 	switch {
 	case errors.As(cause, &deferred):
@@ -306,11 +307,15 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 			reason = deferred.Reason
 			delay = min(max(deferred.Delay, time.Second), time.Hour)
 			refund = true
+			// Never poll a pending upstream state at a fixed rate: grow the
+			// wait with the time already spent waiting, capped at one hour.
+			backoff = deferred.Reason != DeferBusy
 		}
 	case errors.Is(cause, ErrScopeUnavailable):
 		reason = DeferAuthorization
 		delay = time.Minute
 		refund = true
+		backoff = true
 	case errors.Is(cause, ErrPermanentScope):
 		reason = "scope_rejected"
 		terminal = true
@@ -332,12 +337,15 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE app.meli_notification_jobs
 			SET lease_token=NULL, lease_until=NULL, last_failure=$3,
-			    available_at=clock_timestamp()+$4*interval '1 second',
+			    available_at=clock_timestamp()+CASE WHEN $8::boolean
+			      THEN least(interval '1 hour',
+			                 interval '1 minute' * power(2, least(floor(extract(epoch from clock_timestamp()-pending_since)/600), 6)))
+			      ELSE $4*interval '1 second' END,
 			    attempts=CASE WHEN $6::boolean THEN greatest(attempts-1,0) ELSE attempts END,
 			    dead_at=CASE WHEN $7::boolean OR ($6::boolean AND pending_since <= clock_timestamp()-interval '24 hours')
 			                      OR (NOT $6::boolean AND attempts >= $5) THEN clock_timestamp() END
 			WHERE id=$1 AND lease_token=$2 AND lease_until > clock_timestamp()`,
-			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts, refund, terminal)
+			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts, refund, terminal, backoff)
 		if err != nil {
 			return err
 		}

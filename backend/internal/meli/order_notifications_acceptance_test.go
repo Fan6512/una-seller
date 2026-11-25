@@ -441,6 +441,43 @@ WHERE store_id=$1 AND order_id='10001' AND status='shipped' AND last_updated='20
 	}
 }
 
+func TestNotificationRealCbtShipmentShapePostgres(t *testing.T) {
+	// Captured production shape: no site_id, sender_id 0, a single order_id and
+	// an association endpoint that is not permitted for the app (401).
+	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/marketplace/shipments/48593692641":
+			fmt.Fprint(w, `{"id":48593692641,"order_id":2000019697477114,"sender_id":0,
+"status":"shipped","substatus":"","tracking_number":"TRACK485","date_created":"2026-11-20T00:00:00Z",
+"logistic":{"mode":"me2","type":"cross_docking","direction":"forward"},
+"last_updated":"2026-11-24T11:33:30.383-04:00"}`)
+		case "/shipments/48593692641/orders":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"message":"Fail to get_shipment_items from shipment"}`)
+		case "/marketplace/orders/2000019697477114":
+			fmt.Fprint(w, `{"id":2000019697477114,"seller":{"id":987654},"context":{"site":"MLB"},
+"pack_id":2000016187328071,"status":"paid","currency_id":"USD","total_amount":29.99,
+"shipping":{"id":48593692641},"date_created":"2026-11-20T00:00:00Z",
+"last_updated":"2026-11-21T15:03:09.000-04:00",
+"order_items":[{"item":{"id":"MLB100","title":"Item"},"quantity":1,"unit_price":29.99,"currency_id":"USD"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	resource, err := c.prepare(t, c.job("marketplace_shipments", "48593692641", "987654"))
+	if err != nil {
+		t.Fatalf("real CBT shipment shape rejected: %v", err)
+	}
+	if err := c.apply(t, resource); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_orders
+WHERE store_id=$1 AND order_id='2000019697477114' AND pack_id='2000016187328071'
+AND shipment_id='48593692641' AND shipment_snapshot->>'status'='shipped'`, c.store); got != 1 {
+		t.Fatalf("single order_id fallback did not attach the snapshot: %d", got)
+	}
+}
+
 func TestNotificationTenancyAndRevocationPostgres(t *testing.T) {
 	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/marketplace/orders/10001" {

@@ -112,7 +112,7 @@ func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string,
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	snapshot, _, _, err := s.fetchShipmentSnapshot(fetchCtx, auth.AccessToken, order.ShipmentID, checkedAt, withDetails)
+	snapshot, _, _, _, err := s.fetchShipmentSnapshot(fetchCtx, auth.AccessToken, order.ShipmentID, checkedAt, withDetails)
 	if err != nil {
 		return OrderRecord{}, err
 	}
@@ -154,9 +154,10 @@ func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string,
 }
 
 // fetchShipmentSnapshot shares the official parser with manual and notification reads.
-func (s *Service) fetchShipmentSnapshot(ctx context.Context, token, shipmentID string, checkedAt time.Time, withDetails bool) (OrderShipment, string, string, error) {
+func (s *Service) fetchShipmentSnapshot(ctx context.Context, token, shipmentID string, checkedAt time.Time, withDetails bool) (OrderShipment, string, string, string, error) {
 	var payload struct {
 		ID               json.Number `json:"id"`
+		OrderID          json.Number `json:"order_id"`
 		SenderID         json.Number `json:"sender_id"`
 		SiteID           string      `json:"site_id"`
 		Status           string      `json:"status"`
@@ -177,12 +178,12 @@ func (s *Service) fetchShipmentSnapshot(ctx context.Context, token, shipmentID s
 	code, err := s.orderGET(ctx, token, path, &payload)
 	switch code {
 	case http.StatusNotFound:
-		return OrderShipment{}, "", "", ErrOrderShipmentMissing
+		return OrderShipment{}, "", "", "", ErrOrderShipmentMissing
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return OrderShipment{}, "", "", ErrOrderShipmentDenied
+		return OrderShipment{}, "", "", "", ErrOrderShipmentDenied
 	}
 	if err != nil {
-		return OrderShipment{}, "", "", err
+		return OrderShipment{}, "", "", "", err
 	}
 	if payload.LogisticType == "" {
 		payload.LogisticType = payload.Logistic.Type
@@ -191,7 +192,7 @@ func (s *Service) fetchShipmentSnapshot(ctx context.Context, token, shipmentID s
 		!ValidOrderStatus(payload.Status) || !ValidOrderStatus(payload.Substatus) ||
 		!ValidOrderStatus(payload.LogisticType) || len(payload.TrackingNumber) > 200 ||
 		strings.IndexFunc(payload.TrackingNumber, unicode.IsControl) >= 0 {
-		return OrderShipment{}, "", "", ErrOrderInvalidResponse
+		return OrderShipment{}, "", "", "", ErrOrderInvalidResponse
 	}
 	snapshot := OrderShipment{
 		ID: shipmentID, Status: payload.Status, Substatus: payload.Substatus,
@@ -204,7 +205,7 @@ func (s *Service) fetchShipmentSnapshot(ctx context.Context, token, shipmentID s
 	if withDetails {
 		details, err := s.fetchOrderShipmentDetails(ctx, token, path)
 		if err != nil {
-			return OrderShipment{}, "", "", err
+			return OrderShipment{}, "", "", "", err
 		}
 		details.CheckedAt = checkedAt
 		snapshot.Details = details
@@ -221,7 +222,11 @@ func (s *Service) fetchShipmentSnapshot(ctx context.Context, token, shipmentID s
 			}
 		}
 	}
-	return snapshot, payload.SenderID.String(), payload.SiteID, nil
+	orderID := ""
+	if payload.OrderID != "" && orderNumber(payload.OrderID.String()) {
+		orderID = payload.OrderID.String()
+	}
+	return snapshot, payload.SenderID.String(), payload.SiteID, orderID, nil
 }
 
 // writeOrderShipmentSnapshot retains the manual refresh's scope and stale guards.

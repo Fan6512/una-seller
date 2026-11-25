@@ -608,6 +608,48 @@ WHERE store_id=$1 AND resource_id='993'`, testStoreA)
 WHERE store_id=$1 AND resource_id='993' AND attempts=0 AND dead_at IS NOT NULL`, testStoreA)
 }
 
+// A pending association waits 1, 2, 4, ... minutes instead of polling every
+// minute, and the cap keeps the projection bounded.
+func TestNotificationDeferredBackoffPostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, testShipment, "991", testChildA, "backoff")
+	ready := func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID}, nil
+	}
+	worker := NewWorker(p, testApp, map[string]Prepare{testOrder: ready, testShipment: ready})
+	for _, tc := range []struct {
+		age   string
+		delay time.Duration
+	}{
+		{"0 minutes", time.Minute},
+		{"40 minutes", 16 * time.Minute},
+		{"3 hours", time.Hour},
+	} {
+		mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs
+SET pending_since=now()-interval '`+tc.age+`', available_at=now()
+WHERE store_id=$1 AND resource_id='991'`, testStoreA)
+		j, err := worker.claim(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := worker.retry(ctx, j, &Deferred{Reason: DeferAssociation, Delay: time.Minute}); err != nil {
+			t.Fatal(err)
+		}
+		var wait float64
+		if err := p.DB.QueryRow(ctx, `SELECT extract(epoch from available_at-now())
+FROM app.meli_notification_jobs WHERE id=$1`, j.ID).Scan(&wait); err != nil {
+			t.Fatal(err)
+		}
+		if time.Duration(wait*float64(time.Second)) < tc.delay-30*time.Second ||
+			time.Duration(wait*float64(time.Second)) > tc.delay+30*time.Second {
+			t.Fatalf("age %s waited %.0fs, want %s", tc.age, wait, tc.delay)
+		}
+	}
+}
+
 func TestNotificationPermanentScopeDeadLettersImmediately(t *testing.T) {
 	ctx, p := testDatabase(t)
 	seedStores(t, ctx, p)
