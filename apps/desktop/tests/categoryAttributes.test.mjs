@@ -169,7 +169,8 @@ try {
   await loaded("p", "家居 / Other");
   await loaded("p", "Home / Other");
   const deferredTechnical = await loaded("p", "款式 · Style");
-  assert(deferredTechnical.textContent.includes("Read-only code（平台依赖／只读")&&
+  assert(deferredTechnical.textContent.includes("必填项，刊登前核实")&&
+    deferredTechnical.textContent.includes("Read-only code（平台依赖／只读")&&
     deferredTechnical.textContent.includes("Special grid（暂无可编辑控件"),"required technical fields without editable controls were omitted");
   await loaded("option", "塑料 · Plastic");
   assert(newBrand.value === "" && working.length === 4 && working.every(field => field.category_id === "CBT1"),

@@ -210,26 +210,72 @@ func sameLegacyVariant(a, b ListingVariant) bool {
 		a.Price == b.Price && a.Currency == b.Currency && slices.Equal(a.ImageURLs, b.ImageURLs)
 }
 
+// Reordering unchanged legacy projections is safe even without a unique SKU.
+// Compare a multiset, not array positions; each old row can be consumed once.
+func sameLegacySKUGroup(current, previous []ListingVariant, sku string) bool {
+	used := make([]bool, len(previous))
+	for _, v := range current {
+		if v.SellerSKU != sku {
+			continue
+		}
+		found := false
+		for j, old := range previous {
+			if !used[j] && sameLegacyVariant(v, old) {
+				used[j], found = true, true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	for j, old := range previous {
+		if old.SellerSKU == sku && !used[j] {
+			return false
+		}
+	}
+	return true
+}
+
 func preserveVariantFields(current, previous []ListingVariant) ([]ListingVariant, error) {
+	original := current
 	current = slices.Clone(current)
 	if !slices.ContainsFunc(previous, ListingVariant.hasWorkbenchFields) {
 		return current, nil
 	}
-	// With no SKU, only an unchanged legacy projection is safe. A swap of
-	// attributes between unnamed rows is otherwise indistinguishable from reordering.
-	unchanged := slices.EqualFunc(current, previous, sameLegacyVariant)
+	oldCounts, newCounts := make(map[string]int), make(map[string]int)
+	for _, row := range previous {
+		oldCounts[row.SellerSKU]++
+	}
+	for _, row := range current {
+		newCounts[row.SellerSKU]++
+	}
+	// A unique named SKU plus unchanged attributes allows ordinary price/image
+	// edits. Otherwise require the entire same-SKU group to be an unchanged
+	// multiset, and each full legacy projection to identify exactly one row.
+	// Indistinguishable duplicates still require an explicit modern payload.
+	unchangedGroups := make(map[string]bool)
 	used := make([]bool, len(previous))
 	for i, v := range current {
 		if !v.omitsWorkbenchFields() {
 			continue
 		}
-		candidate := -1
-		count := 0
+		uniqueSKU := v.SellerSKU != "" && oldCounts[v.SellerSKU] == 1 && newCounts[v.SellerSKU] == 1
+		if !uniqueSKU {
+			unchanged, checked := unchangedGroups[v.SellerSKU]
+			if !checked {
+				unchanged = sameLegacySKUGroup(current, previous, v.SellerSKU)
+				unchangedGroups[v.SellerSKU] = unchanged
+			}
+			if !unchanged {
+				return nil, ErrVariantUpgradeRequired
+			}
+		}
+		candidate, count := -1, 0
 		for j, old := range previous {
-			match := v.SellerSKU != "" && v.SellerSKU == old.SellerSKU &&
-				maps.Equal(v.Attributes, old.Attributes)
-			if v.SellerSKU == "" {
-				match = unchanged && sameLegacyVariant(v, old)
+			match := sameLegacyVariant(v, old)
+			if uniqueSKU {
+				match = v.SellerSKU == old.SellerSKU && maps.Equal(v.Attributes, old.Attributes)
 			}
 			if match {
 				candidate, count = j, count+1
@@ -239,23 +285,6 @@ func preserveVariantFields(current, previous []ListingVariant) ([]ListingVariant
 			return nil, ErrVariantUpgradeRequired
 		}
 		old := previous[candidate]
-		// A duplicate SKU is not a stable identifier, even with different attributes.
-		if v.SellerSKU != "" {
-			oldCount, newCount := 0, 0
-			for _, row := range previous {
-				if row.SellerSKU == v.SellerSKU {
-					oldCount++
-				}
-			}
-			for _, row := range current {
-				if row.SellerSKU == v.SellerSKU {
-					newCount++
-				}
-			}
-			if oldCount != 1 || newCount != 1 {
-				return nil, ErrVariantUpgradeRequired
-			}
-		}
 		used[candidate] = true
 		if current[i].PurchaseCostCNY == nil {
 			current[i].PurchaseCostCNY = old.PurchaseCostCNY
@@ -267,15 +296,22 @@ func preserveVariantFields(current, previous []ListingVariant) ([]ListingVariant
 			current[i].CategoryAttributes = old.CategoryAttributes
 		}
 	}
-	// If a legacy array omits metadata, never silently delete an unmatched
-	// protected row. Fully explicit modern arrays bypass this compatibility path.
+	// A mixed legacy/explicit array must not silently delete protected rows.
+	// Match remaining protected rows to originally explicit rows one-to-one;
+	// a single explicit row cannot stand for multiple historical rows.
+	explicitUsed := make([]bool, len(current))
 	for j, old := range previous {
 		if used[j] || !old.hasWorkbenchFields() {
 			continue
 		}
-		if !slices.ContainsFunc(current, func(v ListingVariant) bool {
-			return !v.omitsWorkbenchFields() && sameLegacyVariant(v, old)
-		}) {
+		found := false
+		for i, v := range current {
+			if !explicitUsed[i] && !original[i].omitsWorkbenchFields() && sameLegacyVariant(v, old) {
+				explicitUsed[i], found = true, true
+				break
+			}
+		}
+		if !found {
 			return nil, ErrVariantUpgradeRequired
 		}
 	}

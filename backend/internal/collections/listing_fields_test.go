@@ -128,8 +128,58 @@ func TestPreserveVariantFields(t *testing.T) {
 	if _, err := preserveVariantFields(legacy, previous); err != nil {
 		t.Fatalf("unchanged unnamed variants should retain metadata: %v", err)
 	}
-	legacy[0].Attributes, legacy[1].Attributes = white, black
+	legacy[0], legacy[1] = legacy[1], legacy[0]
+	saved, err = preserveVariantFields(legacy, previous)
+	if err != nil || *saved[0].PurchaseCostCNY != "20.00" || *saved[1].PurchaseCostCNY != "25.50" {
+		t.Fatalf("unnamed unchanged projections must follow the reordered rows: %+v %v", saved, err)
+	}
+	legacy[0].Price = "9.00"
 	if _, err := preserveVariantFields(legacy, previous); err != ErrVariantUpgradeRequired {
-		t.Fatalf("unnamed attribute swap must not move financial values: %v", err)
+		t.Fatalf("changed unnamed projection must require upgrade: %v", err)
+	}
+}
+
+func TestPreserveUnchangedDuplicateSKUGroup(t *testing.T) {
+	black := map[string]string{"Color": "Black"}
+	white := map[string]string{"Color": "White"}
+	previous := []ListingVariant{
+		{SellerSKU: "DUP", Attributes: black, Price: "10.00", Currency: "BRL", ImageURLs: []string{"https://example.com/black.jpg"}, PurchaseCostCNY: new("25.50"), TargetNetProceedsUSD: new("8.50")},
+		{SellerSKU: "DUP", Attributes: white, Price: "20.00", Currency: "BRL", ImageURLs: []string{"https://example.com/white.jpg"}, PurchaseCostCNY: new("20.00"), CategoryAttributes: &[]ListingCategoryAttribute{{CategoryID: "CBT1055", ID: "COLOR", Value: "White", ValueID: "52055"}}},
+	}
+	legacy := []ListingVariant{previous[0], previous[1]}
+	for i := range legacy {
+		legacy[i].PurchaseCostCNY, legacy[i].TargetNetProceedsUSD, legacy[i].CategoryAttributes = nil, nil, nil
+	}
+	for _, rows := range [][]ListingVariant{legacy, {legacy[1], legacy[0]}} {
+		saved, err := preserveVariantFields(rows, previous)
+		if err != nil {
+			t.Fatalf("unchanged duplicate SKU should save: %v", err)
+		}
+		for i, row := range saved {
+			if row.Attributes["Color"] == "Black" {
+				if *row.PurchaseCostCNY != "25.50" || *row.TargetNetProceedsUSD != "8.50" {
+					t.Fatal("black metadata lost")
+				}
+			} else if *row.PurchaseCostCNY != "20.00" || (*row.CategoryAttributes)[0].ValueID != "52055" {
+				t.Fatal("white metadata lost")
+			}
+			if rows[i].PurchaseCostCNY != nil {
+				t.Fatal("input mutated")
+			}
+		}
+	}
+	swapped := []ListingVariant{legacy[0], legacy[1]}
+	swapped[0].Attributes, swapped[1].Attributes = white, black
+	edited := []ListingVariant{legacy[0], legacy[1]}
+	edited[0].ImageURLs = []string{"https://example.com/changed.jpg"}
+	for _, rows := range [][]ListingVariant{swapped, edited, {legacy[0]}, {legacy[0], legacy[0]}} {
+		if _, err := preserveVariantFields(rows, previous); err != ErrVariantUpgradeRequired {
+			t.Fatalf("changed or ambiguous duplicate SKU must be rejected: %v", err)
+		}
+	}
+	identical := []ListingVariant{previous[0], previous[0]}
+	identical[1].PurchaseCostCNY = new("99.00")
+	if _, err := preserveVariantFields([]ListingVariant{legacy[0], legacy[0]}, identical); err != ErrVariantUpgradeRequired {
+		t.Fatalf("indistinguishable rows cannot inherit different costs: %v", err)
 	}
 }

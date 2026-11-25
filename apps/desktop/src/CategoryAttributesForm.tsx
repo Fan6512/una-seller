@@ -112,7 +112,7 @@ export default function CategoryAttributesForm({ category, values, onChange, dis
       </>}
       {special && <p className="listing-validation" role="status">该分类存在特殊官方要求，需要在刊登前进一步校验。
         {!current.technical_specs_verified && " 补充技术规范尚未核实。"}</p>}
-      {deferredRequired.length > 0 && <p className="listing-validation">补充技术规范必填项，刊登前核实：{deferredRequired.map(id => {
+      {deferredRequired.length > 0 && <p className="listing-validation">必填项，刊登前核实：{deferredRequired.map(id => {
         const names = current.technical_requirement_names;
         const rule = rules.find(r => r.id === id);
         const name = names && Object.hasOwn(names, id) ? names[id] : rule?.name || id;
