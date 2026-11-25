@@ -1,0 +1,127 @@
+package meli
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/Fan6512/una-seller/backend/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("PostgreSQL integration requires TEST_DATABASE_URL")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var ownerA, ownerB, storeA, storeB string
+	for _, target := range []*string{&ownerA, &ownerB, &storeA, &storeB} {
+		if err := db.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.users(id) VALUES($1),($2)`, ownerA, ownerB); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Exec(ctx, `DELETE FROM app.users WHERE id IN ($1,$2)`, ownerA, ownerB)
+	defer db.Exec(ctx, `DELETE FROM app.meli_store_connections WHERE id IN ($1,$2)`, storeA, storeB)
+	mapping := `[{"user_id":"111","site_id":"MLB","logistic_type":"remote"}]`
+	for _, row := range [][4]string{{storeA, ownerA, "900", "connected"}, {storeB, ownerB, "901", "connected"}} {
+		if _, err := db.Exec(ctx, `INSERT INTO app.meli_store_connections
+			(id,owner_user_id,seller_id,nickname,marketplaces,marketplaces_status,status,
+			 access_token_ciphertext,refresh_token_ciphertext,access_token_expires_at)
+			VALUES($1,$2,$3,$4,$5::jsonb,'verified',$6,decode('aa','hex'),decode('aa','hex'),now()+interval '1 hour')`,
+			row[0], row[1], row[2], "store-"+row[2], mapping, row[3]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Owner A has one row of each counted state plus rows that must be excluded.
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+		(store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,updated_at)
+		VALUES($1,'MLB','remote','111','901','paid','USD',10,now(),now(),now()),
+		($1,'MLB','remote','111','902','cancelled','USD',10,now(),now(),now())`, storeA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_customer_notifications
+		(store_id,owner_user_id,parent_seller_id,seller_id,site_id,topic,resource_id,status,created_at,checked_at)
+		VALUES($1,$2,'900','111','MLB','marketplace_questions','1','UNANSWERED',now(),now()),
+		($1,$2,'900','111','MLB','marketplace_questions','2','ANSWERED',now(),now()),
+		($1,$2,'900','111','MLB','marketplace_messages','aaaaaaaaaaaaaaaa','available',now()-interval '1 day',now()),
+		($1,$2,'900','111','MLB','marketplace_messages','bbbbbbbbbbbbbbbb','available',now()-interval '1 day',now())`,
+		storeA, ownerA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_customer_notifications SET direction='incoming' WHERE resource_id='aaaaaaaaaaaaaaaa';
+		UPDATE app.meli_customer_notifications SET direction='outgoing' WHERE resource_id='bbbbbbbbbbbbbbbb'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_claim_notifications
+		(store_id,owner_user_id,parent_seller_id,seller_id,site_id,claim_id,resource_type,related_id,status,stage,claim_type,reason_code,last_updated,checked_at)
+		VALUES($1,$2,'900','111','MLB','1','order','1','opened','claim','mediations','PNR1',now(),now()),
+		($1,$2,'900','111','MLB','2','order','2','closed','claim','mediations','PNR1',now(),now())`, storeA, ownerA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_item_notifications
+		(store_id,owner_user_id,parent_seller_id,seller_id,site_id,item_id,status,last_updated,checked_at)
+		VALUES($1,$2,'900','111','MLB','MLB1','paused',now(),now()),
+		($1,$2,'900','111','MLB','MLB2','active',now(),now())`, storeA, ownerA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_notification_jobs
+		(store_id,owner_user_id,parent_seller_id,application_id,notification_user_id,topic,resource_id,dead_at)
+		VALUES($1,$2,'900','test-client','900','marketplace_orders','1',NULL),
+		($1,$2,'900','test-client','111','marketplace_orders','2',NULL),
+		($1,$2,'900','test-client','111','marketplace_orders','3',now())`, storeA, ownerA); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{db: db, cfg: Config{ClientID: "test-client"}}
+	got, err := svc.OperationsSummary(ctx, ownerA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Stores) != 1 {
+		t.Fatalf("stores=%d", len(got.Stores))
+	}
+	s := got.Stores[0]
+	if !s.Connected || s.PaidOrders != 1 || s.CachedUnanswered != 1 || s.IncomingMessages != 1 ||
+		s.OpenClaims != 1 || s.PausedItems != 1 || s.PendingJobs != 2 || s.DeadJobs != 1 {
+		t.Fatalf("summary mismatch: %+v", s)
+	}
+	other, err := svc.OperationsSummary(ctx, ownerB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other.Stores) != 1 || other.Stores[0].StoreID != storeB || other.Stores[0].PaidOrders != 0 {
+		t.Fatalf("owner isolation failed: %+v", other.Stores)
+	}
+	empty, err := svc.OperationsSummary(ctx, "00000000-0000-4000-8000-000000000099")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Stores) != 0 || !empty.CacheOnly {
+		t.Fatalf("empty state failed: %+v", empty)
+	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET status='disconnected' WHERE id=$1`, storeA); err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := svc.OperationsSummary(ctx, ownerA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = revoked.Stores[0]
+	if s.Connected || s.PaidOrders != 0 || s.CachedUnanswered != 0 || s.IncomingMessages != 0 ||
+		s.OpenClaims != 0 || s.PausedItems != 0 || s.PendingJobs != 0 || s.DeadJobs != 0 {
+		t.Fatalf("revoked authorization leaked cached metrics: %+v", s)
+	}
+}
