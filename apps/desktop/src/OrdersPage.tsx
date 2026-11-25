@@ -2,7 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cachedStores, listStores, watchStoreList, StoreRequestError, type StoreConnection } from "./stores";
 import {
-  getOrder, getOrderSyncState, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderUSD, officialTrackingURL,
+  getOrder, getOrderSyncState, listShipmentRefreshCandidates, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderUSD, officialTrackingURL,
   OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderLogistics, resetOrderCursor, skipOrder, syncOrders,
   shouldApplyOrderRefresh, shouldStopLogisticsBatch, displayOrderStatus, orderFulfillmentStatus, orderStatusLabel, hasProcurement, orderVariationText, shipmentStatusLabel,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
@@ -465,13 +465,27 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setRefreshingOrder(true);
     setDetailError("");
     try {
-      const fresh = action === "shipment"
+      let fresh = action === "shipment"
         ? await refreshOrderLogistics(target, id, "shipmentDetails", controller.signal)
         : await refreshOneOrder(target, id, controller.signal);
       if (controller.signal.aborted) return;
+      let logisticsNote = "";
+      if (action === "order" && fresh.status === "paid" && /^[1-9]\d{0,29}$/.test(fresh.shipment_id ?? "")) {
+        try {
+          const summary = await refreshOrderLogistics(target, id, "shipment", controller.signal);
+          controller.signal.throwIfAborted();
+          const previousDetails = fresh.shipment?.shipment_id === summary.shipment?.shipment_id ? fresh.shipment?.details : undefined;
+          fresh = { ...summary, shipment: summary.shipment && { ...summary.shipment, details: summary.shipment.details ?? previousDetails } };
+          logisticsNote = "，官方物流概要已更新";
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          logisticsNote = "，物流未更新：" + displayError(error);
+        }
+      }
+      if (controller.signal.aborted) return;
       if (shouldApplyOrderRefresh(id, selectedIdRef.current, controller.signal.aborted)) setDetail(fresh);
       setNotice(action === "shipment" ? "已读取订单 " + id + " 的官方物流。" :
-        "已从 Mercado Libre 重新读取订单 " + id + " 的最新状态。退款金额与最终净回款仍需单独核账。");
+        "已读取订单 " + id + " 的交易状态" + logisticsNote + "。退款金额与最终净回款仍需单独核账。");
       setPage((previous) => ({ ...previous, items: previous.items.map((record) =>
         record.order_id === fresh.order_id && orderRecordKey(record, scope) ===
           orderRecordKey(fresh, target)
@@ -721,9 +735,47 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         setProgress({ ...current, saved });
         if (!current.has_more) break;
       }
-      setNotice(last?.has_more
+      const orderNote = last?.has_more
         ? "本轮已保存 " + saved + " 笔订单，达到 20 批安全上限。点击继续同步可从已保存位置接着处理。"
-        : "订单同步完成：本轮保存 " + saved + " 笔，已同步到当前搜索窗口末尾。");
+        : "订单同步完成：本轮保存 " + saved + " 笔，已同步到当前搜索窗口末尾。";
+      // Only explicit sync triggers this bounded pass, even when no order changed.
+      // The server selects stale active shipments independently of UI filters.
+      let logisticsNote = "";
+      try {
+        const candidates = await listShipmentRefreshCandidates(scope, controller.signal);
+        controller.signal.throwIfAborted();
+        let done = 0, failed = 0, attempted = 0;
+        let stop = "";
+        for (const id of candidates.order_ids) {
+          controller.signal.throwIfAborted();
+          attempted++;
+          setNotice(orderNote + " 正在更新物流概要 " + attempted + "/" + candidates.order_ids.length + "…");
+          try {
+            await refreshOrderLogistics(scope, id, "shipment", controller.signal);
+            controller.signal.throwIfAborted();
+            done++;
+          } catch (error) {
+            controller.signal.throwIfAborted();
+            failed++;
+            const status = error instanceof StoreRequestError ? error.status : 0;
+            const code = error instanceof StoreRequestError ? error.code : "";
+            if (shouldStopLogisticsBatch(status, code) || code === "order_auth_changed") {
+              stop = displayError(error);
+              break;
+            }
+          }
+        }
+        logisticsNote = candidates.order_ids.length
+          ? " 物流概要更新 " + done + " 笔，未更新 " + (failed + candidates.order_ids.length - attempted) + " 笔。" +
+            (stop ? " 已停止：" + stop + "；不会自动重试。" : "") +
+            (candidates.has_more ? " 仍有待更新物流，后续可再次同步。" : "")
+          : " 当前没有到期的未完结物流需要刷新。";
+      } catch (error) {
+        controller.signal.throwIfAborted();
+        logisticsNote = " 物流未更新：" + displayError(error) + "。已保存的订单不受影响。";
+      }
+      controller.signal.throwIfAborted();
+      setNotice(orderNote + logisticsNote);
       if (store?.status === "token_expired") void reloadStores();
     } catch (error) {
       if (controller.signal.aborted) {

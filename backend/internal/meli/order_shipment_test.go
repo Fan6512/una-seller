@@ -11,6 +11,49 @@ import (
 	"time"
 )
 
+func TestShipmentRefreshCandidatesScopeAndFreshness(t *testing.T) {
+	s, db, owner, store := setupRefreshTest(t)
+	ctx := context.Background()
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,
+ date_created,last_updated,shipment_id,order_items,shipment_snapshot)
+ SELECT $1::uuid,'MLB','remote','987654',id,status,'USD',1,now(),now(),shipment,'[]'::jsonb,
+ CASE WHEN snap='' THEN NULL ELSE jsonb_build_object('shipment_id',snap,'status',state,'checked_at',now()-age::interval) END
+ FROM (VALUES
+ ('101','paid','9001','9001','ready_to_ship','1 day'),
+ ('102','paid','9002','9002','shipped','1 hour'),
+ ('103','paid','9003','9003','delivered','1 day'),
+ ('104','cancelled','9004','9004','ready_to_ship','1 day'),
+ ('105','paid','9005','9005','shipped','1 minute'),
+ ('106','paid','9006','','','1 day'),
+ ('107','paid','9007','9999','delivered','1 minute'),
+ ('108','paid',NULL,'','','1 day')
+ ) AS fixtures(id,status,shipment,snap,state,age)`, store); err != nil {
+		t.Fatal(err)
+	}
+	scope := OrderScope{Site: "MLB", Logistic: "remote"}
+	got, err := s.ListShipmentRefreshCandidates(ctx, owner, store, scope)
+	if err != nil || got.HasMore || fmt.Sprint(got.OrderIDs) != "[106 107 101 102]" {
+		t.Fatalf("wrong stale candidates: %+v %v", got, err)
+	}
+	if _, err := s.ListShipmentRefreshCandidates(ctx, "00000000-0000-4000-8000-000000000099", store, scope); !errors.Is(err, ErrStoreNotFound) {
+		t.Fatalf("wrong owner accepted: %v", err)
+	}
+	if _, err := s.ListShipmentRefreshCandidates(ctx, owner, store, OrderScope{Site: "MLM", Logistic: "remote"}); !errors.Is(err, ErrSiteNotAuthorized) {
+		t.Fatalf("wrong site accepted: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+ (store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,order_items)
+ SELECT $1::uuid,'MLB','remote','987654',i::text,'paid','USD',1,now(),now(),'9000','[]'::jsonb
+ FROM generate_series(201,220) i`, store); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ListShipmentRefreshCandidates(ctx, owner, store, scope)
+	if err != nil || !got.HasMore || len(got.OrderIDs) != 10 {
+		t.Fatalf("candidate bound failed: %+v %v", got, err)
+	}
+}
+
 func TestRefreshOrderShipmentOfficialSnapshotAndScope(t *testing.T) {
 	s, db, owner, store := setupRefreshTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

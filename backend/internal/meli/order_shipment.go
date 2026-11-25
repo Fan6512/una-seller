@@ -43,6 +43,55 @@ type OrderShipmentEvent struct {
 	Date      time.Time `json:"date"`
 }
 
+// ShipmentRefreshCandidates reads only scoped, stale non-terminal paid orders.
+// A user-triggered sync consumes at most ten candidates; oldest checks first.
+type ShipmentRefreshCandidates struct {
+	OrderIDs []string `json:"order_ids"`
+	HasMore  bool     `json:"has_more"`
+}
+
+func (s *Service) ListShipmentRefreshCandidates(ctx context.Context, owner, store string, scope OrderScope) (ShipmentRefreshCandidates, error) {
+	if !orderScopeValid(scope) {
+		return ShipmentRefreshCandidates{}, ErrOrderInvalidResponse
+	}
+	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
+		return ShipmentRefreshCandidates{}, err
+	}
+	const limit = 10
+	rows, err := s.db.Query(ctx, `WITH connection AS (`+orderConnection+`), eligible AS (
+ SELECT o.order_id, CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id
+ THEN (o.shipment_snapshot->>'checked_at')::timestamptz END AS checked
+ FROM app.meli_orders o
+ JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
+ WHERE c.status='connected' AND o.site_id=$3 AND o.logistic_type=$4
+ AND o.status='paid' AND o.shipment_id ~ '^[1-9][0-9]{0,29}$'
+ AND (o.shipment_snapshot->>'shipment_id' IS DISTINCT FROM o.shipment_id
+ OR COALESCE(o.shipment_snapshot->>'status','') NOT IN ('delivered','cancelled'))
+)
+SELECT order_id FROM eligible WHERE checked IS NULL OR checked < now()-interval '15 minutes'
+ORDER BY checked ASC NULLS FIRST, order_id LIMIT $5`, store, owner, scope.Site, scope.Logistic, limit+1)
+	if err != nil {
+		return ShipmentRefreshCandidates{}, err
+	}
+	defer rows.Close()
+	result := ShipmentRefreshCandidates{OrderIDs: []string{}}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return ShipmentRefreshCandidates{}, err
+		}
+		result.OrderIDs = append(result.OrderIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return ShipmentRefreshCandidates{}, err
+	}
+	if len(result.OrderIDs) > limit {
+		result.HasMore = true
+		result.OrderIDs = result.OrderIDs[:limit]
+	}
+	return result, nil
+}
+
 func (s *Service) RefreshOrderShipment(ctx context.Context, owner, store string, scope OrderScope, orderID string, withDetails bool) (OrderRecord, error) {
 	checkedAt := time.Now().UTC().Truncate(time.Microsecond)
 	if !validUUID(store) || !orderScopeValid(scope) || !orderNumber(orderID) {
