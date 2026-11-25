@@ -22,29 +22,7 @@ const maxBody = 16 << 10
 var (
 	ErrScope            = errors.New("notification scope not uniquely authorized")
 	ErrScopeUnavailable = errors.New("known notification scope temporarily unavailable")
-	idPattern           = regexp.MustCompile(`^[1-9][0-9]{0,29}// Package notifications owns the inbound Mercado Libre CBT event inbox.
-package notifications
-
-import (
-	"context"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
-	"regexp"
-	"strings"
-	"time"
-)
-
-const Path = "/api/v1/mercadolibre/notifications"
-const ingressHeader = "X-Una-Webhook-Ingress"
-const maxBody = 16 << 10
-
-var (
-	)
+	idPattern           = regexp.MustCompile(`^[1-9][0-9]{0,29}$`)
 )
 
 // Event is an allowlisted hint, never a platform URL or a business update.
