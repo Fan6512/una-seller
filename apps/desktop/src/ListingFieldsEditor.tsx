@@ -89,6 +89,13 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   const images=value.images??[];
   const variants=value.variants??[];
   const activeRules=categoryRules?.category_id===value.category_id?categoryRules:null;
+  const modelRule=activeRules?.attributes.find(rule=>rule.id==="MODEL");
+  const modelRequired=Boolean(activeRules&&(activeRules.technical_requirements?.includes("MODEL")||
+    (modelRule&&requiredAttribute(modelRule,activeRules.technical_requirements))));
+  const modelHint=!activeRules?"选择类目后核实":
+    modelRequired?"官方 MODEL 必填，请在官方属性或变体规格填写":
+    !activeRules.technical_specs_verified||modelRule?.tags?.conditional_required?"官方要求待核实":
+    "当前已读取规则未标记 MODEL 必填";
   const childRules=(activeRules?.attributes??[]).filter(r=>r?.hierarchy==="CHILD_PK"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(r.id));
   // These are display-only hints; never change the platform option's value or ID.
   const glossary:Record<string,string>={Color:"颜色",Colour:"颜色",Size:"尺寸",Style:"款式",Material:"材质",Voltage:"电压",
@@ -343,7 +350,10 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
             }}/>
         </label>
         {field("品牌","brand","无品牌请留空")}
-        {field("型号（基础参考）","model","是否必填以 CBT 官方类目属性为准")}
+        <label className="listing-field">型号（基础参考）
+          <input disabled={disabled} value={value.model} maxLength={120} onChange={e=>set("model",e.target.value)} placeholder="如有实际型号可填写"/>
+          <small>{modelHint}</small>
+        </label>
         {field("主商品 SKU（内部编码）","seller_sku","例如：FLOOR-001")}
         {field("条码 GTIN / EAN（有则填）","gtin","不编造条码",50)}
       </div>

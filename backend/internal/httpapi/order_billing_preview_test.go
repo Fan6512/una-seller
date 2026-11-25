@@ -62,6 +62,9 @@ func TestBillingPreviewErrorMapping(t *testing.T) {
 	} {
 		w := httptest.NewRecorder()
 		writeOrderBillingError(w, tc.err)
+		if tc.want == http.StatusTooManyRequests && w.Header().Get("Access-Control-Expose-Headers") != "Retry-After" {
+			t.Fatal("desktop cannot read the retry header over CORS")
+		}
 		if w.Code != tc.want || !strings.Contains(w.Body.String(), tc.code) {
 			t.Fatalf("billing error %v: status=%d body=%s", tc.err, w.Code, w.Body.String())
 		}

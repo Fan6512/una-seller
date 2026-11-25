@@ -18,6 +18,7 @@ import { setSiteTitleMode } from "/src/titleModePreference.ts";
 
 const fields = [
   { id: "BRAND", name: "Brand", value_type: "string", tags: { required: true } },
+  { id: "MODEL", name: "Model", value_type: "string", tags: { required: true } },
   { id: "COUNT", name: "Count", value_type: "number", tags: { new_required: true } },
   { id: "CAPACITY", name: "Capacity", value_type: "number_unit", tags: { required: true },
     allowed_units: [{ id: "l", name: "L" }] },
@@ -134,6 +135,8 @@ try {
   flushSync(() => root.render(React.createElement(Fixture)));
   const brand = await loaded("label", "Brand");
   assert(brand.querySelector("input").getAttribute("aria-required") === "true", "required text missing");
+  assert((await loaded("label","Model · 必填")).querySelector("input").getAttribute("aria-required")==="true","official MODEL required flag lost");
+  await loaded("small","官方 MODEL 必填，请在官方属性或变体规格填写");
   assert((await loaded("label", "Count")).querySelector("input").getAttribute("aria-required") === "true", "new_required number missing");
   input(brand.querySelector("input"), "Sample Brand");
   input((await loaded("label", "Count")).querySelector("input"), "3");

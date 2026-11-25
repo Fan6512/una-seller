@@ -224,6 +224,20 @@ func TestProfitFromVerifiedNetUSD(t *testing.T) {
 	}
 }
 
+func TestOrderReadResourceUsesFixedLabels(t *testing.T) {
+	for path, want := range map[string]string{
+		"/billing/integration/group/ML/order/details?order_ids=11": "billing",
+		"/marketplace/shipments/11/costs":                          "shipment",
+		"/marketplace/orders/search?offset=20":                    "order_search",
+		"/marketplace/orders/11":                                 "order_detail",
+		"/unrecognized/secret":                                   "other",
+	} {
+		if got := orderReadResource(path); got != want {
+			t.Fatalf("resource label=%q want=%q", got, want)
+		}
+	}
+}
+
 func TestBillingWrappedRateLimitUsesExistingOrderCooldown(t *testing.T) {
 	for _, tc := range []struct {
 		path string

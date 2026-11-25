@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 	"net/http"
@@ -122,6 +123,22 @@ func (e *OrderRateLimitError) RetryAfter() string {
 	return strconv.FormatInt(int64((delay-1)/time.Second)+1, 10)
 }
 
+// Use a fixed diagnostic label, never a URL, query, store/order ID or token.
+func orderReadResource(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/billing/integration/group/ML/order/details?"):
+		return "billing"
+	case strings.HasPrefix(path, "/marketplace/shipments/"):
+		return "shipment"
+	case path == "/marketplace/orders/search" || strings.HasPrefix(path, "/marketplace/orders/search?"):
+		return "order_search"
+	case strings.HasPrefix(path, "/marketplace/orders/"):
+		return "order_detail"
+	default:
+		return "other"
+	}
+}
+
 // Pace order reads across scopes in this process and apply upstream cooldowns
 // before another request can start, including concurrent syncs from other stores.
 func (s *Service) orderGET(ctx context.Context, token, path string, target any) (int, error) {
@@ -131,7 +148,11 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 	}
 	defer s.orderRequests.Unlock()
 	if time.Now().Before(s.orderRetryUntil) {
-		return http.StatusTooManyRequests, &OrderRateLimitError{until: s.orderRetryUntil}
+		cooldown := &OrderRateLimitError{until: s.orderRetryUntil}
+		if orderReadResource(path) == "billing" {
+			slog.Info("order read rate limited", "source", "local_cooldown", "resource", "billing", "retry_after_seconds", cooldown.RetryAfter())
+		}
+		return http.StatusTooManyRequests, cooldown
 	}
 	// Both clocks are protected by orderRequests. Search calls have their
 	// own slower quota; detail reads must not inherit the search delay.
@@ -170,7 +191,10 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 			until = now.Add(delay)
 		}
 		s.orderRetryUntil = until
-		return status, &OrderRateLimitError{until: until}
+		cooldown := &OrderRateLimitError{until: until}
+		slog.Warn("order read rate limited", "source", "upstream", "resource", orderReadResource(path),
+			"upstream_http_status", response.httpStatus, "retry_after_seconds", cooldown.RetryAfter())
+		return status, cooldown
 	}
 	return status, err
 }

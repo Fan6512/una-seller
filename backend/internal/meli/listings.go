@@ -823,6 +823,7 @@ type listingGETTiming struct {
 	request, body, decode time.Duration
 	failedPhase           string
 	retryAfter            string
+	httpStatus            int
 }
 
 func (timing listingGETTiming) attrs(ctx context.Context) []any {
@@ -866,6 +867,7 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 		return 0, listingReadError(ctx, err)
 	}
 	defer resp.Body.Close()
+	timing.httpStatus = resp.StatusCode
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		timing.failedPhase = "http_status"
 		if resp.StatusCode == http.StatusTooManyRequests {
