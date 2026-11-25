@@ -18,7 +18,7 @@ import (
 )
 
 // WH-03 acceptance: order-first, pack fan-out, duplicate/out-of-order delivery,
-// tenancy, ambiguous/>10/mixed/stale shipments, partial responses, revoked
+// tenancy, ambiguous/oversized/mixed/stale shipments, partial responses, revoked
 // authorization between read and commit, manual concurrency and shared limits.
 
 type upstreamCall struct {
@@ -195,9 +195,9 @@ AND shipment_snapshot->>'status'='delivered' AND shipment_snapshot->>'tracking_n
 }
 
 func TestNotificationShipmentFailsClosedOnUnsafeLists(t *testing.T) {
-	eleven := make([]string, 0, 11)
-	for i := 1; i <= 11; i++ {
-		eleven = append(eleven, linkRow(fmt.Sprintf("100%02d", i), "700", "987654"))
+	oversized := make([]string, 0, maxNotificationShipmentOrders+1)
+	for i := 1; i <= maxNotificationShipmentOrders+1; i++ {
+		oversized = append(oversized, linkRow(fmt.Sprintf("100%02d", i), "700", "987654"))
 	}
 	cases := []struct {
 		name   string
@@ -205,12 +205,12 @@ func TestNotificationShipmentFailsClosedOnUnsafeLists(t *testing.T) {
 		scope  bool
 		mutate func(t *testing.T, c notificationCase)
 	}{
-		{name: "more than ten unique orders", scope: false, serve: func(w http.ResponseWriter, r *http.Request) {
+		{name: "above bounded unique order limit", scope: false, serve: func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/marketplace/shipments/801":
 				fmt.Fprint(w, shipmentPayload("801", "987654", "MLB", "shipped", "2026-11-22T00:00:00Z"))
 			case "/shipments/801/orders":
-				fmt.Fprint(w, linksBody(eleven...))
+				fmt.Fprint(w, linksBody(oversized...))
 			default:
 				id := strings.TrimPrefix(r.URL.Path, "/marketplace/orders/")
 				fmt.Fprint(w, notifiedOrderFixture(id, "2026-11-21T01:00:00Z", "paid", "801"))
@@ -577,7 +577,7 @@ func TestNotificationSharesManualOrderLimit(t *testing.T) {
 		t.Fatal("worker read reached the provider during the manual cooldown")
 	}
 
-	// Both paths share one in-process mutex; neither is prioritized today.
+	// A background request yields to an in-flight manual request.
 	c.service.orderRetryUntil = time.Time{}
 	c.service.orderRequests.Lock()
 	defer c.service.orderRequests.Unlock()
@@ -587,5 +587,34 @@ func TestNotificationSharesManualOrderLimit(t *testing.T) {
 	var target map[string]any
 	if _, err := c.service.orderGET(ctx, "synthetic_old_access", "/marketplace/orders/10002", &target); !errors.Is(err, ErrOrderBusy) {
 		t.Fatalf("manual read did not report local contention: %v", err)
+	}
+}
+
+func TestNotificationElevenLinkedOrdersPostgres(t *testing.T) {
+	links := make([]string, 0, 11)
+	for i := 1; i <= 11; i++ {
+		links = append(links, linkRow(fmt.Sprintf("100%02d", i), "700", "987654"))
+	}
+	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/marketplace/shipments/801":
+			fmt.Fprint(w, shipmentPayload("801", "987654", "MLB", "shipped", "2026-11-22T00:00:00Z"))
+		case "/shipments/801/orders":
+			fmt.Fprint(w, linksBody(links...))
+		default:
+			id := strings.TrimPrefix(r.URL.Path, "/marketplace/orders/")
+			fmt.Fprint(w, notifiedOrderFixture(id, "2026-11-21T01:00:00Z", "paid", "801"))
+		}
+	})
+	resource, err := c.prepare(t, c.job("marketplace_shipments", "801", "987654"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.apply(t, resource); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_orders
+WHERE store_id=$1 AND shipment_id='801' AND shipment_snapshot->>'status'='shipped'`, c.store); got != 11 {
+		t.Fatalf("only %d linked orders committed", got)
 	}
 }

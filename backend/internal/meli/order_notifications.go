@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const maxNotificationShipmentOrders = 10
+const maxNotificationShipmentOrders = 30
 
 // NotificationHandlers are read-only upstream adapters. The worker owns the
 // lease, final scope checks, local transaction and retry policy.
@@ -30,9 +30,15 @@ type notifiedOrder struct {
 }
 
 func notificationAuthError(err error) error {
+	if errors.Is(err, ErrOrderBusy) {
+		return &notifications.Deferred{Cause: err, Reason: notifications.DeferBusy, Delay: 2 * time.Second}
+	}
+	if errors.Is(err, ErrReauthorizationRequired) || errors.Is(err, ErrRefreshUnknown) || errors.Is(err, ErrRefreshBusy) {
+		return &notifications.Deferred{Cause: err, Reason: notifications.DeferAuthorization, Delay: time.Minute}
+	}
 	var limited *OrderRateLimitError
 	if errors.As(err, &limited) {
-		return &notifications.RateLimited{RetryAfter: time.Until(limited.until)}
+		return &notifications.RateLimited{RetryAfter: time.Until(limited.until), Shared: limited.shared}
 	}
 	return err
 }
@@ -132,12 +138,13 @@ func checkNotifiedOrderScope(ctx context.Context, tx notifications.LocalWriter, 
 }
 
 func (s *Service) prepareOrderNotification(ctx context.Context, job notifications.Job) (notifications.VerifiedResource, error) {
+	ctx = backgroundOrderRead(ctx)
 	if job.Topic != "marketplace_orders" || !orderNumber(job.ResourceID) {
 		return notifications.VerifiedResource{}, notifications.ErrScope
 	}
 	auth, err := s.RequireStoreConnection(ctx, job.OwnerID, job.StoreID)
 	if err != nil {
-		return notifications.VerifiedResource{}, err
+		return notifications.VerifiedResource{}, notificationAuthError(err)
 	}
 	if !notificationStoreMatches(auth, job) {
 		return notifications.VerifiedResource{}, notifications.ErrScope
@@ -168,6 +175,9 @@ type shipmentOrderLink struct {
 func (s *Service) readShipmentOrderLinks(ctx context.Context, token, shipmentID string) ([]shipmentOrderLink, error) {
 	var rows []shipmentOrderLink
 	status, err := s.orderGET(ctx, token, "/shipments/"+shipmentID+"/orders", &rows)
+	if status == http.StatusNoContent || (status == http.StatusOK && err == nil && len(rows) == 0) {
+		return nil, &notifications.Deferred{Cause: ErrOrderInvalidResponse, Reason: notifications.DeferAssociation, Delay: time.Minute}
+	}
 	if err != nil {
 		return nil, notificationAuthError(err)
 	}
@@ -206,12 +216,13 @@ func (s *Service) readShipmentOrderLinks(ctx context.Context, token, shipmentID 
 }
 
 func (s *Service) prepareShipmentNotification(ctx context.Context, job notifications.Job) (notifications.VerifiedResource, error) {
+	ctx = backgroundOrderRead(ctx)
 	if job.Topic != "marketplace_shipments" || !orderSLAShipmentID.MatchString(job.ResourceID) {
 		return notifications.VerifiedResource{}, notifications.ErrScope
 	}
 	auth, err := s.RequireStoreConnection(ctx, job.OwnerID, job.StoreID)
 	if err != nil {
-		return notifications.VerifiedResource{}, err
+		return notifications.VerifiedResource{}, notificationAuthError(err)
 	}
 	if !notificationStoreMatches(auth, job) {
 		return notifications.VerifiedResource{}, notifications.ErrScope
@@ -234,10 +245,10 @@ func (s *Service) prepareShipmentNotification(ctx context.Context, job notificat
 		// All orders must establish the same forward shipment, seller, site
 		// and exact logistics scope. Mixed/ambiguous shipments fail closed.
 		if link.SellerID.String() != order.seller && link.SellerID.String() != auth.SellerID {
-			return notifications.VerifiedResource{}, notifications.ErrScope
+			return notifications.VerifiedResource{}, notifications.ErrPermanentScope
 		}
 		if sender != auth.SellerID && sender != order.seller {
-			return notifications.VerifiedResource{}, notifications.ErrScope
+			return notifications.VerifiedResource{}, notifications.ErrPermanentScope
 		}
 		if site != "" && site != order.scope.Site {
 			return notifications.VerifiedResource{}, notifications.ErrScope

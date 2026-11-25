@@ -3,6 +3,7 @@ package notifications
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"slices"
 	"time"
@@ -14,6 +15,10 @@ import (
 const maxAttempts = 8
 
 var errLeaseLost = errors.New("notification lease lost")
+
+// ErrPermanentScope is reserved for proven identity contradictions, not a
+// temporarily unavailable or ambiguous marketplace mapping.
+var ErrPermanentScope = fmt.Errorf("permanent notification identity mismatch: %w", ErrScope)
 
 // Job identifies the authorized scope for the handler's official read.
 type Job struct {
@@ -45,9 +50,29 @@ type LocalWriter interface {
 // RetryAfter is the duration derived from the upstream Retry-After header.
 type RateLimited struct {
 	RetryAfter time.Duration
+	// Shared means the application-wide coordinator already persisted the limit.
+	Shared bool
 }
 
 func (*RateLimited) Error() string { return "notification upstream rate limited" }
+
+const (
+	DeferBusy          = "local_busy"
+	DeferAuthorization = "scope_unavailable"
+	DeferAssociation   = "association_pending"
+)
+
+// Deferred is a bounded wait, not a failed upstream attempt. The lease is
+// released and the claim refunded. Old pending jobs still reach dead letter.
+type Deferred struct {
+	Cause  error
+	Reason string
+	Delay  time.Duration
+}
+
+func (*Deferred) Error() string { return "notification deferred" }
+
+func (e *Deferred) Unwrap() error { return e.Cause }
 
 type Worker struct {
 	inbox    PostgresInbox
@@ -81,7 +106,7 @@ func (w *Worker) ValidateActivation() error {
 
 func (w *Worker) Run(ctx context.Context, logger *log.Logger) {
 	// Deliberately single-flight, at most one claim per second per process.
-	// Do not increase concurrency before WH-03 shares the official API limiter.
+	// Keep a single consumer until real traffic validates pacing and capacity.
 	poll := time.NewTicker(time.Second)
 	defer poll.Stop()
 	maintenance := time.NewTicker(time.Minute)
@@ -153,6 +178,10 @@ func (w *Worker) claim(ctx context.Context) (Job, error) {
 			WHERE j.application_id=$1 AND j.topic=ANY($2::text[]) AND j.dead_at IS NULL
 			  AND j.available_at <= now() AND (j.lease_until IS NULL OR j.lease_until <= now())
 			  AND j.attempts < $3
+			  AND NOT EXISTS (
+				SELECT 1 FROM app.meli_order_read_coordination c
+				WHERE c.application_id=j.application_id AND c.retry_until > now()
+			  )
 			  AND NOT EXISTS (
 				SELECT 1 FROM app.meli_notification_cooldowns c
 				WHERE (c.store_id,c.owner_user_id,c.parent_seller_id,c.application_id)
@@ -266,16 +295,36 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 	delay := 5 * time.Second << (j.attempts - 1)
 	var limited *RateLimited
 	var cooldown time.Duration
+	var deferred *Deferred
+	refund := false
+	terminal := false
 	reason := "handler_failed"
 	switch {
+	case errors.As(cause, &deferred):
+		switch deferred.Reason {
+		case DeferBusy, DeferAuthorization, DeferAssociation:
+			reason = deferred.Reason
+			delay = min(max(deferred.Delay, time.Second), time.Hour)
+			refund = true
+		}
+	case errors.Is(cause, ErrScopeUnavailable):
+		reason = DeferAuthorization
+		delay = time.Minute
+		refund = true
+	case errors.Is(cause, ErrPermanentScope):
+		reason = "scope_rejected"
+		terminal = true
 	case errors.Is(cause, ErrScope):
 		reason = "scope_rejected"
-	case errors.Is(cause, ErrScopeUnavailable):
-		reason = "scope_unavailable"
 	case errors.As(cause, &limited):
 		reason = "rate_limited"
-		cooldown = max(time.Minute, limited.RetryAfter)
-		delay = max(delay, cooldown)
+		if limited.Shared {
+			delay = max(time.Second, limited.RetryAfter)
+		} else {
+			cooldown = max(time.Minute, limited.RetryAfter)
+			delay = cooldown
+		}
+		refund = true
 	case errors.Is(cause, context.DeadlineExceeded):
 		reason = "deadline"
 	}
@@ -284,9 +333,11 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 			UPDATE app.meli_notification_jobs
 			SET lease_token=NULL, lease_until=NULL, last_failure=$3,
 			    available_at=clock_timestamp()+$4*interval '1 second',
-			    dead_at=CASE WHEN attempts >= $5 THEN clock_timestamp() END
+			    attempts=CASE WHEN $6::boolean THEN greatest(attempts-1,0) ELSE attempts END,
+			    dead_at=CASE WHEN $7::boolean OR ($6::boolean AND pending_since <= clock_timestamp()-interval '24 hours')
+			                      OR (NOT $6::boolean AND attempts >= $5) THEN clock_timestamp() END
 			WHERE id=$1 AND lease_token=$2 AND lease_until > clock_timestamp()`,
-			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts)
+			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts, refund, terminal)
 		if err != nil {
 			return err
 		}
