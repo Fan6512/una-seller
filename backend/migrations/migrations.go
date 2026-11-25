@@ -59,6 +59,9 @@ var customerNotificationSQL string
 //go:embed 0017_meli_status_notifications.sql
 var statusNotificationSQL string
 
+//go:embed 0018_meli_compensation_source.sql
+var compensationSourceSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -133,6 +136,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, statusNotificationSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply status notification schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, compensationSourceSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply compensation source schema: %w", err)
 	}
 	return nil
 }
