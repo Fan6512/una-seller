@@ -58,12 +58,12 @@ func (s *Service) PublicationTargets(ctx context.Context, owner string, p collec
  WHERE i.owner_user_id=$1::uuid AND i.own_product_id=$2::uuid AND i.product_revision=$3
  AND i.approved_until>now() AND c.seller_id=i.parent_seller_id AND c.status='connected' AND c.marketplaces_status='verified'
  AND NOT EXISTS (SELECT 1 FROM app.cbt_publication_attempts a
- WHERE a.owner_user_id=i.owner_user_id AND a.own_product_id=i.own_product_id AND a.store_id=i.store_id)
+ WHERE a.owner_user_id=i.owner_user_id AND a.own_product_id=i.own_product_id AND a.store_id=i.store_id AND a.released_at IS NULL)
  UNION ALL
  SELECT a.store_id::text,c.nickname,a.site_id,'',CASE WHEN a.state='submitting'
  AND a.active_request_deadline<=now() THEN 'pending_verify' ELSE a.state END
  FROM app.cbt_publication_attempts a JOIN app.meli_store_connections c ON c.id=a.store_id AND c.owner_user_id=a.owner_user_id
- WHERE a.owner_user_id=$1::uuid AND a.own_product_id=$2::uuid ORDER BY 2,3,1`, owner, p.ID, p.Revision)
+ WHERE a.owner_user_id=$1::uuid AND a.own_product_id=$2::uuid AND a.released_at IS NULL ORDER BY 2,3,1`, owner, p.ID, p.Revision)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (s *Service) publicationAttempt(ctx context.Context, owner, product, store 
 	err := s.db.QueryRow(ctx, `SELECT request_id::text,
  CASE WHEN state='submitting' AND active_request_deadline<=now() THEN 'pending_verify' ELSE state END,
  parent_seller_id,site_seller_id,site_id,logistic_type,title_mode,site_family_name,candidates
- FROM app.cbt_publication_attempts WHERE owner_user_id=$1::uuid AND own_product_id=$2::uuid AND store_id=$3::uuid`,
+ FROM app.cbt_publication_attempts WHERE owner_user_id=$1::uuid AND own_product_id=$2::uuid AND store_id=$3::uuid AND released_at IS NULL`,
 		owner, product, store).Scan(&a.id, &a.state, &a.scope.ParentSellerID, &a.scope.SiteSellerID, &a.scope.Site,
 		&a.scope.Logistic, &a.prepared.Copy.Mode, &a.prepared.Copy.SiteFamilyName, &hints)
 	if err != nil {
@@ -222,7 +222,7 @@ func (s *Service) SubmitPublication(ctx context.Context, owner string, p collect
 
 	// The only creation call. The durable reservation survives cancellation,
 	// process exit and any response that could have created remote identities.
-	status, hints := s.createProductPublication(ctx, auth.AccessToken, a)
+	status, platformCode, hints := s.createProductPublication(ctx, auth.AccessToken, a)
 	finish, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelFinish()
 	encoded, err := json.Marshal(hints)
@@ -230,8 +230,8 @@ func (s *Service) SubmitPublication(ctx context.Context, owner string, p collect
 		return PublicationResult{}, ErrPublicationReadback
 	}
 	tag, err := s.db.Exec(finish, `UPDATE app.cbt_publication_attempts
- SET candidates=$3::jsonb, platform_http_status=NULLIF($4,0),state='pending_verify',completed_at=now()
- WHERE request_id=$1::uuid AND owner_user_id=$2::uuid AND state IN ('submitting','pending_verify') AND candidates IS NULL`, a.id, owner, string(encoded), status)
+ SET candidates=$3::jsonb, platform_http_status=NULLIF($4,0),platform_error_code=NULLIF($5,''),state='pending_verify',completed_at=now()
+ WHERE request_id=$1::uuid AND owner_user_id=$2::uuid AND state IN ('submitting','pending_verify') AND candidates IS NULL AND released_at IS NULL`, a.id, owner, string(encoded), status, platformCode)
 	if err != nil || tag.RowsAffected() != 1 {
 		return PublicationResult{}, ErrPublicationReadback
 	}
@@ -270,7 +270,7 @@ func (s *Service) reservePublication(ctx context.Context, owner, product string,
  INSERT INTO app.cbt_publication_attempts (owner_user_id,own_product_id,store_id,product_revision,site_id,logistic_type,
  parent_seller_id,site_seller_id,title_mode,site_family_name,payload,payload_sha256)
  SELECT $1,$2,id,$4,$5,$6,$7,$8,$9,$10,$11,decode($12,'hex') FROM approved
- ON CONFLICT (owner_user_id,own_product_id,store_id) DO NOTHING RETURNING request_id::text`,
+ ON CONFLICT (owner_user_id,own_product_id,store_id) WHERE released_at IS NULL DO NOTHING RETURNING request_id::text`,
 		owner, product, in.StoreID, in.Revision, in.Site, scope.Logistic, scope.ParentSellerID, scope.SiteSellerID,
 		in.TitleMode, p.Copy.SiteFamilyName, p.Body, digest, auth.accessCipher, string(auth.marketsJSON), approval.listingType, string(pictures)).Scan(&a.id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -314,13 +314,13 @@ func (s *Service) publicationCapacity(ctx context.Context, token string, scope p
 	return matches == 1 && allowed
 }
 
-func (s *Service) createProductPublication(ctx context.Context, token string, a publicationAttempt) (int, publication.CreateHints) {
+func (s *Service) createProductPublication(ctx context.Context, token string, a publicationAttempt) (int, string, publication.CreateHints) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	incomplete := publication.CreateHints{Incomplete: true}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiURL+a.prepared.Path, bytes.NewReader(a.prepared.Body))
 	if err != nil {
-		return 0, incomplete
+		return 0, "", incomplete
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -332,19 +332,29 @@ func (s *Service) createProductPublication(ctx context.Context, token string, a 
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, incomplete
+		return 0, "", incomplete
 	}
 	defer resp.Body.Close()
 	const maxBody = 2 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil || len(body) > maxBody {
-		return resp.StatusCode, incomplete
+		return resp.StatusCode, "", incomplete
+	}
+	var rejected struct {
+		Code string `json:"error"`
+	}
+	if resp.StatusCode >= 400 && json.Unmarshal(body, &rejected) == nil {
+		switch rejected.Code {
+		case "validation_error", "bad_request", "invalid_token", "forbidden", "user.quota_exceeded", "item.max_limit_publish":
+		default:
+			rejected.Code = ""
+		}
 	}
 	hints, err := publication.ExtractCreateHints(a.prepared, a.scope, body)
 	if err != nil {
-		return resp.StatusCode, incomplete
+		return resp.StatusCode, rejected.Code, incomplete
 	}
-	return resp.StatusCode, hints
+	return resp.StatusCode, rejected.Code, hints
 }
 
 type publicationAttributeRule struct {
@@ -422,8 +432,14 @@ func (s *Service) prepareProductPublication(ctx context.Context, token string, f
 				continue
 			}
 			for _, attribute := range *attributes {
+				if attribute.CategoryID != f.CategoryID {
+					continue
+				}
 				rule, ok := fields[attribute.ID]
-				if !ok || attribute.CategoryID != f.CategoryID || (index == 1 && rule.Hierarchy != "CHILD_PK") {
+				if ok && index == 0 && f.Variants != nil && len(*f.Variants) != 0 && rule.Hierarchy == "CHILD_PK" {
+					continue
+				}
+				if !ok || (index == 1 && rule.Hierarchy != "CHILD_PK") {
 					return v, PublicationInputError{fmt.Errorf("attribute %s is not valid for the saved category or variant", attribute.ID)}
 				}
 				value, err := rule.publicationValue(attribute)
@@ -712,7 +728,7 @@ func (s *Service) savePublicationReadback(ctx context.Context, owner, store stri
 	err = tx.QueryRow(ctx, `SELECT a.request_id::text FROM app.cbt_publication_attempts a
  JOIN app.meli_store_connections c ON c.id=a.store_id AND c.owner_user_id=a.owner_user_id
  WHERE a.request_id=$1::uuid AND a.owner_user_id=$2::uuid AND a.store_id=$3::uuid AND a.state IN ('pending_verify','success')
- AND a.candidates IS NOT NULL AND c.seller_id=a.parent_seller_id AND c.status='connected'
+ AND a.released_at IS NULL AND a.candidates IS NOT NULL AND c.seller_id=a.parent_seller_id AND c.status='connected'
  AND c.marketplaces_status='verified' AND c.marketplaces=$4::jsonb AND c.access_token_ciphertext=$5 FOR UPDATE OF a,c`,
 		a.id, owner, store, string(auth.marketsJSON), auth.accessCipher).Scan(&locked)
 	if err != nil {

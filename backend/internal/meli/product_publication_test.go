@@ -30,6 +30,7 @@ func TestProductPublicationPostgresHTTP(t *testing.T) {
 		{name: "family_localized", mode: publication.Localized, family: true},
 		{name: "partial", mode: publication.PlatformAuto, family: true, partial: true},
 		{name: "lost_response", mode: publication.PlatformAuto, family: true, lost: true},
+		{name: "confirmed_absent", mode: publication.PlatformAuto, family: true, lost: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			s, db, owner, store := setupRefreshTest(t)
@@ -53,11 +54,13 @@ func TestProductPublicationPostgresHTTP(t *testing.T) {
 					{CategoryID: category, ID: "ITEM_CONDITION", ValueID: "2230284", Value: "new"},
 					{CategoryID: category, ID: "BRAND", Value: " Example "},
 					{CategoryID: category, ID: "UNIT_VOLUME", Value: "010.00", UnitID: "mL"},
+					{CategoryID: "CBT123", ID: "UNKNOWN_HISTORY", Value: "ignore-me"},
 				},
 			}
 			pictures := publicationPictures{publication.SingleKey: {"photo-red"}}
 			if scenario.family {
 				f.VariantIdentityVersion = 1
+				*f.CategoryAttributes = append(*f.CategoryAttributes, collections.ListingCategoryAttribute{CategoryID: category, ID: "COLOR", ValueID: "1", Value: "root-only"})
 				f.Variants = &[]collections.ListingVariant{
 					{VariantID: red, SellerSKU: "RED", AvailableQuantity: &quantity, TargetNetProceedsUSD: &net,
 						CategoryAttributes: &[]collections.ListingCategoryAttribute{{CategoryID: category, ID: "COLOR", ValueID: "1", Value: "wrong label"}}},
@@ -144,7 +147,7 @@ func TestProductPublicationPostgresHTTP(t *testing.T) {
 						digest != (publication.Prepared{Body: body}).PayloadSHA256() || variants != len(pictures) {
 						t.Errorf("intent not durable before POST: %s %s %d %v", state, mode, variants, err)
 					}
-					if strings.Contains(string(body), "99.99") || strings.Contains(string(body), "辅助说明") || strings.Contains(string(body), "中文备注") ||
+					if strings.Contains(string(body), "ignore-me") || strings.Contains(string(body), "root-only") || strings.Contains(string(body), "99.99") || strings.Contains(string(body), "辅助说明") || strings.Contains(string(body), "中文备注") ||
 						!strings.Contains(string(body), `"global_net_proceeds":25.125`) || !strings.Contains(string(body), `"name":"10 mL"`) ||
 						!strings.Contains(string(body), `"listing_type_id":"gold_pro"`) || !strings.Contains(string(body), `"id":"photo-red"`) ||
 						(strings.Contains(string(body), `"family_name":"Camisa de algodão"`) != (scenario.mode == publication.Localized)) {
@@ -154,6 +157,11 @@ func TestProductPublicationPostgresHTTP(t *testing.T) {
 					select {
 					case <-release:
 					case <-r.Context().Done():
+						return
+					}
+					if scenario.name == "confirmed_absent" {
+						w.WriteHeader(http.StatusBadRequest)
+						fmt.Fprint(w, `{"error":"validation_error","message":"private response"}`)
 						return
 					}
 					if scenario.lost {
@@ -315,6 +323,46 @@ func TestProductPublicationPostgresHTTP(t *testing.T) {
 			if scenario.lost {
 				if read.State != "pending_verify" || len(read.Pending) != len(pictures) {
 					t.Fatalf("unknown result was resolved without evidence: %+v", read)
+				}
+				if _, err := db.Exec(ctx, `UPDATE app.cbt_publication_attempts SET active_request_deadline=now()-interval '1 second' WHERE request_id=$1::uuid`, read.RequestID); err != nil {
+					t.Fatal(err)
+				}
+				recoverAttempt := func(up *string) error {
+					_, err := db.Exec(ctx, `SELECT app.cbt_recover_publication($1,$2,$3,$4,'case-123',$5)`, read.RequestID, owner, product, store, up)
+					return err
+				}
+				if scenario.name == "confirmed_absent" {
+					var status int
+					var code string
+					if err := db.QueryRow(ctx, `SELECT platform_http_status,platform_error_code FROM app.cbt_publication_attempts WHERE request_id=$1::uuid`, read.RequestID).Scan(&status, &code); err != nil || status != 400 || code != "validation_error" {
+						t.Fatalf("official error evidence: %d %q %v", status, code, err)
+					}
+					if err := recoverAttempt(nil); err != nil {
+						t.Fatal(err)
+					}
+					next, err := box.GetOwnProduct(ctx, owner, product)
+					if err != nil || next.Revision != 2 {
+						t.Fatalf("release product revision: %d %v", next.Revision, err)
+					}
+					if _, err := s.SubmitPublication(ctx, owner, next, in); !errors.Is(err, ErrPublicationConflict) {
+						t.Fatalf("old confirmation accepted: %v", err)
+					}
+				} else {
+					up := "U1"
+					if err := recoverAttempt(&up); err != nil {
+						t.Fatal(err)
+					}
+					recovered, err := s.VerifyPublication(ctx, owner, product, store, "MLB")
+					if err != nil || len(recovered.Variants) != 1 || len(recovered.Pending) != 1 || recovered.Variants[0].Key != red {
+						t.Fatalf("recovered=%+v err=%v", recovered, err)
+					}
+					if err := recoverAttempt(nil); err == nil {
+						t.Fatal("released a partially verified attempt")
+					}
+				}
+				var action string
+				if err := db.QueryRow(ctx, `SELECT recovery_audit->0->>'action' FROM app.cbt_publication_attempts WHERE request_id=$1::uuid`, read.RequestID).Scan(&action); err != nil || action == "" || posts.Load() != 1 {
+					t.Fatalf("recovery audit=%q posts=%d err=%v", action, posts.Load(), err)
 				}
 				return
 			}

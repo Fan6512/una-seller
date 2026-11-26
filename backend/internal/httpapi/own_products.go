@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Fan6512/una-seller/backend/internal/collections"
 	"github.com/Fan6512/una-seller/backend/internal/meli"
@@ -196,6 +198,9 @@ func (a collectionAPI) approveCollection(w http.ResponseWriter, r *http.Request,
 
 func (a collectionAPI) productPublication(service *meli.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+		defer cancel()
+		r = r.WithContext(ctx)
 		owner, ok := a.owner(w, r)
 		if !ok {
 			return
@@ -213,7 +218,6 @@ func (a collectionAPI) productPublication(service *meli.Service) http.HandlerFun
 			}
 			return
 		}
-		ctx := r.Context()
 		p, err := a.store.GetOwnProduct(ctx, owner, r.PathValue("id"))
 		if errors.Is(err, collections.ErrNotFound) {
 			writeError(w, 404, "product not found")
