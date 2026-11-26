@@ -77,3 +77,38 @@ test("deferred copy results aggregate and cannot replace a newer task or session
   oldSession("success", "已复制");
   assert.equal(view, null);
 });
+
+test("renderer failure is isolated from business callers and state stays recoverable", () => {
+  let broken = true;
+  let view;
+  const feedback = createFeedback(v => {
+    if (broken) throw new Error("renderer unavailable");
+    view = v;
+  });
+  const identity = {scope:"store-a", key:"sync"};
+  const task = feedback.task(identity, "准备同步");
+  task.update("同步中", 0.5);
+  task.finish("success", "同步完成");
+  const copy = feedback.notify({scope:"store-a", key:"copy"});
+  copy("success", "已复制");
+  feedback.notify({scope:"store-a", key:"copy"}, "success", "已复制");
+  const batch = feedback.batch({scope:"store-a", key:"images"}, "补图", 2);
+  batch.record("one", "success");
+  broken = false;
+  batch.record("two", "failed");
+  assert.equal(view.progress, 1);
+  batch.finish("补图结束");
+  assert.equal(view.kind, "warning");
+  assert.match(view.description, /成功 1 · 失败 1 · 跳过 0/);
+  const stale = feedback.task(identity, "旧任务");
+  const staleCopy = feedback.notify({scope:"store-a", key:"copy"});
+  broken = true;
+  feedback.clear();
+  broken = false;
+  feedback.notify({scope:"store-b", key:"copy"}, "success", "新会话");
+  stale.finish("error", "旧任务失败");
+  staleCopy("success", "旧账号复制");
+  assert.equal(view.title, "新会话");
+  feedback.clear();
+  assert.equal(view, null);
+});

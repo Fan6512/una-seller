@@ -18,19 +18,28 @@ export function createFeedback(render: (view: FeedbackView | null) => void, now 
   let sequence = 0;
   let active: { view: FeedbackView; identity: Identity; at: number; single: boolean } | null = null;
   let pendingNotice: Identity | null = null;
+  function present(view: FeedbackView | null) {
+    try {
+      render(view);
+    } catch {
+      // Feedback is optional presentation. Keep business results, locks and
+      // state transitions independent of any synchronous renderer failure.
+      // Do not log notification content or retry business operations here.
+    }
+  }
   function start(identity: Identity, view: Omit<FeedbackView, "id">, single = false) {
     if (!single || pendingNotice?.scope !== identity.scope || pendingNotice.key !== identity.key) {
       pendingNotice = null;
     }
     const id = ++sequence;
     active = { view: { ...view, id }, identity, at: now(), single };
-    render(active.view);
+    present(active.view);
     return id;
   }
   function update(id: number, view: Omit<FeedbackView, "id">) {
     if (active?.view.id !== id) return;
     active.view = { ...view, id };
-    render(active.view);
+    present(active.view);
   }
   function notify(identity: Identity, kind: FeedbackKind, title: string): void;
   function notify(identity: Identity): (kind: FeedbackKind, title: string) => void;
@@ -96,7 +105,7 @@ export function createFeedback(render: (view: FeedbackView | null) => void, now 
   function clear() {
     active = null;
     pendingNotice = null;
-    render(null);
+    present(null);
   }
   return { notify, task, batch, clear };
 }
