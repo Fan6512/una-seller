@@ -122,7 +122,7 @@ func main() {
 			log.Fatal("shared order coordination unavailable: ", err)
 		}
 		inbox := notifications.PostgresInbox{DB: db}
-		// WH-03 must register both real read-only handlers before activation.
+		// All accepted topics must register real read-only handlers before activation.
 		worker := notifications.NewWorker(inbox, id, meliService.NotificationHandlers())
 		if err := worker.ValidateActivation(); err != nil {
 			log.Fatal(err)

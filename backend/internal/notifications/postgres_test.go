@@ -91,8 +91,13 @@ func assertCount(t *testing.T, ctx context.Context, p PostgresInbox, want int, q
 
 func eventBody(topic, resource, seller, event string) string {
 	path := "orders"
-	if topic == testShipment {
+	switch topic {
+	case testShipment:
 		path = "shipments"
+	case "marketplace_questions":
+		path = "questions"
+	case "marketplace_messages":
+		path = "messages"
 	}
 	return fmt.Sprintf(`{"_id":%q,"user_id":%q,"application_id":%q,"topic":%q,"resource":"/marketplace/%s/%s","received":"2026-01-01T01:00:00Z"}`,
 		event, seller, testApp, topic, path, resource)
@@ -665,4 +670,31 @@ func TestNotificationPermanentScopeDeadLettersImmediately(t *testing.T) {
 	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
 WHERE store_id=$1 AND resource_id='992' AND attempts=1 AND dead_at IS NOT NULL
 AND last_failure='scope_rejected' AND lease_token IS NULL`, testStoreA)
+}
+
+func TestCustomerTopicsDurableAdmissionPostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, "marketplace_questions", "123", testChildA, "question")
+	assertACK(t, h, 200, "marketplace_messages", "a35cf79864a845ca9a3bf6aee59bb4d7", testChildA, "message")
+	assertACK(t, h, 200, "marketplace_messages", "a35cf79864a845ca9a3bf6aee59bb4d7", testChildA, "message")
+	assertACK(t, h, 403, "marketplace_questions", "124", "123456789", "unmapped")
+	if err := migrations.Apply(ctx, p.DB); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 2, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1`, testStoreA)
+	assertCount(t, ctx, p, 2, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND generation=1`, testStoreA)
+	prepare := func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID,
+			Apply: func(context.Context, LocalWriter) error { return nil }}, nil
+	}
+	w := NewWorker(p, testApp, map[string]Prepare{"marketplace_questions": prepare, "marketplace_messages": prepare})
+	for range 2 {
+		if err := w.runOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1`, testStoreA)
 }

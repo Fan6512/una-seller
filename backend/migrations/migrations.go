@@ -53,6 +53,9 @@ var notificationInboxSQL string
 //go:embed 0015_meli_order_read_coordination.sql
 var orderReadCoordinationSQL string
 
+//go:embed 0016_meli_customer_notifications.sql
+var customerNotificationSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -119,6 +122,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, orderReadCoordinationSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply order read coordination schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, customerNotificationSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply customer notification schema: %w", err)
 	}
 	return nil
 }
