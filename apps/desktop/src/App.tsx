@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import DesktopSidebar, { desktopSections, type DesktopSection } from "./DesktopSidebar";
+import DesktopSidebar, { ConnectionAlert, type DesktopSection } from "./DesktopSidebar";
 import "./desktopShell.css";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
@@ -256,7 +256,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   });
   const failedStoreChecks = useRef(new Set<string>());
   const [service, setService] = useState<ServiceStatus>("checking");
-  const [serviceError, setServiceError] = useState("");
+  const [healthRefresh, setHealthRefresh] = useState(0);
   const [searchDraft, setSearchDraft] = useState("");
   const [isComposing, setIsComposing] = useState(false);
   const [search, setSearch] = useState("");
@@ -371,12 +371,10 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
       if (result.status !== "ok" || result.service !== "una-seller-api") throw new Error("服务响应格式不正确");
       if (!signal.aborted) {
         setService("online");
-        setServiceError("");
       }
     } catch (error) {
       if (!signal.aborted) {
         setService("offline");
-        setServiceError(error instanceof Error ? error.message : "无法连接服务");
       }
     }
   }, []);
@@ -385,7 +383,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     const controller = new AbortController();
     void checkHealth(controller.signal);
     return () => controller.abort();
-  }, [checkHealth, refresh]);
+  }, [checkHealth, refresh, healthRefresh]);
 
   useEffect(() => {
     if (isComposing || approving || draftDirty) return;
@@ -462,7 +460,6 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   }, [selectedId, refresh]);
 
   const showDetail = items.length > 0 && !listError;
-  const connectionStatus: ServiceStatus = listError || serviceError ? "offline" : service;
   const pageNumber = Math.floor(offset / PAGE_SIZE) + 1;
 
   return (
@@ -475,24 +472,6 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         onAccount={() => { if (!leavingDirty()) return; setSettings(true); setSettingsSection("account"); }}
         onSettings={() => { if (!leavingDirty()) return; setSettings(true); setSettingsSection("updates"); }} />
       <div className="desktop-content">
-      <header className="topbar desktop-toolbar">
-        <span className="desktop-toolbar-label">{settings ? (settingsSection === "account" ? "个人中心" : "设置") : desktopSections.find(item => item.id === section)?.label}</span>
-        <div className="topbar-spacer" />
-        <span className={"connection-indicator " + connectionStatus} role="status">
-          <span className="connection-dot" aria-hidden="true" />
-          {connectionStatus === "checking" ? "连接中" : connectionStatus === "online" ? "服务正常" : "连接异常"}
-        </span>
-        <button type="button"
-          className={"store-health-button " + (storeHealth.status === "connected" ? "online" : storeHealth.status)}
-          title={storeHealth.message}
-          onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("stores"); }}>
-          <span className="connection-dot" aria-hidden="true" />
-          {storeHealth.status === "checking" ? "店铺检查中"
-            : storeHealth.status === "connected" ? "店铺已连接"
-              : storeHealth.status === "empty" ? "未绑定店铺" : "店铺需检查"}
-        </button>
-      </header>
-
       <main className="main-content">
         {settings && <>
           <nav className="settings-navigation" aria-label="设置分类">
@@ -626,6 +605,16 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         </>}
       </main>
       </div>
+      {service === "offline" && <ConnectionAlert key="service"
+        title="服务连接异常" message="暂时无法连接 UNA Seller 服务，请检查网络后重试。"
+        actionLabel="重新检查" onAction={() => { setService("checking"); setHealthRefresh(n => n + 1); return true; }} />}
+      {storeHealth.status === "attention" && <ConnectionAlert key="store"
+        hidden={service !== "online" || (settings && settingsSection === "stores")}
+        title="店铺连接需要检查" message={storeHealth.message}
+        actionLabel="店铺管理" onAction={() => {
+          if (!leavingDirty()) return false;
+          setSettings(true); setSettingsSection("stores"); return true;
+        }} />}
     </div>
   );
 }

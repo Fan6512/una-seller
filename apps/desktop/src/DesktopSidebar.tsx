@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 // Shell-only navigation. Business modules own their pages, data and permissions.
 export type DesktopSection = "operations" | "collections" | "published" | "orders" | "afterSales";
 export const desktopSections = [
@@ -9,8 +11,8 @@ export const desktopSections = [
 ] as const;
 
 function NavIcon({ name }: { name: DesktopSection | "settings" | "account" }) {
-  return <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
-    strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+    strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     {name === "operations" && <><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M7 15v2m5-6v6m5-9v9"/></>}
     {name === "collections" && <><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M3.5 9h17M10 9v11"/></>}
     {name === "published" && <><path d="m12 3 8.5 4.5v9L12 21l-8.5-4.5v-9L12 3Z"/><path d="m3.5 7.5 8.5 4.8 8.5-4.8M12 12.3V21"/></>}
@@ -51,6 +53,22 @@ export default function DesktopSidebar({ email, section, accountSelected, settin
       <button type="button" className="desktop-settings-icon" aria-label={updateAvailable ? "设置，有可用更新" : "设置"}
         title={updateAvailable ? "设置 · 有更新" : "设置"} aria-current={settingsSelected ? "page" : undefined}
         onClick={onSettings}><NavIcon name="settings"/>{updateAvailable && <span className="desktop-update-dot" aria-hidden="true"/>}</button>
+    </div>
+  </aside>;
+}
+
+// One dismissible popup per observed failure episode. Unmount on recovery;
+// do not re-open on ordinary re-renders or take focus away from business work.
+export function ConnectionAlert({ title, message, actionLabel, onAction, hidden = false }: {
+  title: string; message: string; actionLabel: string; onAction: () => boolean; hidden?: boolean;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed || hidden) return null;
+  return <aside className="desktop-connection-alert" role="region" aria-label={title}>
+    <div className="desktop-connection-copy" role="alert"><strong>{title}</strong><p>{message}</p></div>
+    <div className="desktop-connection-actions">
+      <button type="button" className="desktop-alert-dismiss" onClick={() => setDismissed(true)}>稍后</button>
+      <button type="button" className="desktop-alert-action" onClick={() => { if (onAction()) setDismissed(true); }}>{actionLabel}</button>
     </div>
   </aside>;
 }
