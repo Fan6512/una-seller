@@ -94,8 +94,9 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 		t.Fatalf("stores=%d", len(got.Stores))
 	}
 	s := got.Stores[0]
-	if !s.Connected || s.PaidOrders != 1 || s.CachedUnanswered != 1 || s.IncomingMessages != 1 ||
-		s.OpenClaims != 1 || s.PausedItems != 1 || s.PendingJobs != 2 || s.DeadJobs != 1 {
+	if !s.Connected || s.PaidOrders != 1 || s.CachedUnanswered == nil || *s.CachedUnanswered != 1 ||
+		s.IncomingMessages == nil || *s.IncomingMessages != 1 || s.OpenClaims == nil || *s.OpenClaims != 1 ||
+		s.PausedItems == nil || *s.PausedItems != 1 || s.PendingJobs != 2 || s.DeadJobs != 1 {
 		t.Fatalf("summary mismatch: %+v", s)
 	}
 	other, err := svc.OperationsSummary(ctx, ownerB)
@@ -112,6 +113,25 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 	if len(empty.Stores) != 0 || !empty.CacheOnly {
 		t.Fatalf("empty state failed: %+v", empty)
 	}
+	if other.Stores[0].CachedUnanswered != nil || other.Stores[0].OpenClaims != nil {
+		t.Fatal("no observations were displayed as zero")
+	}
+	overview, err := svc.OperationsOverview(ctx, ownerA, storeA, "MLB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Activity) != 10 || len(overview.Todos) != 3 {
+		t.Fatalf("filtered activity/todos: %+v", overview)
+	}
+	for _, row := range overview.Todos {
+		if row.StoreID != storeA || row.Site != "MLB" {
+			t.Fatalf("out-of-scope todo: %+v", row)
+		}
+	}
+	foreign, err := svc.OperationsOverview(ctx, ownerB, storeA, "")
+	if err != nil || len(foreign.Activity) != 0 || len(foreign.Todos) != 0 {
+		t.Fatalf("foreign operations rows: %+v %v", foreign, err)
+	}
 	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET status='disconnected' WHERE id=$1`, storeA); err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +140,8 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = revoked.Stores[0]
-	if s.Connected || s.PaidOrders != 0 || s.CachedUnanswered != 0 || s.IncomingMessages != 0 ||
-		s.OpenClaims != 0 || s.PausedItems != 0 || s.PendingJobs != 0 || s.DeadJobs != 0 {
+	if s.Connected || s.PaidOrders != 0 || s.CachedUnanswered != nil || s.IncomingMessages != nil ||
+		s.OpenClaims != nil || s.PausedItems != nil || s.PendingJobs != 0 || s.DeadJobs != 0 {
 		t.Fatalf("revoked authorization leaked cached metrics: %+v", s)
 	}
 }

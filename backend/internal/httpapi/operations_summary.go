@@ -1,6 +1,10 @@
 package httpapi
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/Fan6512/una-seller/backend/internal/meli"
+)
 
 func (a storeAPI) operationsSummary(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -13,7 +17,12 @@ func (a storeAPI) operationsSummary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	summary, err := a.service.OperationsSummary(r.Context(), owner)
+	store, site := r.URL.Query().Get("store_id"), r.URL.Query().Get("site")
+	if !meli.ValidOperationsFilter(store, site) {
+		writeError(w, http.StatusBadRequest, "invalid operations filter")
+		return
+	}
+	summary, err := a.service.OperationsOverview(r.Context(), owner, store, site)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "operations summary unavailable")
 		return

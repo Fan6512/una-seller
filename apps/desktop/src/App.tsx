@@ -21,7 +21,7 @@ import {
 } from "./collections";
 
 type ServiceStatus = "checking" | "online" | "offline";
-type IconName = "search" | "refresh" | "box" | "image" | "external" | "left" | "right" | "warning";
+type IconName = "search" | "refresh" | "box" | "image" | "external" | "left" | "right" | "warning" | "bell";
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   return (
@@ -33,6 +33,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
       {name === "external" && <><path d="M13 5h6v6M19 5l-9 9" /><path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" /></>}
       {name === "left" && <path d="m15 18-6-6 6-6" />}
       {name === "right" && <path d="m9 18 6-6-6-6" />}
+      {name === "bell" && <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>}
       {name === "warning" && <><path d="m12 3 10 18H2L12 3Z" /><path d="M12 9v5M12 17h.01" /></>}
     </svg>
   );
@@ -238,7 +239,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
   beginSync: () => (() => void) | undefined; syncCount: number;
 }) {
-  const [section, setSection] = useState<"collections" | "published" | "orders" | "operations">("collections");
+  const [section, setSection] = useState<"collections" | "published" | "orders" | "operations">("operations");
   const [workspaceTab,setWorkspaceTab] = useState<"inbox"|"products">("inbox");
   const [showTransferred,setShowTransferred] = useState(false);
   const [checked,setChecked] = useState<Set<string>>(()=>new Set());
@@ -471,7 +472,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("collections"); }}>工作台</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("published"); }}>已刊登商品</button>
           <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("orders"); }}>订单管理</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "operations"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("operations"); }}>运营中心</button>
+          <button type="button" className="logout-action" aria-pressed={!settings && section === "operations"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("operations"); }}><Icon name="bell" size={16} /> 运营中心</button>
           <button type="button" className="logout-action" aria-pressed={settings} onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("updates"); }}>{updates.update ? "设置 · 有更新" : "设置"}</button>
         </nav>
         <div className="topbar-spacer" />
@@ -520,7 +521,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         </>}
         {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} visible={!settings} /></div>
-          : section === "operations" ? (!settings && <OperationsPage />)
+          : section === "operations" ? (!settings && <OperationsPage onNavigate={target => { if (!leavingDirty()) return; setSection(target); }} />)
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1></div>
