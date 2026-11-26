@@ -83,7 +83,7 @@ type Worker struct {
 
 func NewWorker(inbox PostgresInbox, appID string, handlers map[string]Prepare) *Worker {
 	w := &Worker{inbox: inbox, appID: appID, handlers: make(map[string]Prepare), topics: []string{}}
-	for _, topic := range []string{"marketplace_orders", "marketplace_shipments", "marketplace_questions", "marketplace_messages"} {
+	for _, topic := range []string{"marketplace_orders", "marketplace_shipments", "marketplace_questions", "marketplace_messages", "marketplace_claims", "marketplace_items"} {
 		if prepare := handlers[topic]; prepare != nil {
 			w.handlers[topic] = prepare
 			w.topics = append(w.topics, topic)
@@ -96,7 +96,7 @@ func NewWorker(inbox PostgresInbox, appID string, handlers map[string]Prepare) *
 // accepted topic must have a real handler; otherwise a disabled deployment
 // could fill its global queue with jobs that cannot be consumed.
 func (w *Worker) ValidateActivation() error {
-	for _, topic := range []string{"marketplace_orders", "marketplace_shipments", "marketplace_questions", "marketplace_messages"} {
+	for _, topic := range []string{"marketplace_orders", "marketplace_shipments", "marketplace_questions", "marketplace_messages", "marketplace_claims", "marketplace_items"} {
 		if w.handlers[topic] == nil {
 			return errors.New("notification activation requires all accepted topic handlers")
 		}
