@@ -77,6 +77,13 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
   const selected = stores.filter(s => !scope || s.store_id === scope);
   const sites = [...new Set(selected.flatMap(s => s.sites ?? []))].sort();
   const currentRows = loadedScope === scopeKey ? summary : null;
+  // These existing counts are store-wide, not site-wide. Unknown or partial
+  // coverage must never be silently summed into a seemingly complete total.
+  const total = (key: (typeof metrics)[number][0]) => {
+    if (!currentRows || selected.length === 0 || (!scope && currentRows.truncated) ||
+        selected.some(store => !store.connected || store[key] == null)) return "—";
+    return selected.reduce((sum, store) => sum + (store[key] ?? 0), 0).toLocaleString("zh-CN");
+  };
   const list = (rows: WorkRow[], todos: boolean) => {
     const sorted = [...rows].sort((a, b) => {
       if (todos) {
@@ -95,28 +102,58 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
       </div>
     </li>)}</ul> : <p className="operations-note">当前范围暂无本地记录，不代表平台无待办。</p>;
   };
-  return <section className="operations-page">
-    <div className="page-heading"><div><h1>运营中心</h1><p>本地同步摘要 · 不代表平台全部数据或实时未读数</p></div>
-      <button type="button" className="refresh-button" disabled={loading} onClick={() => setRefresh(n => n + 1)}>刷新摘要</button>
+  return <section className="operations-page operations-dashboard">
+    <div className="page-heading operations-heading">
+      <div><h1>运营中心</h1><p>经营概览与待处理事项</p></div>
+      <button type="button" className="refresh-button" disabled={loading} onClick={() => setRefresh(n => n + 1)}>{loading ? "刷新中…" : "刷新"}</button>
     </div>
-    <div className="operations-filters">
-      <label>店铺 <select value={scope} onChange={e => { setScope(e.target.value); setSite(""); }}><option value="">全部店铺</option>{stores.map(s => <option key={s.store_id} value={s.store_id}>{s.nickname || "店铺"}</option>)}</select></label>
-      <label>待办 / 动态站点 <select value={site} onChange={e => setSite(e.target.value)}><option value="">全部站点</option>{sites.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+    <div className="operations-filter-row">
+      <div className="operations-filters">
+        <label>店铺 <select value={scope} onChange={e => { setScope(e.target.value); setSite(""); }}><option value="">全部店铺</option>{stores.map(s => <option key={s.store_id} value={s.store_id}>{s.nickname || "店铺"}</option>)}</select></label>
+        <label>待办 / 动态站点 <select value={site} onChange={e => setSite(e.target.value)}><option value="">全部站点</option>{sites.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+      </div>
+      <span className="operations-note operations-freshness">{currentRows ? "本地摘要 · " + date(currentRows.checked_at) + "（北京）" : loading ? "读取摘要中…" : "暂无当前范围摘要"}</span>
     </div>
-    <p className="operations-note" role="status">{loading ? "正在读取本地摘要…" : summary ? "读取时间（北京时间）：" + date(summary.checked_at) : "暂无摘要"}</p>
-    {error && <p role="alert" className="operations-error">{error}{summary ? " 保留上次读取的摘要。" : ""}</p>}
-    {summary?.truncated && <p className="operations-note">摘要最多显示100家店铺。</p>}
+    {error && <p role="alert" className="operations-error">{error}{currentRows ? " 保留上次读取的摘要。" : ""}</p>}
+    {summary?.truncated && <p className="operations-note">摘要最多显示100家店铺，全部店铺汇总暂不可用。</p>}
     {summary && stores.length === 0 && <p className="operations-note">尚未绑定店铺。</p>}
-    {selected.length > 0 && <p className="operations-note">以下为店铺整体缓存指标，不随站点筛选变化。— 表示尚无对应类型的本地观察记录。</p>}
-    {selected.map(store => <article className="operations-store" key={store.store_id}>
-      <div className="operations-store-header"><h2>{store.nickname || "店铺"}</h2><span>{store.connected ? "已验证连接" : "连接待确认"}</span></div>
-      {store.connected ? <div className="operations-metrics">{metrics.map(([key,label]) =>
-        <div className="operations-metric" key={key}><span>{label}</span><strong>{store[key] ?? "—"}</strong></div>
-      )}</div> : <p className="operations-note">当前授权不可用，暂不展示缓存指标。请前往设置检查店铺连接。</p>}
-    </article>)}
-    <div className="operations-work">
-      <article className="operations-store"><h2>待办事项</h2><p className="operations-note">按已知期限优先，最多30条。回复已同步的消息自动移出待办，新买家消息才重新列入；其他操作在对应模块处理。</p>{currentRows ? list(currentRows.todos, true) : <p className="operations-note">当前筛选暂无摘要。</p>}</article>
-      <article className="operations-store"><h2>最新动态</h2><p className="operations-note">最近30条本地观察；消息按会话最新消息时间，其余为本地记录更新时间。</p>{currentRows ? list(currentRows.activity, false) : <p className="operations-note">当前筛选暂无摘要。</p>}</article>
-    </div>
+
+    <section className="operations-section" aria-label="经营总览">
+      <div className="operations-section-heading"><h2>经营总览</h2><span className="operations-note">今日 · 北京时间</span></div>
+      <div className="operations-overview-cards">
+        <article className="operations-kpi operations-financial"><span>今日销售额</span><strong>—</strong><small>待接入订单销售汇总</small></article>
+        <article className="operations-kpi operations-financial"><span>今日利润</span><strong>—</strong><small>待真实回款与成本核算</small></article>
+      </div>
+      <div className="operations-section-heading operations-subheading"><h3>运营指标</h3><span className="operations-note">店铺整体缓存 · 不随站点筛选</span></div>
+      <div className="operations-overview-cards operations-count-cards">
+        {metrics.slice(0, 4).map(([key,label]) => <article className="operations-kpi" key={key}><span>{label}</span><strong>{total(key)}</strong></article>)}
+      </div>
+      <p className="operations-note operations-coverage">— 表示暂无完整可用数据；缓存指标不代表平台全部数据或实时未读数。</p>
+      {selected.length > 0 && <details className="operations-breakdown">
+        <summary>店铺指标明细与同步状态</summary>
+        {selected.map(store => <article className="operations-store" key={store.store_id}>
+          <div className="operations-store-header"><h3>{store.nickname || "店铺"}</h3></div>
+          {currentRows && store.connected ? <div className="operations-metrics">{metrics.map(([key,label]) =>
+            <div className="operations-metric" key={key}><span>{label}</span><strong>{store[key] ?? "—"}</strong></div>
+          )}</div> : <p className="operations-note">{!store.connected ? "当前授权不可用，请前往设置检查店铺连接。" : "当前范围尚未读取摘要。"}</p>}
+        </article>)}
+      </details>}
+    </section>
+
+    <section className="operations-section" aria-label="待办事项">
+      <div className="operations-section-heading"><h2>待办事项</h2><span className="operations-note">{currentRows ? "本地记录 " + currentRows.todos.length + " 条" : "—"}</span></div>
+      <article className="operations-list-panel">
+        <p className="operations-note">按已知期限优先，最多30条。回复已同步的消息自动移出待办，新买家消息才重新列入。</p>
+        {currentRows ? list(currentRows.todos, true) : <p className="operations-note">当前筛选暂无摘要。</p>}
+      </article>
+    </section>
+
+    <section className="operations-section" aria-label="最近动态">
+      <div className="operations-section-heading"><h2>最近动态</h2><span className="operations-note">{currentRows ? "本地记录 " + currentRows.activity.length + " 条" : "—"}</span></div>
+      <article className="operations-list-panel">
+        <p className="operations-note">最近30条本地观察；消息按会话最新消息时间，其余为本地记录更新时间。</p>
+        {currentRows ? list(currentRows.activity, false) : <p className="operations-note">当前筛选暂无摘要。</p>}
+      </article>
+    </section>
   </section>;
 }
