@@ -193,6 +193,28 @@ func TestNotificationPostgresACKAndCapacity(t *testing.T) {
 	assertACK(t, h, 403, testOrder, "999", testChildA, "ambiguous")
 	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET marketplaces='[{"user_id":"99012"}]' WHERE id=$1`, testStoreB)
 
+	// A busy admission lock must not ACK or persist an event before commit.
+	lockTx, err := p.DB.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback(ctx)
+	if _, err := lockTx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(queueAdmissionLock)); err != nil {
+		t.Fatal(err)
+	}
+	assertACK(t, h, 503, testShipment, "991", testChildA, "admission-blocked")
+	if err := lockTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1 AND resource_id='991'`, testStoreA)
+	assertACK(t, h, 200, testShipment, "991", testChildA, "admission-blocked")
+	assertACK(t, h, 200, testShipment, "991", testChildA, "admission-blocked")
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1 AND resource_id='991'`, testStoreA)
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND resource_id='991' AND generation=1`, testStoreA)
+	// Keep the existing capacity fixture's baseline unchanged.
+	mustExec(t, ctx, p, `DELETE FROM app.meli_notification_jobs WHERE store_id=$1 AND resource_id='991'`, testStoreA)
+	mustExec(t, ctx, p, `DELETE FROM app.meli_notification_inbox WHERE store_id=$1 AND resource_id='991'`, testStoreA)
+
 	// Let the admission precheck read the queue, then block its write transaction.
 	tx, err := p.DB.Begin(ctx)
 	if err != nil {

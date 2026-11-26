@@ -19,6 +19,9 @@ const Path = "/api/v1/mercadolibre/notifications"
 const ingressHeader = "X-Una-Webhook-Ingress"
 const maxBody = 16 << 10
 
+// Leave 100ms of the provider's 500ms ACK target for proxy/transport overhead.
+const ackBudget = 400 * time.Millisecond
+
 var (
 	ErrScope            = errors.New("notification scope not uniquely authorized")
 	ErrScopeUnavailable = errors.New("known notification scope temporarily unavailable")
@@ -172,7 +175,7 @@ func NewReceiverForTopics(appID, ingressToken string, sink Sink, topics []string
 			return
 		}
 		// Budget body reads and persistence together, with headroom for the proxy.
-		ctx, cancel := context.WithTimeout(r.Context(), 350*time.Millisecond)
+		ctx, cancel := context.WithTimeout(r.Context(), ackBudget)
 		defer cancel()
 		controller := http.NewResponseController(w)
 		deadline, _ := ctx.Deadline()

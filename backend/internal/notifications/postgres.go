@@ -62,8 +62,29 @@ func resolveScope(ctx context.Context, tx pgx.Tx, seller string) (storeScope, er
 }
 
 // Enqueue atomically records a unique delivery and advances its resource job.
-func (p PostgresInbox) Enqueue(ctx context.Context, e Event) error {
-	return p.enqueue(ctx, e, nil)
+func (p PostgresInbox) Enqueue(ctx context.Context, e Event) (err error) {
+	trace := newACKTrace()
+	defer func() { trace.report(err) }()
+	conn, err := p.DB.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	trace.next("begin")
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = p.enqueueInTxMeasured(ctx, tx, e, nil, nil, "webhook", trace); err != nil {
+		return err
+	}
+	trace.next("commit")
+	err = tx.Commit(ctx)
+	if err == nil {
+		trace.next("committed")
+	}
+	return err
 }
 
 func (p PostgresInbox) enqueue(ctx context.Context, e Event, expected *storeScope) error {
@@ -81,13 +102,18 @@ func (p PostgresInbox) enqueueScoped(ctx context.Context, e Event, expected *sto
 
 // Replay uses the same admission and generation update in its page transaction.
 func (p PostgresInbox) enqueueInTx(ctx context.Context, tx pgx.Tx, e Event, expected *storeScope, discovery *DiscoveryScope, provenance string) error {
-	if _, err := tx.Exec(ctx, `SET LOCAL synchronous_commit=on`); err != nil {
+	return p.enqueueInTxMeasured(ctx, tx, e, expected, discovery, provenance, nil)
+}
+
+func (p PostgresInbox) enqueueInTxMeasured(ctx context.Context, tx pgx.Tx, e Event, expected *storeScope, discovery *DiscoveryScope, provenance string, trace *ackTrace) error {
+	// Both transaction-local synchronous commit and the same admission lock
+	// must be established before reading authorization or capacity. Combine
+	// them in one database round trip; neither expression depends on the other.
+	trace.next("admission")
+	if _, err := tx.Exec(ctx, `SELECT set_config('synchronous_commit','on',true), pg_advisory_xact_lock($1)`, int64(queueAdmissionLock)); err != nil {
 		return err
 	}
-	// Admission serializes the capacity check across API processes.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(queueAdmissionLock)); err != nil {
-		return err
-	}
+	trace.next("scope")
 	scope, err := resolveScope(ctx, tx, e.UserID)
 	if err != nil {
 		return err
@@ -157,6 +183,7 @@ func (p PostgresInbox) enqueueInTx(ctx context.Context, tx pgx.Tx, e Event, expe
 			}
 		}
 	}
+	trace.next("dedupe_capacity")
 	var duplicate, full bool
 	err = tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -185,6 +212,7 @@ func (p PostgresInbox) enqueueInTx(ctx context.Context, tx pgx.Tx, e Event, expe
 	if full {
 		return ErrCapacity
 	}
+	trace.next("write")
 	_, err = tx.Exec(ctx, `
 		WITH receipt AS (
 			INSERT INTO app.meli_notification_inbox
