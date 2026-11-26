@@ -19,3 +19,20 @@ One page (3 pack envelopes, at most 120 IDs) per minute across the single proces
 Limitations: malformed/unstable provider pages retain checkpoint (no automatic skip); monitor stuck windows before activation. Initial history older than 24h is manual sync territory. No guarantee of recovering events outside API retention/overlap. Current authorization and mapping checked before search and before admission/progress. A dead-letter remains an unresolved event, not a successful order sync.
 
 If the provider reports total below the current offset, rewind the same fixed window to offset zero; retain the watermark. No other malformed response is interpreted as an empty page. Restart CI extends the original before/down/after fixture to include a partially drained discovery checkpoint.
+
+## 2026-11-26 final acceptance update
+
+- PASS: fixed a shared-TEST_DATABASE_URL hazard where leftovers from other
+  packages could win the oldest-due discovery reservation; discovery tests now
+  remove foreign stores before sweeping. Added
+  `TestDiscoveryToWorkerRoundtripPostgres`: a locally absent, never-webhooked
+  order is found by search, durably admitted (inbox source=compensation),
+  read back by the real worker handler, upserted into `meli_orders`, the job is
+  completed and the watermark advances. The desktop idle refresh reads only
+  local SQL (no official call) and pauses for hidden windows, dialogs, manual
+  operations and non-first pages.
+- NOT_RUN: live official `date_created.from/to`, `date_asc`, `offset`/`limit`
+  and pack envelope checks. The stored access token expired at
+  2026-11-25T23:10:46Z and refreshing it is out of scope; the endpoints and
+  pack shape were only re-verified against documentation and the existing
+  parser fixtures.

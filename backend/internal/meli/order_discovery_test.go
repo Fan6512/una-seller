@@ -1,8 +1,11 @@
 package meli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"testing"
 	"time"
@@ -47,5 +50,72 @@ func TestSearchDiscoveryOrdersPostgres(t *testing.T) {
 	}
 	if got := c.count(t, `SELECT count(*) FROM app.meli_order_syncs WHERE store_id=$1`, c.store); got != 0 {
 		t.Fatal("discovery modified manual cursor")
+	}
+}
+
+func TestDiscoveryToWorkerRoundtripPostgres(t *testing.T) {
+	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/marketplace/orders/8000011" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, orderPayload("8000011", "987654", "MLB", "700", "801", "paid", "2026-11-25T01:00:00Z"))
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// Shared TEST_DATABASE_URL hygiene: foreign stores would win the oldest-due
+	// discovery reservation and resolveScope uniqueness.
+	if _, err := c.db.Exec(ctx, `DELETE FROM app.meli_store_connections WHERE id<>$1::uuid`, c.store); err != nil {
+		t.Fatal(err)
+	}
+	inbox := notifications.PostgresInbox{DB: c.db}
+	search := func(_ context.Context, scope notifications.DiscoveryScope, from, to time.Time, offset int) (notifications.DiscoveryPage, error) {
+		if scope.ChildID != "987654" || offset != 0 || !from.Before(to) {
+			t.Errorf("unexpected discovery search scope %+v offset=%d", scope, offset)
+			return notifications.DiscoveryPage{}, notifications.ErrScope
+		}
+		return notifications.DiscoveryPage{IDs: []string{"8000011"}, Count: 1, Total: 1}, nil
+	}
+	if err := inbox.DiscoverySweep(ctx, "2069392825111111", search); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1
+AND topic='marketplace_orders' AND resource_id='8000011' AND source='compensation'`, c.store); got != 1 {
+		t.Fatal("discovered order not durably admitted")
+	}
+	worker := notifications.NewWorker(inbox, "2069392825111111", c.service.NotificationHandlers())
+	if err := worker.ValidateActivation(); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go worker.Run(runCtx, log.New(io.Discard, "", 0))
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var stored int
+		if err := c.db.QueryRow(ctx, `SELECT count(*) FROM app.meli_orders WHERE store_id=$1::uuid
+AND order_id='8000011' AND status='paid'`, c.store).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("worker never read back the discovered order")
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	stop()
+	if got := c.count(t, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1
+AND topic='marketplace_orders' AND resource_id='8000011'`, c.store); got != 0 {
+		t.Fatal("discovered job not completed")
+	}
+	if got := c.count(t, `SELECT count(*) FROM app.meli_order_discovery WHERE store_id=$1::uuid
+AND completed_to IS NOT NULL AND window_to IS NULL`, c.store); got != 1 {
+		t.Fatal("discovery watermark not advanced after completion")
 	}
 }

@@ -11,6 +11,11 @@ import (
 func seedDiscovery(t *testing.T, ctx context.Context, p PostgresInbox) {
 	t.Helper()
 	seedStores(t, ctx, p)
+	// TEST_DATABASE_URL is shared across packages. A sweep creates checkpoints
+	// for every verified mapping in the database, so leftovers from other
+	// packages would win the oldest-due reservation and break these assertions.
+	mustExec(t, ctx, p, `DELETE FROM app.meli_store_connections WHERE id NOT IN ($1,$2)`,
+		testStoreA, testStoreB)
 	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET marketplaces=
 		'[{"user_id":"99011","site_id":"MLB","logistic_type":"remote"}]' WHERE id=$1`, testStoreA)
 }
@@ -30,7 +35,7 @@ func TestDiscoveryPageCheckpointPostgres(t *testing.T) {
 		switch calls {
 		case 1:
 			from, to = start, end
-			if offset != 0 || !start.Before(end) || end.Sub(start) < 23 * time.Hour {
+			if offset != 0 || !start.Before(end) || end.Sub(start) < 23*time.Hour {
 				t.Fatal("invalid first window")
 			}
 			ids := make([]string, 10)
@@ -44,7 +49,7 @@ func TestDiscoveryPageCheckpointPostgres(t *testing.T) {
 			}
 			return DiscoveryPage{IDs: []string{"911"}, Count: 1, Total: 4}, nil
 		case 3:
-			if offset != 0 || !start.Equal(to.Add(-30 * time.Minute)) || !end.After(to) {
+			if offset != 0 || !start.Equal(to.Add(-30*time.Minute)) || !end.After(to) {
 				t.Fatal("completed window did not overlap")
 			}
 			return DiscoveryPage{IDs: []string{"911"}, Count: 1, Total: 1}, nil
