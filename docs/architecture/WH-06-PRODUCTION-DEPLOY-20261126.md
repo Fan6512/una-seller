@@ -36,3 +36,13 @@
 - 在生产主机用临时回环 Nginx 配置加载候选 Webhook 模板，校验官方 Global Selling 文档中的 92 个唯一 IPv4 地址。来自未授权 TCP 对端的 POST 即使伪造转发头和私有入口头，仍返回 403。生产配置 `nginx -t` 通过。临时实例已退出，真实官方来源投递和公网 ACK 压测 **NOT_RUN**。[Global Selling 通知文档](https://global-selling.mercadolibre.com/devsite/manage-sales-global-selling/receive-notifications)
 - 回滚件已校验。旧 API SHA-256 为 `eb6ec75c476dcddeaddcb984f2598b0cd03547f4df9c3b4b8657ca4ba6da4e84`。如需回滚 API，从备份目录校验旧二进制，在同目录暂存后原子换回，重启该 systemd 单元并复验健康。数据库恢复须单独决策，避免覆盖备份后业务数据。本次未触发回滚。
 - API 环境、systemd 单元及 Nginx 站点配置的哈希与切换前一致。Webhook、自动补偿和历史回放保持关闭。没有 Nginx reload、官方订阅变更或官方业务写入。
+
+## 阶段 D1 生产接收器启用
+
+2026-11-26 16:00（北京时间），在已上线的 `b1dd92ff` 启用仅 `marketplace_orders,marketplace_shipments` 的接收器和 Worker。自动补偿、历史回放及其他四主题关闭。此次只修改 API 环境与 Nginx，重启 UNA Seller API 并 reload Nginx。未重新构建或迁移。
+
+- 官方 Global Selling 公布的 92 个 IPv4 来源进入 Nginx ACL。以实际 TCP 对端为准，拒绝其他来源，每源限流 20 次/秒、突发 40、超限返回 503。[Global Selling 通知文档](https://global-selling.mercadolibre.com/devsite/manage-sales-global-selling/receive-notifications)
+- 主机内随机生成入口令牌，API 环境和 Nginx 入口 include 均由 root 以 0600 持久保存。后续维护复用原值。仅在丢失、泄露或明确批准轮换时，在服务器内部同期更新两处。
+- 公网健康 200。公网未授权 POST 与伪造来源/入口头 POST 均 403。回环缺令牌 403，正确令牌的非法报文 400。运行二进制哈希保持一致，服务 active，自动重启为 0。启用回执与回滚件存于 `/var/backups/una-seller/wh06-d1.9rCqtGn5`。需暂停时关闭 API 开关、撤回 Nginx location 与限流区，保留现有令牌供恢复。
+- 官方应用管理器的 UNA Seller 应用 ID 已与生产配置匹配。编辑订阅时触发账号二次验证，等待负责人通过验证。官方订阅未变更，生产接收器继续保持就绪。
+- 启用后只读观察收件箱、作业、回放及发现断点均为 0，订单计数 73。真实投递、ACK、持久化、Worker 消费、去重及业务更新验收 **NOT_RUN**。后续按日常真实业务样本验证。
