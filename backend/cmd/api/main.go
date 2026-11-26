@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,8 +53,9 @@ func main() {
 		log.Print("source collections migration applied")
 		return
 	}
-	if len(os.Args) > 1 {
-		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N]]")
+	replayCommand := len(os.Args) > 1 && os.Args[1] == "missed-feeds-replay"
+	if len(os.Args) > 1 && !replayCommand {
+		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N] | missed-feeds-replay OWNER_UUID STORE_UUID TOPIC]")
 	}
 	if os.Getenv("UNA_SELLER_CLOUD") == "1" && (dsn == "" || supabaseURL == "" || publishableKey == "") {
 		log.Fatal("cloud API requires DATABASE_URL, SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY")
@@ -90,6 +92,34 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid Mercado Libre OAuth config: %v", err)
 		}
+	}
+	if replayCommand {
+		if len(os.Args) != 5 || store == nil || meliService == nil ||
+			os.Getenv("MELI_WEBHOOK_ENABLED") != "1" || os.Getenv("MELI_MISSED_FEEDS_REPLAY_ENABLED") != "1" {
+			log.Fatal("missed feed replay requires explicit operator enablement, configured worker and OWNER_UUID STORE_UUID TOPIC")
+		}
+		topics, err := notifications.ParseEnabledTopics(os.Getenv("MELI_WEBHOOK_TOPICS"))
+		if err != nil || !slices.Contains(topics, os.Args[4]) {
+			log.Fatal("missed feed replay topic is not enabled")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		inbox := notifications.PostgresInbox{DB: store.DB}
+		if err := inbox.CheckActivationSchema(ctx); err != nil {
+			log.Fatal("notification activation schema preflight failed")
+		}
+		if err := meliService.EnableSharedOrderCoordination(ctx); err != nil {
+			log.Fatal("shared order coordination unavailable")
+		}
+		result, err := inbox.ReplayMissedFeedPage(ctx, id, os.Args[4], func(ctx context.Context, topic string, offset int) ([]byte, error) {
+			return meliService.FetchMissedFeedPage(ctx, os.Args[2], os.Args[3], topic, offset)
+		})
+		if err != nil {
+			// No provider body, token, resource ID or buyer data in operator logs.
+			log.Fatal("missed feed replay failed; reread durable checkpoint before retry, review authorization, contract, capacity and database")
+		}
+		log.Printf("missed feed replay offset=%d next_offset=%d records=%d cycle_complete=%t", result.Offset, result.NextOffset, result.Records, result.CycleComplete)
+		return
 	}
 	log.Printf("Una Seller API at http://%s (collections configured: %t; Mercado Libre OAuth configured: %t)", addr, store != nil, meliService != nil)
 	dictionary := cbtcategory.NewReader(dictionaryDir)
