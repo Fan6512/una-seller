@@ -12,6 +12,8 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import ListingFieldsEditor from "/src/ListingFieldsEditor.tsx";
+import { createFeedback } from "/src/operationFeedback.ts";
+import { OperationFeedbackContext } from "/src/operationFeedbackContext.ts";
 import PublishedListingEditor from "/src/PublishedListingEditor.tsx";
 import { initialListingFields, validateListingFields } from "/src/listingFields.ts";
 import { setSiteTitleMode } from "/src/titleModePreference.ts";
@@ -132,7 +134,10 @@ const input = (node, value) => flushSync(() => {
 const switchCategory = id => input(document.querySelector('input[placeholder="例如 CBT12345"]'), id);
 try {
   const root = createRoot(document.querySelector("main"));
-  flushSync(() => root.render(React.createElement(Fixture)));
+  const feedback = createFeedback(() => {});
+  flushSync(() => root.render(React.createElement(OperationFeedbackContext.Provider, {
+    value: feedback,
+  }, React.createElement(Fixture))));
   const brand = await loaded("label", "Brand");
   assert(brand.querySelector("input").getAttribute("aria-required") === "true", "required text missing");
   assert((await loaded("label","Model · 必填")).querySelector("input").getAttribute("aria-required")==="true","official MODEL required flag lost");
