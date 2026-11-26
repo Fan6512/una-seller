@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestOrderReadForegroundPriority(t *testing.T) {
@@ -168,7 +170,14 @@ func TestSharedOrderReadRequiresDatabase(t *testing.T) {
 	}))
 	defer server.Close()
 	s.apiURL = server.URL
-	db.Close()
+	// Close only the service's fault-injection pool. setupRefreshTest owns
+	// the original pool and still needs it to remove its fixtures.
+	outageDB, err := pgxpool.NewWithConfig(ctx, db.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.db = outageDB
+	outageDB.Close()
 	var raw json.RawMessage
 	if _, err := s.orderGET(ctx, "fixture", "/marketplace/orders/123", &raw); err == nil {
 		t.Fatal("read succeeded without the coordination database")

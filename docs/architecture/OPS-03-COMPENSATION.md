@@ -40,3 +40,7 @@ If the provider reports total below the current offset, rewind the same fixed wi
   2026-11-25T23:10:46Z and refreshing it is out of scope; the endpoints and
   pack shape were only re-verified against documentation and the existing
   parser fixtures.
+
+## 2026-11-26 fixture lifecycle follow-up
+
+Exact HEAD 889cd8e CI 45750091142 failed five discovery guards; local clean PG17 reproduction confirms fixtures can leak even in serial suites. Source review identifies a concrete root cause in TestSharedOrderReadRequiresDatabase: closing the fixture pool to inject a database outage makes setupRefreshTest's later cleanup fail silently. Use a separate fault-injection pool and keep the fixture pool open. Refresh and HTTP listing fixture cleanup now reports errors and deletes only the generated owner’s data. Preserve non-destructive discovery guards, generation regression and stronger E2E. No runtime code or migration changes in this follow-up. Fresh exact-HEAD CI/full PG17 validation required; if additional fixture leaks are reported, fix their owner-scoped cleanup rather than clearing unrelated stores. Actual official search and Windows interaction remain NOT_RUN.
