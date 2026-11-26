@@ -517,7 +517,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           }} />}
         </>}
         {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
-          : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+          : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} visible={!settings} /></div>
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1></div>

@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// Compensation only rechecks known paid orders and non-final shipments.
-// It does not discover orders absent from the database.
+// Known-resource compensation is independent of the new-order discovery
+// cursor. It also covers payment-pending orders that may become paid.
 type compensationCandidate struct {
 	scope                 storeScope
 	user, topic, resource string
@@ -22,9 +22,9 @@ func (p PostgresInbox) CompensationSweep(ctx context.Context, appID string) erro
 	}
 	rows, err := p.DB.Query(ctx, `WITH eligible AS (
 		SELECT c.id AS store_id,c.owner_user_id,c.seller_id AS parent_id,
-		       o.seller_id AS child_id,o.order_id,o.shipment_id,o.updated_at,o.shipment_snapshot
+		       o.seller_id AS child_id,o.order_id,o.shipment_id,o.updated_at,o.shipment_snapshot,o.status
 		FROM app.meli_orders o JOIN app.meli_store_connections c ON c.id=o.store_id
-		WHERE c.status='connected' AND c.marketplaces_status='verified' AND o.status='paid'
+		WHERE c.status='connected' AND c.marketplaces_status='verified' AND o.status IN ('paid','payment_required','payment_in_process','confirmed')
 		  AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.marketplaces) m(value)
 		    WHERE m.value->>'user_id'=o.seller_id AND m.value->>'site_id'=o.site_id
 		      AND m.value->>'logistic_type'=o.logistic_type)
@@ -36,7 +36,7 @@ func (p PostgresInbox) CompensationSweep(ctx context.Context, appID string) erro
 		SELECT store_id,owner_user_id,parent_id,child_id,'marketplace_shipments',shipment_id,
 		       CASE WHEN shipment_snapshot->>'shipment_id'=shipment_id
 		         THEN (shipment_snapshot->>'checked_at')::timestamptz END,interval '60 minutes'
-		FROM eligible WHERE shipment_id ~ '^[1-9][0-9]{0,29}$'
+		FROM eligible WHERE status='paid' AND shipment_id ~ '^[1-9][0-9]{0,29}$'
 		  AND (shipment_snapshot->>'shipment_id' IS DISTINCT FROM shipment_id
 		    OR COALESCE(shipment_snapshot->>'status','') NOT IN ('delivered','cancelled'))
 	), due AS (
@@ -103,7 +103,7 @@ func (p PostgresInbox) CompensationSweep(ctx context.Context, appID string) erro
 
 // One capped sweep per minute, no catch-up storm on restart. Official GETs
 // remain in the existing worker and its shared rate gate.
-func (p PostgresInbox) RunCompensation(ctx context.Context, appID string, logger *log.Logger) {
+func (p PostgresInbox) RunCompensation(ctx context.Context, appID string, logger *log.Logger, search DiscoverySearch) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -111,8 +111,14 @@ func (p PostgresInbox) RunCompensation(ctx context.Context, appID string, logger
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, 25*time.Second)
+			err := p.DiscoverySweep(discoveryCtx, appID, search)
+			cancelDiscovery()
+			if err != nil && !errors.Is(err, ErrCapacity) {
+				logger.Print("order discovery sweep unavailable; progress retained")
+			}
 			sweepCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			err := p.CompensationSweep(sweepCtx, appID)
+			err = p.CompensationSweep(sweepCtx, appID)
 			cancel()
 			if err != nil {
 				logger.Print("notification compensation sweep unavailable")

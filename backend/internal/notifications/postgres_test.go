@@ -477,6 +477,13 @@ func TestNotificationPostgresRestart(t *testing.T) {
 		if err := w.retry(ctx, cooling, &RateLimited{RetryAfter: time.Hour}); err != nil {
 			t.Fatal(err)
 		}
+		// Preserve an actual partially drained discovery page across the same
+		// database process restart. No provider call is needed to resume IDs.
+		mustExec(t, ctx, p, `INSERT INTO app.meli_order_discovery
+			(store_id,owner_user_id,parent_seller_id,application_id,site_id,logistic_type,seller_id,
+			 completed_to,window_from,window_to,next_offset,pending_ids,pending_count,pending_more)
+			VALUES($1,$2,$3,$4,'MLB','remote',$5,'2026-11-20T00:00:00Z','2026-11-19T23:30:00Z',
+			 '2026-11-20T01:00:00Z',3,ARRAY['901','902'],2,true)`, testStoreA, testOwnerA, testParentA, testApp, testChildA)
 		// The shared application-wide coordinator must also survive a true restart.
 		mustExec(t, ctx, p, `INSERT INTO app.meli_order_read_coordination(application_id,retry_until)
 VALUES($1,now()+interval '1 hour') ON CONFLICT(application_id) DO UPDATE SET retry_until=EXCLUDED.retry_until`, testApp)
@@ -490,6 +497,10 @@ VALUES($1,now()+interval '1 hour') ON CONFLICT(application_id) DO UPDATE SET ret
 	case "after":
 		defer cleanStores(t, ctx, p)
 		defer mustExec(t, ctx, p, `DELETE FROM app.meli_order_read_coordination WHERE application_id=$1`, testApp)
+		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_order_discovery WHERE store_id=$1
+			AND next_offset=3 AND pending_ids=ARRAY['901','902'] AND pending_count=2 AND pending_more
+			AND completed_to='2026-11-20T00:00:00Z'::timestamptz
+			AND window_to='2026-11-20T01:00:00Z'::timestamptz`, testStoreA)
 		assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_order_read_coordination WHERE application_id=$1 AND retry_until>now()`, testApp)
 		assertCount(t, ctx, p, 2, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1`, testStoreA)
 		assertACK(t, h, 200, testOrder, "888", testChildA, "crash")

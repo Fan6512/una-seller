@@ -140,7 +140,16 @@ func main() {
 		handler = mux
 		go worker.Run(context.Background(), log.Default())
 		if os.Getenv("MELI_COMPENSATION_ENABLED") == "1" {
-			go inbox.RunCompensation(context.Background(), id, log.Default())
+			checkCtx, checkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			var ready bool
+			err := db.QueryRow(checkCtx, `SELECT to_regclass('app.meli_order_discovery') IS NOT NULL
+				AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='app'
+					AND table_name='meli_notification_inbox' AND column_name='source')`).Scan(&ready)
+			checkCancel()
+			if err != nil || !ready {
+				log.Fatal("order compensation migrations required")
+			}
+			go inbox.RunCompensation(context.Background(), id, log.Default(), meliService.SearchDiscoveryOrders)
 		}
 	}
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}

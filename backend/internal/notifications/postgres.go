@@ -67,6 +67,13 @@ func (p PostgresInbox) Enqueue(ctx context.Context, e Event) error {
 }
 
 func (p PostgresInbox) enqueue(ctx context.Context, e Event, expected *storeScope) error {
+	return p.enqueueScoped(ctx, e, expected, nil)
+}
+
+// Discovery must distinguish a durable outcome from temporary backpressure.
+// Unlike a periodic known-resource hint, a discovered order cannot be silently
+// suppressed by a full queue or a cooldown before advancing its search cursor.
+func (p PostgresInbox) enqueueScoped(ctx context.Context, e Event, expected *storeScope, discovery *DiscoveryScope) error {
 	return pgx.BeginFunc(ctx, p.DB, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL synchronous_commit=on`); err != nil {
 			return err
@@ -85,30 +92,63 @@ func (p PostgresInbox) enqueue(ctx context.Context, e Event, expected *storeScop
 				return ErrScope
 			}
 			source = "compensation"
-			var suppress bool
-			err := tx.QueryRow(ctx, `SELECT
-				EXISTS (SELECT 1 FROM app.meli_notification_jobs
-				  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
-				    AND application_id=$4 AND topic=$5 AND resource_id=$6
-				    AND (dead_at IS NULL OR dead_at>now()-interval '24 hours'))
-				OR EXISTS (SELECT 1 FROM app.meli_notification_inbox
-				  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
-				    AND application_id=$4 AND topic=$5 AND resource_id=$6
-				    AND enqueued_at>now()-CASE WHEN $5='marketplace_orders'
-				      THEN interval '30 minutes' ELSE interval '60 minutes' END)
-				OR (SELECT count(*) FROM app.meli_notification_jobs
-				  WHERE application_id=$4 AND dead_at IS NULL)>=32
-				OR EXISTS (SELECT 1 FROM app.meli_order_read_coordination
-				  WHERE application_id=$4 AND retry_until>now())
-				OR EXISTS (SELECT 1 FROM app.meli_notification_cooldowns
-				  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
-				    AND application_id=$4 AND available_at>now())`,
-				scope.storeID, scope.ownerID, scope.parentID, e.ApplicationID, e.Topic, e.ResourceID).Scan(&suppress)
-			if err != nil {
-				return err
-			}
-			if suppress {
-				return nil
+			if discovery != nil {
+				if err := checkDiscoveryMapping(ctx, tx, *discovery); err != nil {
+					return err
+				}
+				var covered, blocked bool
+				err := tx.QueryRow(ctx, `SELECT
+					EXISTS (SELECT 1 FROM app.meli_orders WHERE store_id=$1
+					  AND site_id=$7 AND logistic_type=$8 AND seller_id=$9 AND order_id=$6)
+					OR EXISTS (SELECT 1 FROM app.meli_notification_jobs
+					  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
+					    AND application_id=$4 AND topic=$5 AND resource_id=$6
+					    AND notification_user_id IN ($3,$9)
+					    AND (dead_at IS NULL OR dead_at>now()-interval '24 hours')),
+					(SELECT count(*) FROM app.meli_notification_jobs
+					  WHERE application_id=$4 AND dead_at IS NULL)>=32
+					OR EXISTS (SELECT 1 FROM app.meli_order_read_coordination
+					  WHERE application_id=$4 AND retry_until>now())
+					OR EXISTS (SELECT 1 FROM app.meli_notification_cooldowns
+					  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
+					    AND application_id=$4 AND available_at>now())`,
+					scope.storeID, scope.ownerID, scope.parentID, e.ApplicationID, e.Topic, e.ResourceID,
+					discovery.Site, discovery.Logistic, discovery.ChildID).Scan(&covered, &blocked)
+				if err != nil {
+					return err
+				}
+				if covered {
+					return nil
+				}
+				if blocked {
+					return ErrCapacity
+				}
+			} else {
+				var suppress bool
+				err := tx.QueryRow(ctx, `SELECT
+					EXISTS (SELECT 1 FROM app.meli_notification_jobs
+					  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
+					    AND application_id=$4 AND topic=$5 AND resource_id=$6
+					    AND (dead_at IS NULL OR dead_at>now()-interval '24 hours'))
+					OR EXISTS (SELECT 1 FROM app.meli_notification_inbox
+					  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
+					    AND application_id=$4 AND topic=$5 AND resource_id=$6
+					    AND enqueued_at>now()-CASE WHEN $5='marketplace_orders'
+					      THEN interval '30 minutes' ELSE interval '60 minutes' END)
+					OR (SELECT count(*) FROM app.meli_notification_jobs
+					  WHERE application_id=$4 AND dead_at IS NULL)>=32
+					OR EXISTS (SELECT 1 FROM app.meli_order_read_coordination
+					  WHERE application_id=$4 AND retry_until>now())
+					OR EXISTS (SELECT 1 FROM app.meli_notification_cooldowns
+					  WHERE store_id=$1 AND owner_user_id=$2 AND parent_seller_id=$3
+					    AND application_id=$4 AND available_at>now())`,
+					scope.storeID, scope.ownerID, scope.parentID, e.ApplicationID, e.Topic, e.ResourceID).Scan(&suppress)
+				if err != nil {
+					return err
+				}
+				if suppress {
+					return nil
+				}
 			}
 		}
 		var duplicate, full bool

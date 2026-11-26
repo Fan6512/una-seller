@@ -75,3 +75,22 @@ func TestCompensationCooldownBacklogAndRestart(t *testing.T) {
 	}
 	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND resource_id='910'`, testStoreA)
 }
+
+func TestKnownPaymentPendingOrderCompensation(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET marketplaces=
+		'[{"user_id":"99011","site_id":"MLB","logistic_type":"remote"}]' WHERE id=$1`, testStoreA)
+	mustExec(t, ctx, p, `INSERT INTO app.meli_orders
+		(store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,updated_at)
+		VALUES($1,'MLB','remote',$2,'901','payment_required','USD',10,now()-interval '2 hours',
+		 now()-interval '2 hours','991',now()-interval '2 hours')`, testStoreA, testChildA)
+	if err := p.CompensationSweep(ctx, testApp); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1
+		AND topic='marketplace_orders' AND resource_id='901'`, testStoreA)
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1
+		AND topic='marketplace_shipments'`, testStoreA)
+}
