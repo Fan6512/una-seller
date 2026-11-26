@@ -84,3 +84,27 @@ func TestReadbackIdentityAndTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateHintsPreservePartialIDs(t *testing.T) {
+	p, err := Prepare(sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := ReadbackScope{ParentSellerID: "100", SiteSellerID: "200", Site: "MLM", Logistic: "remote"}
+	first := `{"seller_id":100,"site_id":"CBT","siteless_user_product_id":"U12","siteless_family_id":9007199254740993,"site_items":[{"item_id":"MLM102","seller_id":200,"site_id":"MLM","user_product_id":"MLMU12","logistic_type":"remote"}]}`
+	second := `{"seller_id":100,"site_id":"CBT","siteless_user_product_id":"U11","siteless_family_id":9007199254740993,"site_items":[{"site_id":"MLM","logistic_type":"remote","errors":[{"code":"item.max_limit_publish"}]}]}`
+	got, err := ExtractCreateHints(p, scope, []byte("["+first+","+second+"]"))
+	if err != nil || !got.Incomplete || len(got.Candidates) != 2 || got.Candidates[0].SitelessFamilyID != "9007199254740993" || got.Candidates[0].ItemID != "MLM102" || got.Candidates[1].SitelessUPID != "U11" || got.Candidates[1].ItemID != "" {
+		t.Fatalf("partial response lost identity: %+v %v", got, err)
+	}
+	in := sample()
+	in.Variants = in.Variants[:1]
+	single, err := Prepare(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := ExtractCreateHints(single, scope, []byte(first))
+	if err != nil || one.Incomplete || len(one.Candidates) != 1 {
+		t.Fatalf("single response not recognized: %+v %v", one, err)
+	}
+}
