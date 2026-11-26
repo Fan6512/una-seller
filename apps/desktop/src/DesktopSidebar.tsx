@@ -37,7 +37,7 @@ export default function DesktopSidebar({ email, section, accountSelected, settin
     <div className="desktop-sidebar-brand"><span className="brand-mark" aria-hidden="true">U</span><strong>UNA Seller</strong></div>
     <nav className="desktop-sidebar-nav" aria-label="主导航">
       {desktopSections.map(item => <button key={item.id} type="button" className="desktop-nav-item"
-        aria-current={section === item.id ? "page" : undefined} title={item.label}
+        aria-current={section === item.id ? "page" : undefined} aria-label={item.label} title={item.label}
         onClick={() => onNavigate(item.id)}>
         <NavIcon name={item.id}/><span>{item.label}</span>
       </button>)}

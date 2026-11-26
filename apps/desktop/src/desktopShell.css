@@ -49,13 +49,14 @@
 .desktop-module-panel h2 { font-size: 15px; margin: 0 0 8px; }
 .desktop-module-panel p { color: var(--ui-muted); font-size: 13px; line-height: 1.6; }
 @media (max-width: 1000px) {
-  .desktop-shell { --desktop-sidebar-width: 66px; }
+  .desktop-shell { --desktop-sidebar-width: 84px; }
   .desktop-sidebar { padding: 14px 7px 10px; }
   .desktop-sidebar-brand { justify-content: center; padding: 0; margin-bottom: 18px; }
   .desktop-sidebar-brand strong, .desktop-nav-item span, .desktop-profile-text { display: none; }
   .desktop-nav-item { padding: 8px; justify-content: center; }
-  .desktop-sidebar-footer { flex-direction: column; gap: 6px; }
-  .desktop-profile { flex: none; padding: 4px; }
+  .desktop-sidebar-footer { gap: 2px; }
+  .desktop-profile { flex: 0 0 32px; padding: 1px; justify-content: center; }
+  .desktop-settings-icon { flex-basis: 32px; }
   .desktop-content > .desktop-toolbar { padding: 0 14px; gap: 8px; }
   .desktop-content > .main-content { padding: 18px 14px 24px; }
 }
