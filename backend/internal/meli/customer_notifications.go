@@ -23,6 +23,30 @@ type customerNotice struct {
 
 var customerItemID = regexp.MustCompile(`^CBT[0-9]{1,30}$`)
 
+// Official message payloads quote resource and participant IDs in some
+// responses and send numbers in others. Accept both without weakening the
+// numeric allowlist applied afterwards.
+type notificationID string
+
+func (id *notificationID) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*id = notificationID(value)
+		return nil
+	}
+	var value json.Number
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*id = notificationID(value.String())
+	return nil
+}
+
+func (id notificationID) String() string { return string(id) }
+
 func customerSeller(auth AuthorizedStore, user, seller, site string) (string, error) {
 	if !auth.Verified || !orderNumber(seller) || seller == "0" || !orderSitePattern.MatchString(site) || site == "CBT" {
 		return "", notifications.ErrScope
@@ -86,17 +110,17 @@ func decodeCustomerNotice(raw json.RawMessage, job notifications.Job, auth Autho
 				Text       string `json:"text"`
 				Translated string `json:"text_translated"`
 				From       struct {
-					UserID json.Number `json:"user_id"`
+					UserID notificationID `json:"user_id"`
 				} `json:"from"`
 				To struct {
-					UserID json.Number `json:"user_id"`
+					UserID notificationID `json:"user_id"`
 				} `json:"to"`
 				Date struct {
 					Created time.Time `json:"created"`
 				} `json:"message_date"`
 				Resources []struct {
-					ID   json.Number `json:"id"`
-					Name string      `json:"name"`
+					ID   notificationID `json:"id"`
+					Name string         `json:"name"`
 				} `json:"message_resources"`
 			} `json:"messages"`
 		}

@@ -124,3 +124,20 @@ func TestCustomerMessageRejectsWrongParticipant(t *testing.T) {
 		t.Fatalf("unrelated participants accepted: %v", err)
 	}
 }
+
+func TestCustomerMessageAcceptsQuotedIDs(t *testing.T) {
+	auth := AuthorizedStore{SellerID: "1234", Verified: true, Markets: []Marketplace{
+		{UserID: "987654", SiteID: "MLB", LogisticType: "remote"},
+	}}
+	job := notifications.Job{Topic: "marketplace_messages", ResourceID: customerMessageID, NotificationUserID: "1234"}
+	raw := json.RawMessage(fmt.Sprintf(`{"messages":[{"id":%q,"site_id":"MLB","status":"available","text":"message",
+"from":{"user_id":"111"},"to":{"user_id":"987654"},"message_date":{"created":"2026-11-20T00:00:00Z"},
+"message_resources":[{"name":"packs","id":"700"},{"name":"sellers","id":"987654"}]}]}`, customerMessageID))
+	n, err := decodeCustomerNotice(raw, job, auth, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.seller != "987654" || n.related != "700" || n.direction != "incoming" {
+		t.Fatalf("quoted IDs decoded incorrectly: %+v", n)
+	}
+}
