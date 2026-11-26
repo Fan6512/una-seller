@@ -253,18 +253,14 @@ func (s *Store) UpdateOwnProduct(ctx context.Context, owner, id string, in OwnPr
 	}
 	var listingValue any
 	if in.ListingFields != nil {
-		var previous ListingFields
-		if in.ListingFields.needsPrevious() {
-			current, err := s.GetOwnProduct(ctx, owner, id)
-			if err != nil {
-				return OwnProduct{}, err
-			}
-			if current.Revision != in.ExpectedRevision {
-				return OwnProduct{}, ErrDraftConflict
-			}
-			previous = current.ListingFields
+		current, err := s.GetOwnProduct(ctx, owner, id)
+		if err != nil {
+			return OwnProduct{}, err
 		}
-		next, err := in.ListingFields.prepareForSave(previous)
+		if current.Revision != in.ExpectedRevision {
+			return OwnProduct{}, ErrDraftConflict
+		}
+		next, err := in.ListingFields.prepareForSave(current.ListingFields)
 		if err != nil {
 			return OwnProduct{}, err
 		}

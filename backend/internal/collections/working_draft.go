@@ -91,7 +91,7 @@ func (s *Store) SaveWorkingDraft(ctx context.Context, owner, id string, in Worki
 	}
 	if in.ListingFields != nil {
 		var previous ListingFields
-		if in.ExpectedRevision > 0 && in.ListingFields.needsPrevious() {
+		if in.ExpectedRevision > 0 {
 			draft, err := s.GetWorkingDraft(ctx, owner, id)
 			if err != nil {
 				return WorkingDraft{}, err
