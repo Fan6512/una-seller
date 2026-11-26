@@ -23,20 +23,24 @@ func decodeMissedFeedPage(raw []byte, appID, topic string) ([]Event, error) {
 		return nil, bad
 	}
 	var page struct {
-		Messages []struct {
-			ID            string          `json:"_id"`
-			ApplicationID json.RawMessage `json:"application_id"`
-			UserID        json.RawMessage `json:"user_id"`
-			Topic         string          `json:"topic"`
-			Resource      string          `json:"resource"`
-			Received      string          `json:"received"`
-		} `json:"messages"`
+		Messages json.RawMessage `json:"messages"`
 	}
-	if len(raw) > 2<<20 || json.Unmarshal(raw, &page) != nil || page.Messages == nil || len(page.Messages) > MissedFeedPageSize {
+	// CBT returns an explicit null for an empty page. A missing field is
+	// still a malformed envelope and must not advance or reset the cursor.
+	var messages []struct {
+		ID            string          `json:"_id"`
+		ApplicationID json.RawMessage `json:"application_id"`
+		UserID        json.RawMessage `json:"user_id"`
+		Topic         string          `json:"topic"`
+		Resource      string          `json:"resource"`
+		Received      string          `json:"received"`
+	}
+	if len(raw) > 2<<20 || json.Unmarshal(raw, &page) != nil || len(page.Messages) == 0 ||
+		json.Unmarshal(page.Messages, &messages) != nil || len(messages) > MissedFeedPageSize {
 		return nil, bad
 	}
-	events := make([]Event, 0, len(page.Messages))
-	for _, row := range page.Messages {
+	events := make([]Event, 0, len(messages))
+	for _, row := range messages {
 		user := id(row.UserID)
 		if id(row.ApplicationID) != appID || user == "" || row.Topic != topic ||
 			row.ID == "" || len(row.ID) > 256 {
