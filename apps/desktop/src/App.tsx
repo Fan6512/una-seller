@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import DesktopSidebar, { desktopSections, type DesktopSection } from "./DesktopSidebar";
+import "./desktopShell.css";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
@@ -239,7 +241,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
   beginSync: () => (() => void) | undefined; syncCount: number;
 }) {
-  const [section, setSection] = useState<"collections" | "published" | "orders" | "operations">("operations");
+  const [section, setSection] = useState<DesktopSection>("operations");
   const [workspaceTab,setWorkspaceTab] = useState<"inbox"|"products">("inbox");
   const [showTransferred,setShowTransferred] = useState(false);
   const [checked,setChecked] = useState<Set<string>>(()=>new Set());
@@ -464,17 +466,17 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   const pageNumber = Math.floor(offset / PAGE_SIZE) + 1;
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">U</span><span className="brand-name">Una Seller</span></div>
-        <span className="topbar-divider" aria-hidden="true" />
-        <nav aria-label="商品工作台">
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("collections"); }}>工作台</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("published"); }}>已刊登商品</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("orders"); }}>订单管理</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "operations"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("operations"); }}><Icon name="bell" size={16} /> 运营中心</button>
-          <button type="button" className="logout-action" aria-pressed={settings} onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("updates"); }}>{updates.update ? "设置 · 有更新" : "设置"}</button>
-        </nav>
+    <div className="app-shell desktop-shell">
+      <DesktopSidebar email={email} section={settings ? null : section}
+        accountSelected={settings && settingsSection === "account"}
+        settingsSelected={settings && settingsSection !== "account"}
+        updateAvailable={Boolean(updates.update)}
+        onNavigate={target => { if (!leavingDirty()) return; setSettings(false); setSection(target); }}
+        onAccount={() => { if (!leavingDirty()) return; setSettings(true); setSettingsSection("account"); }}
+        onSettings={() => { if (!leavingDirty()) return; setSettings(true); setSettingsSection("updates"); }} />
+      <div className="desktop-content">
+      <header className="topbar desktop-toolbar">
+        <span className="desktop-toolbar-label">{settings ? (settingsSection === "account" ? "个人中心" : "设置") : desktopSections.find(item => item.id === section)?.label}</span>
         <div className="topbar-spacer" />
         <span className={"connection-indicator " + connectionStatus} role="status">
           <span className="connection-dot" aria-hidden="true" />
@@ -489,8 +491,6 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             : storeHealth.status === "connected" ? "店铺已连接"
               : storeHealth.status === "empty" ? "未绑定店铺" : "店铺需检查"}
         </button>
-        <span className="account-email" title={email}>{email || "当前用户"}</span>
-        <button type="button" className="logout-action" onClick={() => { if(leavingDirty())onLogout(); }}>退出登录</button>
       </header>
 
       <main className="main-content">
@@ -509,7 +509,10 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />
             {diagnosticsEnabled && <DevelopmentDiagnostics />}
           </>}
-          {settingsSection === "account" && <AccountSettingsPage email={email} />}
+          {settingsSection === "account" && <>
+            <AccountSettingsPage email={email} />
+            <div className="desktop-account-actions"><button type="button" className="logout-action" onClick={() => { if(leavingDirty())onLogout(); }}>退出登录</button></div>
+          </>}
           {settingsSection === "titles" && <TitleModeSettingsPage />}
           {settingsSection === "stores" && <StoresPage onConnectionChecked={(id) => {
             const latest = cachedStores();
@@ -522,6 +525,14 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
           : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} visible={!settings} /></div>
           : section === "operations" ? (!settings && <OperationsPage onNavigate={target => { if (!leavingDirty()) return; setSection(target); }} />)
+          : section === "afterSales" ? (!settings && <section className="desktop-module-preview">
+              <div className="page-heading"><h1>售后管理</h1></div>
+              <div className="desktop-module-panel">
+                <h2>客服与售后</h2>
+                <p>售前问答、买家消息和投诉纠纷管理将逐步开放。目前可在运营中心查看已支持的待办与动态。</p>
+                <button type="button" className="refresh-button" onClick={() => { if(leavingDirty())setSection("operations"); }}>查看运营中心</button>
+              </div>
+            </section>)
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1></div>
@@ -614,6 +625,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         </>}
         </>}
       </main>
+      </div>
     </div>
   );
 }
