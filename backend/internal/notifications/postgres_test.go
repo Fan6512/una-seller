@@ -98,6 +98,10 @@ func eventBody(topic, resource, seller, event string) string {
 		path = "questions"
 	case "marketplace_messages":
 		path = "messages"
+	case "marketplace_claims":
+		path = "claims"
+	case "marketplace_items":
+		path = "items"
 	}
 	return fmt.Sprintf(`{"_id":%q,"user_id":%q,"application_id":%q,"topic":%q,"resource":"/marketplace/%s/%s","received":"2026-01-01T01:00:00Z"}`,
 		event, seller, testApp, topic, path, resource)
@@ -691,6 +695,32 @@ func TestCustomerTopicsDurableAdmissionPostgres(t *testing.T) {
 			Apply: func(context.Context, LocalWriter) error { return nil }}, nil
 	}
 	w := NewWorker(p, testApp, map[string]Prepare{"marketplace_questions": prepare, "marketplace_messages": prepare})
+	for range 2 {
+		if err := w.runOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1`, testStoreA)
+}
+
+func TestStatusTopicsDurableAdmissionPostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	assertACK(t, h, 200, "marketplace_claims", "123", testChildA, "claim")
+	assertACK(t, h, 200, "marketplace_items", "MLB123", testChildA, "item")
+	assertACK(t, h, 200, "marketplace_items", "MLB123", testChildA, "item")
+	assertACK(t, h, 400, "marketplace_items", "CBT123", testChildA, "parent-item")
+	if err := migrations.Apply(ctx, p.DB); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, ctx, p, 2, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND generation=1`, testStoreA)
+	prepare := func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID,
+			Apply: func(context.Context, LocalWriter) error { return nil }}, nil
+	}
+	w := NewWorker(p, testApp, map[string]Prepare{"marketplace_claims": prepare, "marketplace_items": prepare})
 	for range 2 {
 		if err := w.runOnce(ctx); err != nil {
 			t.Fatal(err)

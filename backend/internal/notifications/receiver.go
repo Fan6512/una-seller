@@ -24,6 +24,7 @@ var (
 	ErrScopeUnavailable = errors.New("known notification scope temporarily unavailable")
 	idPattern           = regexp.MustCompile(`^[1-9][0-9]{0,29}$`)
 	messageIDPattern    = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
+	itemIDPattern       = regexp.MustCompile(`^[A-Z]{3}[1-9][0-9]{0,29}$`)
 )
 
 // Keep the receiver and activation registry on the same fixed allowlist.
@@ -32,16 +33,22 @@ var topicPaths = map[string]string{
 	"marketplace_shipments": "/marketplace/shipments/",
 	"marketplace_questions": "/marketplace/questions/",
 	"marketplace_messages":  "/marketplace/messages/",
+	"marketplace_claims":    "/marketplace/claims/",
+	"marketplace_items":     "/marketplace/items/",
 }
 
 func ValidResourceID(topic, resource string) bool {
 	if _, ok := topicPaths[topic]; !ok {
 		return false
 	}
-	if topic == "marketplace_messages" {
+	switch topic {
+	case "marketplace_messages":
 		return messageIDPattern.MatchString(resource)
+	case "marketplace_items":
+		return itemIDPattern.MatchString(resource) && !strings.HasPrefix(resource, "CBT")
+	default:
+		return idPattern.MatchString(resource)
 	}
-	return idPattern.MatchString(resource)
 }
 
 // Event is an allowlisted hint, never a platform URL or a business update.

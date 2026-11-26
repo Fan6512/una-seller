@@ -234,7 +234,7 @@ func (s *Service) prepareCustomerNotification(ctx context.Context, job notificat
 	}, nil
 }
 
-func writeCustomerNotice(ctx context.Context, tx notifications.LocalWriter, job notifications.Job, n customerNotice) error {
+func recheckNotificationSiteSeller(ctx context.Context, tx notifications.LocalWriter, job notifications.Job, sourceSeller, child, site string) error {
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT marketplaces FROM app.meli_store_connections
 WHERE id=$1::uuid AND owner_user_id=$2::uuid AND seller_id=$3 AND status='connected'
@@ -250,10 +250,17 @@ AND marketplaces_status='verified' FOR SHARE`, job.StoreID, job.OwnerID, job.Par
 		return notifications.ErrScope
 	}
 	auth := AuthorizedStore{SellerID: job.ParentSellerID, Verified: true, Markets: markets}
-	if seller, err := customerSeller(auth, job.NotificationUserID, n.sourceSeller, n.site); err != nil || seller != n.seller {
+	if seller, err := customerSeller(auth, job.NotificationUserID, sourceSeller, site); err != nil || seller != child {
 		return notifications.ErrScope
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO app.meli_customer_notifications AS c
+	return nil
+}
+
+func writeCustomerNotice(ctx context.Context, tx notifications.LocalWriter, job notifications.Job, n customerNotice) error {
+	if err := recheckNotificationSiteSeller(ctx, tx, job, n.sourceSeller, n.seller, n.site); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO app.meli_customer_notifications AS c
 (store_id,owner_user_id,parent_seller_id,seller_id,site_id,topic,resource_id,related_id,status,
 body,translated_body,answer,direction,created_at,checked_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
