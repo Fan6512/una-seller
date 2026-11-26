@@ -111,6 +111,9 @@ func main() {
 		log.Print("WARNING: account AI/translation key management is disabled: UNA_SELLER_SERVICE_CREDENTIALS_KEY is not configured")
 	}
 	handler := httpapi.HandlerWithAccountServices(store, verifier, meliService, translator, dictionary, aiCopy, accounts)
+	if os.Getenv("MELI_COMPENSATION_ENABLED") == "1" && os.Getenv("MELI_WEBHOOK_ENABLED") != "1" {
+		log.Fatal("compensation requires the enabled notification worker")
+	}
 	if os.Getenv("MELI_WEBHOOK_ENABLED") == "1" {
 		if db == nil || meliService == nil {
 			log.Fatal("notifications need configured database and Mercado Libre OAuth")
@@ -136,6 +139,18 @@ func main() {
 		mux.Handle("/", handler)
 		handler = mux
 		go worker.Run(context.Background(), log.Default())
+		if os.Getenv("MELI_COMPENSATION_ENABLED") == "1" {
+			checkCtx, checkCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			var ready bool
+			err := db.QueryRow(checkCtx, `SELECT to_regclass('app.meli_order_discovery') IS NOT NULL
+				AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='app'
+					AND table_name='meli_notification_inbox' AND column_name='source')`).Scan(&ready)
+			checkCancel()
+			if err != nil || !ready {
+				log.Fatal("order compensation migrations required")
+			}
+			go inbox.RunCompensation(context.Background(), id, log.Default(), meliService.SearchDiscoveryOrders)
+		}
 	}
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())

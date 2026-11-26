@@ -130,9 +130,10 @@ function ProductThumbnail({ src, title, size = "list" }: {
   </span>;
 }
 
-export default function OrdersPage({ beginSync, installingUpdate }: {
+export default function OrdersPage({ beginSync, installingUpdate, visible = true }: {
   beginSync: BeginSync;
   installingUpdate: boolean;
+  visible?: boolean;
 }) {
   const [stores, setStores] = useState<StoreConnection[]>(() => cachedStores() ?? []);
   const [storeError, setStoreError] = useState("");
@@ -195,13 +196,13 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     marketplaces={marketplaces}
     selectStore={(id) => { setStoreChoice(id); setScopeChoice(id === "all" ? "all" : ""); }}
     selectScope={setScopeChoice}
-    beginSync={beginSync} installingUpdate={installingUpdate}
+    beginSync={beginSync} installingUpdate={installingUpdate} visible={visible}
     reloadStores={reloadStores} storeRefreshing={storeRefreshing} />;
 }
 
 function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter, setStatusFilter,
   searchText, setSearchText, activeQuery, setActiveQuery, storeFilter, siteFilter, logisticFilter, marketplaces,
-  selectStore, selectScope, beginSync, installingUpdate, reloadStores, storeRefreshing }: {
+  selectStore, selectScope, beginSync, installingUpdate, visible, reloadStores, storeRefreshing }: {
   scope: OrderScope | null;
   scopeKey: string;
   store: StoreConnection | undefined;
@@ -221,6 +222,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   selectScope: (key: string) => void;
   beginSync: BeginSync;
   installingUpdate: boolean;
+  visible: boolean;
   reloadStores: () => Promise<void>;
   storeRefreshing: boolean;
 }) {
@@ -400,6 +402,48 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     return () => controller.abort();
   }, [scope?.storeId, scope?.site, scope?.logistic, storeFilter, siteFilter, logisticFilter,
     stores.length, activeQuery, scopeKey, statusFilter, purchaseLink, offset, nonce, imageView]);
+
+  // Only read the server's local order cache while the idle first page is
+  // visible. Do not reload the manual sync cursor, trigger an official search,
+  // interrupt a detail/purchase dialog, or restart automatic image requests.
+  useEffect(() => {
+    if (!visible || !storeFilter || !stores.length || offset !== 0 || activeQuery ||
+        loading || running || imageBusy || logisticsAction || actionBusy || refreshingOrder ||
+        selectedId || purchaseSelectedId || purchaseBusy || installingUpdate) return;
+    let stopped = false;
+    let request: AbortController | undefined;
+    const refresh = async () => {
+      if (stopped || document.hidden || request || loadedImageView.current !== imageView ||
+          autoImageView.current !== imageView) return;
+      const current = new AbortController();
+      request = current;
+      try {
+        const value = scope
+          ? await listOrders(scope, statusFilter, purchaseLink, 0, current.signal)
+          : await searchOrders(storeFilter, siteFilter, siteFilter === "*" ? "*" : logisticFilter,
+              "", statusFilter, purchaseLink, 0, current.signal);
+        if (!stopped && !current.signal.aborted && !document.hidden) {
+          setPage(previous => JSON.stringify(previous) === JSON.stringify(value) ? previous : value);
+          setListError("");
+        }
+      } catch {
+        // A failed background read leaves the last visible snapshot intact.
+      } finally {
+        if (request === current) request = undefined;
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    const visibilityChanged = () => { if (document.hidden) request?.abort(); };
+    document.addEventListener("visibilitychange", visibilityChanged);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      request?.abort();
+      document.removeEventListener("visibilitychange", visibilityChanged);
+    };
+  }, [visible, scope, storeFilter, siteFilter, logisticFilter, stores.length, offset, activeQuery,
+    statusFilter, purchaseLink, loading, running, imageBusy, logisticsAction, actionBusy,
+    refreshingOrder, selectedId, purchaseSelectedId, purchaseBusy, installingUpdate, imageView]);
 
   useLayoutEffect(() => {
     const controller = new AbortController();
