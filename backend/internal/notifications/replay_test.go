@@ -51,13 +51,22 @@ func TestMissedFeedPageCheckpointPostgres(t *testing.T) {
 		}
 		return missedItemPage(testChildA, MissedFeedPageSize), nil
 	}
-	first, err := p.ReplayMissedFeedPage(ctx, testApp, topic, fetch)
+	first, err := p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreA, fetch)
 	if err != nil || first.NextOffset != 8 || first.Records != 10 || first.CycleComplete {
 		t.Fatalf("first page: %+v %v", first, err)
 	}
 	assertCount(t, ctx, p, 10, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1 AND source='missed_feed'`, testStoreA)
+	other, err := p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreB, func(_ context.Context, _ string, offset int) ([]byte, error) {
+		if offset != 0 {
+			t.Fatal("another store inherited the first store's offset")
+		}
+		return []byte(`{"messages":[]}`), nil
+	})
+	if err != nil || !other.CycleComplete {
+		t.Fatalf("second store page: %+v %v", other, err)
+	}
 	// Replay contains an unknown seller: fail closed and leave checkpoint.
-	_, err = p.ReplayMissedFeedPage(ctx, testApp, topic, func(_ context.Context, _ string, offset int) ([]byte, error) {
+	_, err = p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreA, func(_ context.Context, _ string, offset int) ([]byte, error) {
 		if offset != 8 {
 			t.Fatal("did not resume")
 		}
@@ -67,7 +76,7 @@ func TestMissedFeedPageCheckpointPostgres(t *testing.T) {
 		t.Fatalf("unknown scope accepted: %v", err)
 	}
 	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_missed_feed_replay WHERE application_id=$1 AND topic=$2 AND next_offset=8 AND revision=1`, testApp, topic)
-	last, err := p.ReplayMissedFeedPage(ctx, testApp, topic, func(_ context.Context, _ string, offset int) ([]byte, error) {
+	last, err := p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreA, func(_ context.Context, _ string, offset int) ([]byte, error) {
 		if offset != 8 {
 			t.Fatal("checkpoint changed on error")
 		}

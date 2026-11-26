@@ -111,7 +111,7 @@ func main() {
 		if err := meliService.EnableSharedOrderCoordination(ctx); err != nil {
 			log.Fatal("shared order coordination unavailable")
 		}
-		result, err := inbox.ReplayMissedFeedPage(ctx, id, os.Args[4], func(ctx context.Context, topic string, offset int) ([]byte, error) {
+		result, err := inbox.ReplayMissedFeedPage(ctx, id, os.Args[4], os.Args[3], func(ctx context.Context, topic string, offset int) ([]byte, error) {
 			return meliService.FetchMissedFeedPage(ctx, os.Args[2], os.Args[3], topic, offset)
 		})
 		if err != nil {

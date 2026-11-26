@@ -75,17 +75,18 @@ type ReplayProgress struct {
 type MissedFeedFetch func(context.Context, string, int) ([]byte, error)
 
 // ReplayMissedFeedPage is an operator-driven bounded page, not a scheduler.
+// The credential store scopes the cursor; each event is routed by its own identity.
 // No provider call holds a DB transaction. A revision fence prevents concurrent
 // invocations from advancing a stale page. On any malformed/unmapped record,
 // backpressure or commit failure, the page and checkpoint roll back together.
-func (p PostgresInbox) ReplayMissedFeedPage(ctx context.Context, appID, topic string, fetch MissedFeedFetch) (ReplayProgress, error) {
+func (p PostgresInbox) ReplayMissedFeedPage(ctx context.Context, appID, topic, credentialStoreID string, fetch MissedFeedFetch) (ReplayProgress, error) {
 	var result ReplayProgress
 	if !idPattern.MatchString(appID) || !ValidReplayTopic(topic) || fetch == nil {
 		return result, errors.New("invalid missed feed replay configuration")
 	}
 	var revision int64
 	err := p.DB.QueryRow(ctx, `SELECT next_offset,revision FROM app.meli_missed_feed_replay
-		WHERE application_id=$1 AND topic=$2`, appID, topic).Scan(&result.Offset, &revision)
+		WHERE application_id=$1 AND topic=$2 AND credential_store_id=$3::uuid`, appID, topic, credentialStoreID).Scan(&result.Offset, &revision)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
@@ -113,14 +114,14 @@ func (p PostgresInbox) ReplayMissedFeedPage(ctx context.Context, appID, topic st
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(queueAdmissionLock)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO app.meli_missed_feed_replay(application_id,topic)
-			VALUES($1,$2) ON CONFLICT DO NOTHING`, appID, topic); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO app.meli_missed_feed_replay(application_id,topic,credential_store_id)
+			VALUES($1,$2,$3::uuid) ON CONFLICT DO NOTHING`, appID, topic, credentialStoreID); err != nil {
 			return err
 		}
 		var offset int
 		var current int64
 		if err := tx.QueryRow(ctx, `SELECT next_offset,revision FROM app.meli_missed_feed_replay
-			WHERE application_id=$1 AND topic=$2 FOR UPDATE`, appID, topic).Scan(&offset, &current); err != nil {
+			WHERE application_id=$1 AND topic=$2 AND credential_store_id=$3::uuid FOR UPDATE`, appID, topic, credentialStoreID).Scan(&offset, &current); err != nil {
 			return err
 		}
 		if offset != result.Offset || current != revision {
@@ -139,8 +140,8 @@ func (p PostgresInbox) ReplayMissedFeedPage(ctx context.Context, appID, topic st
 				return err
 			}
 		}
-		_, err := tx.Exec(ctx, `UPDATE app.meli_missed_feed_replay SET next_offset=$3,
-			revision=revision+1,updated_at=now() WHERE application_id=$1 AND topic=$2`, appID, topic, next)
+		_, err := tx.Exec(ctx, `UPDATE app.meli_missed_feed_replay SET next_offset=$4,
+			revision=revision+1,updated_at=now() WHERE application_id=$1 AND topic=$2 AND credential_store_id=$3::uuid`, appID, topic, credentialStoreID, next)
 		return err
 	})
 	if err != nil {
