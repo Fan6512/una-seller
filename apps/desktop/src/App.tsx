@@ -1,7 +1,7 @@
 import { OperationFeedbackToaster, renderOperationFeedback } from "./OperationFeedbackToaster";
 import { OperationFeedbackContext } from "./operationFeedbackContext";
 import { createFeedback } from "./operationFeedback";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
@@ -238,9 +238,10 @@ function LoadError({ detail, onRetry, isDetail = false }: { detail: string; onRe
   );
 }
 
-function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }: {
+function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount, feedbackSound, setFeedbackSound }: {
   email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
   beginSync: () => (() => void) | undefined; syncCount: number;
+  feedbackSound: boolean; setFeedbackSound: (enabled: boolean) => void;
 }) {
   const [section, setSection] = useState<"collections" | "published" | "orders" | "operations">("operations");
   const [workspaceTab,setWorkspaceTab] = useState<"inbox"|"products">("inbox");
@@ -510,6 +511,13 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           </nav>
           {settingsSection === "updates" && <>
             <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />
+            <section className="detail-section" aria-label="操作反馈">
+              <h2>操作反馈</h2>
+              <label className="desktop-test-updates-toggle">
+                <input type="checkbox" checked={feedbackSound} onChange={e => setFeedbackSound(e.target.checked)} />
+                <span>本次登录播放操作提示音</span>
+              </label>
+            </section>
             {diagnosticsEnabled && <DevelopmentDiagnostics />}
           </>}
           {settingsSection === "account" && <AccountSettingsPage email={email} />}
@@ -621,12 +629,13 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   );
 }
 
-function AuthenticatedWorkspace({ workspace }: { workspace: React.ReactNode }) {
+function AuthenticatedWorkspace(props: Omit<ComponentProps<typeof CollectionWorkspace>, "feedbackSound" | "setFeedbackSound">) {
+  const [sound, setSound] = useState(false);
   const [feedback] = useState(() => createFeedback(renderOperationFeedback));
   useLayoutEffect(() => () => feedback.clear(), [feedback]);
   return <OperationFeedbackContext.Provider value={feedback}>
-    <OperationFeedbackToaster />
-    {workspace}
+    <OperationFeedbackToaster sound={sound} />
+    <CollectionWorkspace {...props} feedbackSound={sound} setFeedbackSound={setSound} />
   </OperationFeedbackContext.Provider>;
 }
 
@@ -662,9 +671,9 @@ export default function App() {
     return <div className="login-page"><div className="loading-state" role="status"><span className="spinner" />正在恢复登录…</div></div>;
   }
   if (!session) return <Login onSignedIn={setSession} />;
-  return <AuthenticatedWorkspace key={session.user.id} workspace={<CollectionWorkspace email={session.user.email}
+  return <AuthenticatedWorkspace key={session.user.id} email={session.user.email}
     updates={updates} beginSync={beginSync} syncCount={syncCount} onLogout={() => {
     setSession(null);
     void signOut();
-  }} />} />;
+  }} />;
 }
