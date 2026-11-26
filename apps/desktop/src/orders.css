@@ -286,3 +286,9 @@
 .orders-tracking-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .orders-tracking-actions select { min-width: 0; max-width: 100%; padding: 5px; border: 1px solid var(--ui-outline); border-radius: 6px; background: var(--ui-surface); color: var(--ui-text); }
 .orders-tracking-actions small { flex: 1 1 100%; color: var(--ui-muted); }
+
+/* Rare recovery operations stay available without occupying the normal toolbar. */
+.orders-manual-check { flex: 0 1 auto; max-width: 100%; color: var(--order-muted); font-size: 12px; }
+.orders-manual-check > summary { cursor: pointer; padding: 8px 10px; white-space: nowrap; }
+.orders-manual-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 4px 8px; }
+.orders-manual-actions button.orders-sla-update { min-height: 30px; border: 1px solid var(--order-border); border-radius: 7px; background: var(--order-surface); color: var(--order-primary); font-size: 12px; }

@@ -12,6 +12,8 @@ import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
+import { createFeedback } from "/src/operationFeedback.ts";
+import { OperationFeedbackContext } from "/src/operationFeedbackContext.ts";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
   shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate, officialTrackingURL, orderUSD, orderFulfillmentStatus } from "/src/orders.ts";
 
@@ -54,6 +56,7 @@ let savedBilling = null;
 let billingRateLimited = false;
 let shipmentFetchCount = 0;
 let dueShipmentIDs = [];
+let dueHasMore = false;
 let dueReads = 0;
 let shipmentRateLimited = false;
 let refreshPaid = false;
@@ -86,7 +89,7 @@ window.fetch = (path, options) => {
   }
   if (pathname.endsWith("/orders/shipment-refresh-candidates")) {
     dueReads++;
-    return Promise.resolve(Response.json({order_ids:dueShipmentIDs,has_more:false}));
+    return Promise.resolve(Response.json({order_ids:dueShipmentIDs,has_more:dueHasMore}));
   }
   if (pathname.endsWith("/orders/102/shipment")) {
     shipmentFetchCount++;
@@ -241,9 +244,13 @@ const start = async () => {
 };
 let active = 0;
 try {
-  createRoot(document.querySelector("main")).render(React.createElement(OrdersPage, {
+  let feedbackView;
+  const feedback = createFeedback(view => { feedbackView = view; });
+  createRoot(document.querySelector("main")).render(React.createElement(OperationFeedbackContext.Provider, {
+    value: feedback,
+  }, React.createElement(OrdersPage, {
     installingUpdate: false, beginSync() { active++; return () => active--; },
-  }));
+  })));
   const filter = (label) => [...document.querySelectorAll(".orders-procurement-toolbar button")]
     .find((item) => item.textContent === label);
   await waitFor(() => filter("待关联"), "purchase filter unavailable");
@@ -282,7 +289,8 @@ try {
     assert(!document.querySelector(".orders-notice, .orders-review"), "previous result appeared in current scope");
   }
   (await start()).resolve(Response.json({ ...progress, has_more: false }));
-  await waitFor(() => document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"), "current success missing");
+  await waitFor(() => feedbackView?.kind === "success" && feedbackView.title === "订单同步完成", "current success missing");
+  assert(!document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"), "duplicate legacy success notice");
   (await start()).resolve(reviewResponse());
   await waitFor(() => document.querySelector(".orders-review")?.textContent.includes("102"), "current Review missing");
 
@@ -346,7 +354,7 @@ try {
   const afterRefresh = await start();
   stores[0].status = "connected";
   afterRefresh.resolve(Response.json({ ...progress, has_more: false }));
-  await waitFor(() => document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"),
+  await waitFor(() => feedbackView?.kind === "success" && feedbackView.title === "订单同步完成",
     "sync success not confirmed");
   await waitFor(() => [...document.querySelectorAll(".orders-filter-note")]
     .some((item) => item.textContent.includes("当前店铺") && item.textContent.includes("已连接")),
@@ -407,7 +415,10 @@ try {
     "table columns must be 8 after moving purchase action");
   assert([...document.querySelectorAll("td.orders-table-empty")].every((cell) => cell.colSpan === 8),
     "empty-state colSpan should be 8");
-  const slaButton = () => [...document.querySelectorAll(".orders-tabs button")]
+  const manualCheck = document.querySelector(".orders-manual-check");
+  assert(manualCheck && !manualCheck.open, "manual checks must be collapsed by default");
+  manualCheck.open = true;
+  const slaButton = () => [...document.querySelectorAll(".orders-manual-check button")]
     .find((item) => item.textContent.includes("更新本页发货截止"));
   assert(slaButton()?.disabled, "fulfillment SLA control must be disabled");
   select("站点和物流模式", "MLB|remote");
@@ -424,13 +435,20 @@ try {
   (await start()).resolve(Response.json({...progress,saved:0,has_more:false}));
   await waitFor(()=>dueReads===beforeDue+1&&shipmentFetchCount===1&&document.querySelector(".orders-status")?.textContent.includes("运输中"),"zero-new-order sync failed to refresh stale logistics");
   assert(shipmentDetailsCount===0,"sync must not read full history");
+  // A successful bounded pass with more due shipments is not a legacy banner.
+  dueShipmentIDs=["102"]; dueHasMore=true;
+  (await start()).resolve(Response.json({...progress,saved:0,has_more:false}));
+  await waitFor(()=>feedbackView?.kind==="warning" && feedbackView.description?.includes("仍有待更新物流"),"normal bounded pass must explain continuation in Ding");
+  assert(!document.querySelector(".orders-notice"),"normal bounded pass must not show legacy banner");
+  dueHasMore=false;
+  shipmentFetchCount=1;
   dueShipmentIDs=["102","999"]; shipmentRateLimited=true;
   (await start()).resolve(Response.json({...progress,saved:0,has_more:false}));
   await waitFor(()=>document.querySelector(".orders-notice")?.textContent.includes("已停止")&&shipmentFetchCount===2,"rate limit did not stop sync logistics pass");
   assert(document.querySelector(".orders-notice").textContent.includes("未更新 2 笔"),"partial logistics result not reported");
   dueShipmentIDs=[]; shipmentRateLimited=false;
   shipmentFetchCount=0;
-  const batchShipment = [...document.querySelectorAll(".orders-tabs button")]
+  const batchShipment = [...document.querySelectorAll(".orders-manual-check button")]
     .find((item) => item.textContent === "更新本页物流");
   flushSync(() => batchShipment.click());
   await waitFor(() => shipmentFetchCount === 1 &&

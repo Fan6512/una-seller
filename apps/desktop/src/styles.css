@@ -86,7 +86,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   color: #3c4a60;
   font-size: 12px;
   font-weight: 600;
-  transition: background .15s ease, border-color .15s ease;
 }
 .refresh-button:hover:not(:disabled) { background: #f7f9fd; border-color: #c2cbda; }
 .refresh-button:disabled { opacity: .55; }
@@ -120,7 +119,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   border-radius: 9px;
   color: #9ba5b4;
   background: #f9fafb;
-  transition: border-color .15s ease, background .15s ease;
 }
 .search-box:focus-within { border-color: #8ca9e1; background: #fff; box-shadow: 0 0 0 3px rgba(64, 108, 206, .08); }
 .search-box input {
@@ -160,7 +158,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   border-left: 3px solid transparent;
   padding: 15px 14px 15px 13px;
   border-radius: 0;
-  transition: background .15s ease;
 }
 .product-row:hover:not(:disabled) { background: #f8faff; }
 .product-row.selected { background: #f3f7ff; border-left-color: #527bce; }
@@ -253,9 +250,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   border: 2px solid #e8edf4;
   border-top-color: #6f92d7;
   border-radius: 50%;
-  animation: spin .8s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
 .empty-state, .load-error {
   width: 100%;
   min-height: 285px;
@@ -434,9 +429,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   .detail-pane { min-height: 400px; height: auto; max-height: none; }
   .product-row { padding: 12px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
-}
 
 /* Issue #14: minimal desktop login, using existing Una Seller visual tokens. */
 .login-page {
@@ -504,10 +496,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--ui-chrome);
+  background: var(--ui-surface);
   border-bottom: 1px solid var(--ui-outline);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .brand-name, .page-heading h1, .login-heading h1, .product-summary h2 {
   font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -550,7 +542,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   background: var(--ui-surface);
   color: var(--ui-text);
   border-color: var(--ui-outline);
-  transition: background .2s cubic-bezier(.22, 1, .36, 1);
 }
 .product-row:hover:not(:disabled) { background: var(--ui-elevated); }
 .product-row.selected { background: var(--ui-selection); }
@@ -575,14 +566,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
 .gallery-arrows button, .gallery-thumb, .login-form > input, .password-field,
 .password-field button {
   border-radius: 11px;
-  transition: transform .22s cubic-bezier(.22, 1, .36, 1),
-              background .22s cubic-bezier(.22, 1, .36, 1),
-              border-color .22s cubic-bezier(.22, 1, .36, 1);
-}
-.refresh-button:active:not(:disabled), .page-actions button:active:not(:disabled),
-.primary-button:active:not(:disabled), .login-submit:active:not(:disabled),
-.logout-action:active:not(:disabled), .gallery-arrows button:active:not(:disabled) {
-  transform: scale(.97);
 }
 button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible {
   outline: 2px solid #4f86db;
