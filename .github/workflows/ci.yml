@@ -152,6 +152,9 @@ jobs:
       - name: Verify listing sync batch and resume behavior
         run: node --experimental-strip-types --test tests/listingBatches.test.mjs
 
+      - name: Verify operation feedback state
+        run: node --experimental-strip-types --test tests/operationFeedback.test.mjs
+
       - name: Verify order workbench scope switching
         run: node --test tests/ordersScope.test.mjs
 
