@@ -116,6 +116,14 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Deliberately different raw total: the official USD merchandise line wins.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET order_items='[{"item_id":"MLB1","quantity":2,"unit_price":"3.25","currency_id":"USD"}]'::jsonb WHERE store_id=$1 AND order_id='901'`, storeA); err != nil {
+		t.Fatal(err)
+	}
+	sales, err := svc.OperationsOverview(ctx, ownerA, storeA, "MLB")
+	if err != nil || sales.Sales.AmountUSD == nil || *sales.Sales.AmountUSD != "6.50" || sales.Sales.IncludedOrders != 1 || sales.Sales.CancelledOrders != 1 {
+		t.Fatalf("daily cached merchandise sales: %+v %v", sales.Sales, err)
+	}
 	if len(overview.Activity) != 9 || len(overview.Todos) != 3 {
 		t.Fatalf("filtered activity/todos: %+v", overview)
 	}
@@ -151,7 +159,7 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 		}
 	}
 	foreign, err := svc.OperationsOverview(ctx, ownerB, storeA, "")
-	if err != nil || len(foreign.Activity) != 0 || len(foreign.Todos) != 0 {
+	if err != nil || len(foreign.Activity) != 0 || len(foreign.Todos) != 0 || foreign.Sales.ScopeAvailable || foreign.Sales.AmountUSD != nil {
 		t.Fatalf("foreign operations rows: %+v %v", foreign, err)
 	}
 	if _, err := db.Exec(ctx, `UPDATE app.meli_store_connections SET status='disconnected' WHERE id=$1`, storeA); err != nil {

@@ -8,7 +8,8 @@ type StoreSummary = {
   open_claims: number | null; paused_items: number | null; pending_jobs: number; dead_jobs: number;
 };
 type WorkRow = { store_id: string; site: string; kind: string; resource_id: string; status: string; observed_at: string; due_at?: string };
-type Summary = { stores: StoreSummary[]; checked_at: string; truncated: boolean; cache_only: boolean; activity: WorkRow[]; todos: WorkRow[] };
+type Sales = { day: string; amount_usd: string | null; paid_orders: number; included_orders: number; review_orders: number; refunded_orders: number; cancelled_orders: number; other_orders: number; scope_available: boolean; truncated: boolean };
+type Summary = { sales?: Sales; stores: StoreSummary[]; checked_at: string; truncated: boolean; cache_only: boolean; activity: WorkRow[]; todos: WorkRow[] };
 type Target = "orders" | "published";
 const metrics = [
   ["paid_orders", "缓存已付款订单"], ["cached_unanswered", "缓存未回答问答"],
@@ -95,6 +96,14 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
   const selected = stores.filter(s => !scope || s.store_id === scope);
   const sites = [...new Set(selected.flatMap(s => s.sites ?? []))].sort();
   const currentRows = loadedScope === scopeKey ? summary : null;
+  const sales = currentRows?.sales;
+  const salesNote = !sales ? "待接入订单销售汇总" : sales.truncated ? "当日缓存超过汇总上限，暂不显示金额" :
+    !sales.scope_available ? "当前店铺或站点授权不可用" :
+      sales.day + " · 缓存已付款商品额 " + sales.included_orders + "/" + sales.paid_orders + " 笔" +
+      (sales.refunded_orders ? " · 退款排除 " + sales.refunded_orders + " 笔" : "") +
+      (sales.review_orders ? " · 金额待核实 " + sales.review_orders + " 笔" : "") +
+      (sales.cancelled_orders ? " · 已取消 " + sales.cancelled_orders + " 笔" : "") +
+      " · 非实收，平台覆盖未确认";
   // These existing counts are store-wide, not site-wide. Unknown or partial
   // coverage must never be silently summed into a seemingly complete total.
   const total = (key: (typeof metrics)[number][0]) => {
@@ -138,7 +147,7 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
     <section className="operations-section" aria-label="经营总览">
       <div className="operations-section-heading"><h2>经营总览</h2><BeijingClock /></div>
       <div className="operations-overview-cards">
-        <article className="operations-kpi operations-financial"><span>今日销售额</span><strong>—</strong><small>待接入订单销售汇总</small></article>
+        <article className="operations-kpi operations-financial"><span>今日销售额（缓存）</span><strong>{sales?.amount_usd != null ? "USD " + sales.amount_usd : "—"}</strong><small>{salesNote}</small></article>
         <article className="operations-kpi operations-financial"><span>今日利润</span><strong>—</strong><small>待真实回款与成本核算</small></article>
       </div>
       <div className="operations-section-heading operations-subheading"><h3>运营指标</h3><span className="operations-note">店铺整体缓存 · 不随站点筛选</span></div>
