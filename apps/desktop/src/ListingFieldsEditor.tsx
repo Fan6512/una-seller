@@ -3,12 +3,15 @@ import AICopyPanel from "./AICopyPanel";
 import type { ListingFields, ListingVariant } from "./listingFields";
 import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTitle } from "./listingFields";
 import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion, type CBTCategoryRules, type CBTAttributeRule } from "./collections";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute, planSecondaryImageReuse } from "./editorUx";
+import { useOperationFeedback } from "./operationFeedbackContext";
 import { useSiteTitleMode } from "./titleModePreference";
 
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean;aiProduct?:AICopyProduct;aiSaved?:Partial<ListingFields>};
 export default function ListingFieldsEditor({value,onChange,disabled=false,aiProduct,aiSaved}:Props) {
+  const feedback = useOperationFeedback();
+  const imageFeedbackScope = useId();
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
   const [categoryRules,setCategoryRules]=useState<CBTCategoryRules|null>(null);
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
@@ -163,8 +166,18 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     const changed=[...plans].filter(([,p])=>p.changed);
     if(changed.some(([i])=>variants[i].image_urls.length>1)&&!window.confirm("将覆盖 "+changed.filter(([i])=>variants[i].image_urls.length>1).length+" 个变体已有副图，保留主图。是否继续？"))return;
     if(changed.length)set("variants",variants.map((v,i)=>plans.get(i)?.changed?{...v,image_urls:plans.get(i)!.urls}:v));
+    if (reuseMode === "bulk" && plans.size) {
+      const batch = feedback.batch({ scope: imageFeedbackScope, key: "reuse-secondary-images" }, "批量复用副图", plans.size);
+      for (const [index, plan] of plans) {
+        batch.record(String(index), plan.changed ? "success" : "skipped");
+      }
+      batch.finish("副图复用结果");
+    }
     const skipped=[...plans].filter(([,p])=>p.error).map(([i,p])=>variantLabel(variants[i],i)+"："+p.error);
-    setReuseMessage("已更新 "+changed.length+" 个变体；未变更 "+(plans.size-changed.length)+" 个。"+(skipped.length?" "+skipped.join("；"):""));
+    // Bulk counts are shown once in Ding. Keep specific corrective details
+    // inline, and retain the single-variant flow's existing result.
+    setReuseMessage(reuseMode==="bulk" ? skipped.join("；") :
+      "已更新 "+changed.length+" 个变体；未变更 "+(plans.size-changed.length)+" 个。"+(skipped.length?" "+skipped.join("；"):""));
   };
   const reusePanel=reuseMode&&<div className="listing-variant-image-picker" aria-label="复用副图">
     <strong>{reuseMode==="bulk"?"批量复用副图":"复用副图"}</strong>
@@ -241,7 +254,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     return <>
       <label className="listing-field listing-active-title">
         <span>{label}</span>
-        <textarea key={siteTitleMode+":"+lang} rows={3} disabled={disabled}
+        <textarea data-motion-entry="content" key={siteTitleMode+":"+lang} rows={3} disabled={disabled}
           value={value.titles[lang]}
           onChange={e=>setLocalizedTitle(lang,e.target.value)}
           placeholder="填写商品标题"/>
@@ -266,7 +279,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
   </div>;
   const renderDescription=(lang:"en"|"es"|"pt")=><>
     <label className="listing-field">{languages.find(item=>item.key===lang)!.label}商品描述
-      <textarea key={siteTitleMode+":description:"+lang} rows={5} disabled={disabled} value={value.descriptions?.[lang]??""}
+      <textarea data-motion-entry="content" key={siteTitleMode+":description:"+lang} rows={5} disabled={disabled} value={value.descriptions?.[lang]??""}
         onChange={e=>setLocalizedDescription(lang,e.target.value)} placeholder="填写纯文本商品描述"/>
       <small>{listingTextCount(value.descriptions?.[lang]??"")} / 20000 字符</small>
     </label>
@@ -445,7 +458,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           <button type="button" onClick={()=>setImagePreview(null)}>关闭预览</button>
         </div>
         {/^https:\/\//i.test(images[imagePreview].url)?
-          <img src={images[imagePreview].url} alt={"图片 "+(imagePreview+1)+" 大图"} referrerPolicy="no-referrer"/>:
+          <img key={images[imagePreview].url} src={images[imagePreview].url} alt={"图片 "+(imagePreview+1)+" 大图"} referrerPolicy="no-referrer"
+            onLoad={event=>{event.currentTarget.dataset.motionImage="ready";}}/>:
           <span>该图片还没有有效的 HTTPS 链接。</span>}
       </div>}
     </fieldset>
