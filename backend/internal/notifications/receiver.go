@@ -122,6 +122,28 @@ func parse(r io.Reader, appID string) (Event, error) {
 // AFTER its verified source gate. It is NOT a Mercado Libre signature.
 // Never expose this header to untrusted clients or enable before source review.
 func NewReceiver(appID, ingressToken string, sink Sink) (http.Handler, error) {
+	return NewReceiverForTopics(appID, ingressToken, sink, nil)
+}
+
+// NewReceiverForTopics enforces the same explicit topic set as the worker.
+// A nil set is the existing all-topic constructor for isolated tests.
+func NewReceiverForTopics(appID, ingressToken string, sink Sink, topics []string) (http.Handler, error) {
+	allowed := make(map[string]bool)
+	if topics == nil {
+		for topic := range topicPaths {
+			allowed[topic] = true
+		}
+	} else {
+		for _, topic := range topics {
+			if _, exists := topicPaths[topic]; !exists || allowed[topic] {
+				return nil, errors.New("invalid enabled notification topic")
+			}
+			allowed[topic] = true
+		}
+		if len(allowed) == 0 {
+			return nil, errors.New("no enabled notification topics")
+		}
+	}
 	if !idPattern.MatchString(appID) || len(ingressToken) < 32 || len(ingressToken) > 256 || sink == nil {
 		return nil, errors.New("notification receiver configuration invalid")
 	}
@@ -166,6 +188,11 @@ func NewReceiver(appID, ingressToken string, sink Sink) (http.Handler, error) {
 				return
 			}
 			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if !allowed[event.Topic] {
+			// Never ACK an event for which the operator has disabled processing.
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		if err := sink.Enqueue(ctx, event); err != nil {
