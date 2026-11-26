@@ -29,7 +29,7 @@
 .operations-heading p { color: var(--ui-muted); font-size: 13px; margin: 5px 0 0; }
 .operations-filter-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px; margin-bottom: 20px; }
 .operations-filter-row .operations-filters { margin: 4px 0; gap: 12px; }
-.operations-freshness { font-size: 11px; font-variant-numeric: tabular-nums; }
+.operations-clock { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .operations-section { margin-bottom: 28px; min-width: 0; }
 .operations-section-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 12px; }
 .operations-section-heading h2 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -.02em; }

@@ -20,6 +20,24 @@ const states: Record<string, string> = { paid: "已付款", cancelled: "已取�
   logistics_exception: "物流异常", shipment_cancelled: "物流取消", delivered: "已签收", shipped: "已发货", in_transit: "运输中", out_for_delivery: "派送中",
   UNANSWERED: "未回答", ANSWERED: "已回答", available: "已收录", pending_reply: "待回复", replied: "已回复 / 已处理", sent: "已发送", opened: "进行中", closed: "已关闭", paused: "暂停", active: "在售", failed: "待核实" };
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+const beijingMinute = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+function BeijingClock() {
+  const [time, setTime] = useState(() => beijingMinute.format(new Date()));
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      clearTimeout(timer);
+      const now = new Date();
+      setTime(beijingMinute.format(now));
+      if (!document.hidden) timer = setTimeout(tick, 60000 - (now.getTime() % 60000));
+    };
+    tick();
+    document.addEventListener("visibilitychange", tick);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", tick); };
+  }, []);
+  return <span className="operations-note operations-clock">今日 · 北京时间 {time}</span>;
+}
 
 export default function OperationsPage({ onNavigate }: { onNavigate: (target: Target) => void }) {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -112,14 +130,13 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
         <label>店铺 <select value={scope} onChange={e => { setScope(e.target.value); setSite(""); }}><option value="">全部店铺</option>{stores.map(s => <option key={s.store_id} value={s.store_id}>{s.nickname || "店铺"}</option>)}</select></label>
         <label>待办 / 动态站点 <select value={site} onChange={e => setSite(e.target.value)}><option value="">全部站点</option>{sites.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
       </div>
-      <span className="operations-note operations-freshness">{currentRows ? "本地摘要 · " + date(currentRows.checked_at) + "（北京）" : loading ? "读取摘要中…" : "暂无当前范围摘要"}</span>
     </div>
     {error && <p role="alert" className="operations-error">{error}{currentRows ? " 保留上次读取的摘要。" : ""}</p>}
     {summary?.truncated && <p className="operations-note">摘要最多显示100家店铺，全部店铺汇总暂不可用。</p>}
     {summary && stores.length === 0 && <p className="operations-note">尚未绑定店铺。</p>}
 
     <section className="operations-section" aria-label="经营总览">
-      <div className="operations-section-heading"><h2>经营总览</h2><span className="operations-note">今日 · 北京时间</span></div>
+      <div className="operations-section-heading"><h2>经营总览</h2><BeijingClock /></div>
       <div className="operations-overview-cards">
         <article className="operations-kpi operations-financial"><span>今日销售额</span><strong>—</strong><small>待接入订单销售汇总</small></article>
         <article className="operations-kpi operations-financial"><span>今日利润</span><strong>—</strong><small>待真实回款与成本核算</small></article>

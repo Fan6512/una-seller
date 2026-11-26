@@ -85,7 +85,7 @@ export function dispatchDeadlineLabel(order: OrderRecord, now = Date.now(), logi
     return {
       date: checked ? "暂无截止时间" : "待获取",
       countdown: checked ? "暂无截止时间" : "待获取",
-      hint: checked ? "官方未提供，请后台核实" : "点击更新本页时限",
+      hint: checked ? "官方未提供，请后台核实" : "可在手动核验中读取",
       state: "neutral",
     };
   }
@@ -796,6 +796,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       // The server selects stale active shipments independently of UI filters.
       let logisticsNote = "";
       let logisticsIncomplete = false;
+      let logisticsFailed = false;
       try {
         task.update("正在读取待更新物流");
         const candidates = await listShipmentRefreshCandidates(scope, controller.signal);
@@ -822,7 +823,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             }
           }
         }
-        logisticsIncomplete = failed > 0 || Boolean(stop) || candidates.has_more;
+        logisticsFailed = failed > 0 || Boolean(stop);
+        logisticsIncomplete = logisticsFailed || candidates.has_more;
         logisticsNote = candidates.order_ids.length
           ? " 物流概要更新 " + done + " 笔，未更新 " + (failed + candidates.order_ids.length - attempted) + " 笔。" +
             (stop ? " 已停止：" + stop + "；不会自动重试。" : "") +
@@ -831,14 +833,18 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
       } catch (error) {
         controller.signal.throwIfAborted();
         logisticsIncomplete = true;
+        logisticsFailed = true;
         logisticsNote = " 物流未更新：" + displayError(error) + "。已保存的订单不受影响。";
       }
       controller.signal.throwIfAborted();
       const needsFollowup = last?.has_more || logisticsIncomplete;
-      // Routine success belongs to Ding; actionable partial results remain inline.
-      if (needsFollowup) setNotice(orderNote + logisticsNote);
-      task.finish(needsFollowup ? "warning" : "success", needsFollowup ? "本轮同步结束，仍有待处理项" : "订单同步完成",
-        needsFollowup ? undefined : "本轮保存 " + saved + " 笔。" + logisticsNote);
+      // A bounded normal pass is not an error. Keep its continuation hint
+      // in the single capsule; only actual failures need durable page detail.
+      if (logisticsFailed) setNotice(orderNote + logisticsNote);
+      task.finish(needsFollowup ? "warning" : "success",
+        needsFollowup ? "本轮同步结束，仍有待处理项" : "订单同步完成",
+        logisticsFailed ? undefined : "本轮保存 " + saved + " 笔。" +
+          (last?.has_more ? "订单尚未同步完，可继续同步。" : "") + logisticsNote);
       if (store?.status === "token_expired") void reloadStores();
     } catch (error) {
       if (controller.signal.aborted) {
@@ -991,7 +997,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
           ) : (
             <button type="button" className="orders-main-button" onClick={() => void performSync()}
-              disabled={!canSync || actionBusy} title={!canSync ? disabledReason : undefined}>
+              disabled={!canSync || actionBusy} title={!canSync ? disabledReason : "同步所选店铺、站点及物流模式的服务端搜索窗口，不限于当前列表页"}>
               {installingUpdate ? "正在安装更新" : "同步订单"}</button>
           )}
         </div>
@@ -1048,6 +1054,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {filter.label}
           </button>)}
           <span className="orders-tabs-meta">本页 {page.items.length} 笔 · 每页 {PAGE_SIZE} 笔</span>
+          <details className="orders-manual-check">
+            <summary>手动核验{logisticsAction ? " · " + slaProgress : ""}</summary>
+            <div className="orders-manual-actions">
           <button type="button" className="orders-sla-update" disabled={!scope || Boolean(activeQuery) || Boolean(logisticsAction) || running || loading || installingUpdate ||
               scope?.logistic.toLowerCase() === "fulfillment" || scope?.logistic.toLowerCase() === "fulfilment" ||
               (store?.status !== "connected" && store?.status !== "token_expired")}
@@ -1060,6 +1069,10 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             onClick={() => void refreshPageLogistics("shipment")}>
             {logisticsAction === "shipment" ? "读取物流 " + slaProgress : "更新本页物流"}
           </button>
+            {syncState?.can_reset && !review && !running &&
+              <button type="button" className="orders-sla-update" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
+            </div>
+          </details>
         </div>
         <div className="orders-procurement-toolbar" role="group" aria-label="1688采购关联筛选">
           <strong>采购</strong>
@@ -1075,12 +1088,10 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <span>按数据库关联状态筛选 · 不代表厂家已发货</span>
         </div>
 
-        {(notice || syncState?.can_reset) && <div className="orders-notice" role="status">
-          <span>{notice || "当前存在可重新扫描的服务器同步窗口。"}</span>
+        {notice && <div className="orders-notice" role="status">
+          <span>{notice}</span>
           <div className="orders-notice-actions">
-            {syncState?.can_reset && !review && !running &&
-              <button type="button" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
-            {notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button>}
+            <button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button>
           </div>
         </div>}
         {review && <div className="orders-review" role="alert">
