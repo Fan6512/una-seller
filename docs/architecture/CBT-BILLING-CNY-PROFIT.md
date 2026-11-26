@@ -40,3 +40,22 @@ Mercado Libre Global Selling 2026-06-19 更新的官方文档：
 3. 确认可复用的可信美元结算来源和汇率后接通公式，核对实际 CNY 附加成本。涉及多个结算日期时保留各笔汇率来源及日期。合并和发布需负责人审批。
 
 本 PR 仅交付 A1 只读费用预览，A2/A3 另行验收。A1 可以在代码审核及负责人批准后独立合并；不要因为已有纯算式就宣称真实利润功能上线。上游 HTTP 404 的具体语义尚未验证，不将接口不存在或权限错误猜作无账单；官方 200 且缺少对应账单时返回 not_available。
+
+
+## FIN-02 2026-11-27 核账实施门禁（真实利润优先，不依赖刊登）
+
+生产只读基线（北京时间00:21）：73笔订单，68 paid、2 partially_refunded、3 cancelled；仅3笔账单快照（MLB paid），已填实际采购成本0笔。当前两有订单站点为MLB（57笔）与MLM（16笔）。未核实订单级实际USD净回款来源，不能显示实际利润。
+
+### 真实来源核实
+
+- 官方 [Billing Reports by Orders and Packs](https://global-selling.mercadolibre.com/devsite/en_us/validations-cbt/billing-reports-by-orders-and-packs)：base_amount_usd 为税基，sale_fee.net 为巴西收费净额，money_release_status/date 表示释放状态/日期，均不单独证明订单实际实收。现有 billing-cache 安全复用；不重复批量读全部73单，先按子卖家、站点、物流选择最少量代表性订单，最多60/次官方请求、遇429停止。
+- 官方 [All about receiving payments](https://sellers.mercadolibre.com/learning-center/news/all-about-receiving-payments/) 指向 Global Selling Payment reports 中的付款/转账报告；优先核实当前账号真实可下载的报告及字段，若仅批次金额不得强分摊到订单。官方 [Reconciliation](https://sellers.mercadolibre.com/learning-center/nota/everything-you-need-to-know-about-reconciliation) 介绍费用/退款关联及付款报告核对；注意费用付款报告与卖家收款报告可能并非同一口径。Mercado Pago Releases report 仅在当前 CBT 账户真实可用且币种/归属符合时采用；不假设本地 Mercado Pago 的报告/API 可跨 CBT 主账号复用。公开文档的搜索索引支持这些入口，真实账号权限/报告列未验证。
+- 先从当前卖家中心已存在的报告导出只读样本，与实际USD收款账户流水匹配；没有完成结算或无可用报表时标明缺样，不伪造回款或自动生成/触发转账。运营日销售（订单创建日）、官方释放日、实际结算日及收款换汇日分别保存，不混作今日收入。
+
+### 最小核账样本与实现条件
+
+1. 现有已缓存 MLB paid 账单先复用；再选择 MLM 正常订单、MLB 部分退款、已取消/已退款（真实存在才取）、已释放与未释放。核对同一完整 owner/store/site/logistic/seller/order 作用域、Pack/Shipment 共享费用归属；报告中使用稳定订单/交易/费用/冲正/批次 ID 匹配、去重，保留原币及明确 USD 金额，避免重复扣减已净额费用。
+2. 核对支付报告实际结算订单净额与收款流水。只有可靠订单级金额或可核实分摊才允许作为 VerifiedUSDNet；共享费用、退款冲正及分次回款未核实时不可用。避免在 Git、日志及聊天贴买家姓名、地址、收款账号、原始报表或授权凭证；仅提交脱敏字段定义、计数、核账示例和哈希。
+3. 实际采购成本用当前订单采购关联；明确每单真实CNY采购和国内额外成本（真实为0需显式确认，未填不算0）。区分真实收款工具换汇凭据与会计/运营参考汇率，记录 CNY/USD、来源、日期、用途；不默认今日汇率或汇率7，不将参考汇率标作实际换汇。
+4. 证据通过后在独立 FIN-02 Draft PR 复用 EstimateProfitFromVerifiedNet。先单订单实际净回款与成本/汇率，再按结算归属日期、店铺、站点聚合；严格区分预计利润与实际核算利润，覆盖不足显示待核实/已核实小计及覆盖率。多个结算日/退款批次需要按真实分摊与各自汇率核算；尚无证据不提前设计不可逆财务账本或大规模新迁移。不要重复扣除已经反映在净回款中的平台费用或退款。
+5. 最小测试：正常订单、部分退款/冲正、未结算/缺成本/缺汇率不可用、费用不重复扣减及跨店归属。首次实际核账样本由负责人核对，再接入运营首页实际利润，不扩大报表或视觉优化。当前 FIN-02 为证据准备，尚无运行时真实利润接线。
