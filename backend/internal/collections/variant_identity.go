@@ -25,7 +25,12 @@ func prepareVariantIdentity(next *ListingFields, previous ListingFields) error {
 		next.VariantIdentityVersion = 1
 		next.AvailableQuantity = previous.AvailableQuantity
 	}
-	if next.Variants == nil && (modern || hadIdentity) {
+	if next.Variants == nil && hadIdentity {
+		// Omitted collection is not an edit; preserve even identical legacy rows.
+		next.Variants = previous.Variants
+		return nil
+	}
+	if next.Variants == nil && modern {
 		next.Variants = previous.Variants
 	}
 	if next.Variants == nil {
