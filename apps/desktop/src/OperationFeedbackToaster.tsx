@@ -6,6 +6,11 @@ const capsuleId = "una-operation-feedback";
 
 export function renderOperationFeedback(view: FeedbackView | null) {
   if (!view) {
+    // Ding's singleton retains the last text in each live region after dismissal.
+    const { status, alert } = toast.getState();
+    toast.configure({ sound: false });
+    if (status.trim()) toast.info("", { id: capsuleId, duration: 0 });
+    if (alert.trim()) toast.error("", { id: capsuleId, duration: 0 });
     toast.dismiss(undefined, { immediate: true });
     return;
   }
