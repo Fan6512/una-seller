@@ -17,7 +17,7 @@ import (
 const (
 	SinglePath = "/global/items"
 	FamilyPath = "/global/user-products/families"
-	SingleKey = "single"
+	SingleKey  = "single"
 )
 
 type Target struct {
@@ -28,47 +28,48 @@ type Target struct {
 // Conditional requirements and size charts must be resolved by the caller.
 type Rule struct {
 	ID, Hierarchy string
-	Required bool
+	Required      bool
 	// Enumerated values must have a resolved official value ID.
 	Enumerated bool
 }
 
 type Attribute struct {
-	ID string `json:"id"`
-	Values []Value `json:"values"`
+	ID        string  `json:"id"`
+	Values    []Value `json:"values,omitempty"`
+	ValueName string  `json:"value_name,omitempty"`
 }
 
 type Value struct {
-	ID string `json:"id,omitempty"`
+	ID   string `json:"id,omitempty"`
 	Name string `json:"name,omitempty"`
 }
 
 type Variant struct {
-	Key, SKU string
-	Quantity *int
+	Key, SKU    string
+	Quantity    *int
 	NetProceeds string
-	PictureIDs []string
-	Attributes []Attribute
+	PictureIDs  []string
+	Attributes  []Attribute
 }
 
 type Input struct {
 	FamilyName, CategoryID, Description string
-	Target Target
-	Rules []Rule
-	Variants []Variant
+	Target                              Target
+	Rules                               []Rule
+	Variants                            []Variant
 }
 
 // Prepared keeps local variant keys separate from the official wire body.
 // The keys describe request order, not a guarantee of response ordering.
 type Prepared struct {
-	Path string
-	Body []byte
+	Path        string
+	Body        []byte
 	VariantKeys []string
 }
 
 type site struct {
-	ID string `json:"site_id"`
-	Logistic string `json:"logistic_type"`
+	ID          string `json:"site_id"`
+	Logistic    string `json:"logistic_type"`
 	ListingType string `json:"listing_type_id"`
 }
 
@@ -81,23 +82,23 @@ type description struct {
 }
 
 type up struct {
-	FamilyName string `json:"family_name"`
-	CategoryID string `json:"category_id"`
-	Currency string `json:"currency_id"`
+	FamilyName  string      `json:"family_name"`
+	CategoryID  string      `json:"category_id"`
+	Currency    string      `json:"currency_id"`
 	NetProceeds json.Number `json:"global_net_proceeds"`
-	Quantity int `json:"available_quantity"`
+	Quantity    int         `json:"available_quantity"`
 	Description description `json:"description"`
-	Pictures []picture `json:"pictures"`
-	Attributes []Attribute `json:"attributes"`
-	Sites []site `json:"sites_to_sell"`
+	Pictures    []picture   `json:"pictures"`
+	Attributes  []Attribute `json:"attributes"`
+	Sites       []site      `json:"sites_to_sell"`
 }
 
 var (
 	categoryPattern = regexp.MustCompile(`^CBT[0-9]{1,15}$`)
-	sitePattern = regexp.MustCompile(`^ML[A-Z]$|^MCO$`)
-	attrPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,79}$`)
-	picturePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,160}$`)
-	moneyPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,15})(\.[0-9]{1,6})?$`)
+	sitePattern     = regexp.MustCompile(`^(MLA|MLB|MLC|MLM|MCO)$`)
+	attrPattern     = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,79}$`)
+	picturePattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,160}$`)
+	moneyPattern    = regexp.MustCompile(`^(0|[1-9][0-9]{0,15})(\.[0-9]{1,6})?$`)
 )
 
 func textOK(s string, max int) bool {
@@ -128,6 +129,9 @@ func Prepare(in Input) (Prepared, error) {
 			return Prepared{}, fmt.Errorf("duplicate category rule %s", rule.ID)
 		}
 		rules[rule.ID] = rule
+		if rule.ID == "SELLER_SKU" && (rule.Hierarchy == "PARENT_PK" || rule.Hierarchy == "CHILD_PK") {
+			return Prepared{}, fmt.Errorf("unsupported SKU hierarchy")
+		}
 		switch rule.Hierarchy {
 		case "PARENT_PK":
 			parents = append(parents, rule.ID)
@@ -168,7 +172,7 @@ func Prepare(in Input) (Prepared, error) {
 		attrs := make(map[string]Attribute, len(v.Attributes)+1)
 		for _, a := range v.Attributes {
 			rule, known := rules[a.ID]
-			if !known || a.ID == "SELLER_SKU" || len(a.Values) != 1 {
+			if !known || a.ID == "SELLER_SKU" || a.ValueName != "" || len(a.Values) != 1 {
 				return Prepared{}, fmt.Errorf("unsupported attribute %s", a.ID)
 			}
 			if _, exists := attrs[a.ID]; exists {
@@ -185,7 +189,7 @@ func Prepare(in Input) (Prepared, error) {
 		}
 		// SELLER_SKU is documented as an attribute in the UP create example.
 		// Its actual account write/read contract remains a live acceptance gate.
-		attrs["SELLER_SKU"] = Attribute{ID: "SELLER_SKU", Values: []Value{{Name: v.SKU}}}
+		attrs["SELLER_SKU"] = Attribute{ID: "SELLER_SKU", ValueName: v.SKU}
 		condition, ok := attrs["ITEM_CONDITION"]
 		if !ok || condition.Values[0].ID != "2230284" {
 			return Prepared{}, fmt.Errorf("new item condition must be explicitly confirmed")
