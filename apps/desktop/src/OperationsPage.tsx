@@ -23,7 +23,9 @@ const states: Record<string, string> = { paid: "已付款", cancelled: "已取�
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
 const beijingMinute = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
-function BeijingClock() {
+const beijingDate = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+
+function BeijingClock({ onDay }: { onDay: (day: string) => void }) {
   const [time, setTime] = useState(() => beijingMinute.format(new Date()));
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -31,17 +33,19 @@ function BeijingClock() {
       clearTimeout(timer);
       const now = new Date();
       setTime(beijingMinute.format(now));
+      onDay(beijingDate.format(now));
       if (!document.hidden) timer = setTimeout(tick, 60000 - (now.getTime() % 60000));
     };
     tick();
     document.addEventListener("visibilitychange", tick);
     return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", tick); };
-  }, []);
+  }, [onDay]);
   return <span className="operations-note operations-clock">今日 · 北京时间 {time}</span>;
 }
 
 export default function OperationsPage({ onNavigate }: { onNavigate: (target: Target) => void }) {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [day, setDay] = useState(() => beijingDate.format(new Date()));
   const [scope, setScope] = useState("");
   const [site, setSite] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
@@ -97,7 +101,8 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
   const sites = [...new Set(selected.flatMap(s => s.sites ?? []))].sort();
   const currentRows = loadedScope === scopeKey ? summary : null;
   const sales = currentRows?.sales;
-  const salesNote = !sales ? "待接入订单销售汇总" : sales.truncated ? "当日缓存超过汇总上限，暂不显示金额" :
+  const isCurrentSales = sales?.day === day;
+  const salesNote = !sales ? "待接入订单销售汇总" : !isCurrentSales ? "等待今日缓存销售额更新" : sales.truncated ? "当日缓存超过汇总上限，暂不显示金额" :
     !sales.scope_available ? "当前店铺或站点授权不可用" :
       sales.day + " · 缓存已付款商品额 " + sales.included_orders + "/" + sales.paid_orders + " 笔" +
       (sales.refunded_orders ? " · 退款排除 " + sales.refunded_orders + " 笔" : "") +
@@ -145,9 +150,9 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
     {summary && stores.length === 0 && <p className="operations-note">尚未绑定店铺。</p>}
 
     <section className="operations-section" aria-label="经营总览">
-      <div className="operations-section-heading"><h2>经营总览</h2><BeijingClock /></div>
+      <div className="operations-section-heading"><h2>经营总览</h2><BeijingClock onDay={setDay} /></div>
       <div className="operations-overview-cards">
-        <article className="operations-kpi operations-financial"><span>今日销售额（缓存）</span><strong>{sales?.amount_usd != null ? "USD " + sales.amount_usd : "—"}</strong><small>{salesNote}</small></article>
+        <article className="operations-kpi operations-financial"><span>今日销售额（缓存）</span><strong>{isCurrentSales && sales?.amount_usd != null ? "USD " + sales.amount_usd : "—"}</strong><small>{salesNote}</small></article>
         <article className="operations-kpi operations-financial"><span>今日利润</span><strong>—</strong><small>待真实回款与成本核算</small></article>
       </div>
       <div className="operations-section-heading operations-subheading"><h3>运营指标</h3><span className="operations-note">店铺整体缓存 · 不随站点筛选</span></div>
