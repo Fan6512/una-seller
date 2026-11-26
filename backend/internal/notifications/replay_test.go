@@ -27,8 +27,13 @@ func TestMissedFeedNormalization(t *testing.T) {
 	if got, err := decodeMissedFeedPage(message, "123", "marketplace_messages"); err != nil || len(got) != 1 {
 		t.Fatalf("bare message ID: %v", err)
 	}
+	for _, raw := range []string{`{"messages":null}`, `{"messages":[]}`} {
+		if got, err := decodeMissedFeedPage([]byte(raw), "123", "marketplace_messages"); err != nil || len(got) != 0 {
+			t.Fatalf("valid empty page %s: %v", raw, err)
+		}
+	}
 	for _, raw := range []string{
-		`{}`, `{"messages":null}`,
+		`{}`, `null`, `{"messages":{}}`, `{"messages":"null"}`,
 		`{"messages":[{"_id":"x","application_id":"123","user_id":"456","topic":"marketplace_messages","resource":"https://example.invalid/aaaaaaaaaaaaaaaa","received":"2026-11-20T00:00:00Z"}]}`,
 		`{"messages":[{"_id":"x","application_id":"124","user_id":"456","topic":"marketplace_messages","resource":"aaaaaaaaaaaaaaaa","received":"2026-11-20T00:00:00Z"}]}`,
 	} {
@@ -76,6 +81,13 @@ func TestMissedFeedPageCheckpointPostgres(t *testing.T) {
 		t.Fatalf("unknown scope accepted: %v", err)
 	}
 	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_missed_feed_replay WHERE application_id=$1 AND topic=$2 AND next_offset=8 AND revision=1`, testApp, topic)
+	_, err = p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreA, func(_ context.Context, _ string, offset int) ([]byte, error) {
+		return []byte(`{}`), nil
+	})
+	if err == nil {
+		t.Fatal("missing messages accepted")
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_missed_feed_replay WHERE application_id=$1 AND topic=$2 AND credential_store_id=$3::uuid AND next_offset=8 AND revision=1`, testApp, topic, testStoreA)
 	last, err := p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreA, func(_ context.Context, _ string, offset int) ([]byte, error) {
 		if offset != 8 {
 			t.Fatal("checkpoint changed on error")
@@ -85,6 +97,20 @@ func TestMissedFeedPageCheckpointPostgres(t *testing.T) {
 	if err != nil || !last.CycleComplete || last.NextOffset != 0 {
 		t.Fatalf("finish page: %+v %v", last, err)
 	}
+	again, err := p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreA, fetch)
+	if err != nil || again.NextOffset != 8 || again.CycleComplete {
+		t.Fatalf("next scan: %+v %v", again, err)
+	}
+	empty, err := p.ReplayMissedFeedPage(ctx, testApp, topic, testStoreA, func(_ context.Context, _ string, offset int) ([]byte, error) {
+		if offset != 8 {
+			t.Fatal("expected nonzero cursor before null page")
+		}
+		return []byte(`{"messages":null}`), nil
+	})
+	if err != nil || !empty.CycleComplete || empty.Offset != 8 || empty.NextOffset != 0 || empty.Records != 0 {
+		t.Fatalf("null page: %+v %v", empty, err)
+	}
+	assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_missed_feed_replay WHERE application_id=$1 AND topic=$2 AND credential_store_id=$3::uuid AND next_offset=0 AND revision=4`, testApp, topic, testStoreA)
 	assertCount(t, ctx, p, 10, `SELECT count(*) FROM app.meli_notification_inbox WHERE store_id=$1 AND source='missed_feed'`, testStoreA)
 	assertCount(t, ctx, p, 10, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1 AND generation=1`, testStoreA)
 }
