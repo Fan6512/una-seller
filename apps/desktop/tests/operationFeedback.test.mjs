@@ -57,3 +57,23 @@ test("batch counts deduplicate and incomplete work is not reported as successful
   batch.record("four","success");
   assert.equal(view.title,"已停止");
 });
+
+test("deferred copy results aggregate and cannot replace a newer task or session", () => {
+  let view;
+  const feedback = createFeedback(v => { view = v; });
+  const copy = {scope:"store-a", key:"copy"};
+  const first = feedback.notify(copy);
+  const second = feedback.notify(copy);
+  first("success", "已复制");
+  second("success", "已复制");
+  assert.equal(view.count, 2);
+  const late = feedback.notify(copy);
+  feedback.task({scope:"store-b", key:"sync"}, "同步中");
+  late("success", "已复制");
+  assert.equal(view.title, "同步中");
+  const oldSession = feedback.notify(copy);
+  feedback.clear();
+  feedback.notify(copy);
+  oldSession("success", "已复制");
+  assert.equal(view, null);
+});

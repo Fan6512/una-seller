@@ -17,7 +17,11 @@ type BatchCounts = { success: number; failed: number; skipped: number };
 export function createFeedback(render: (view: FeedbackView | null) => void, now = Date.now) {
   let sequence = 0;
   let active: { view: FeedbackView; identity: Identity; at: number; single: boolean } | null = null;
+  let pendingNotice: Identity | null = null;
   function start(identity: Identity, view: Omit<FeedbackView, "id">, single = false) {
+    if (!single || pendingNotice?.scope !== identity.scope || pendingNotice.key !== identity.key) {
+      pendingNotice = null;
+    }
     const id = ++sequence;
     active = { view: { ...view, id }, identity, at: now(), single };
     render(active.view);
@@ -28,7 +32,18 @@ export function createFeedback(render: (view: FeedbackView | null) => void, now 
     active.view = { ...view, id };
     render(active.view);
   }
-  function notify(identity: Identity, kind: FeedbackKind, title: string) {
+  function notify(identity: Identity, kind: FeedbackKind, title: string): void;
+  function notify(identity: Identity): (kind: FeedbackKind, title: string) => void;
+  function notify(identity: Identity, kind?: FeedbackKind, title?: string) {
+    if (kind === undefined || title === undefined) {
+      // Async notifications from the same operation can aggregate. A newer task or scope supersedes them.
+      if (pendingNotice?.scope !== identity.scope || pendingNotice.key !== identity.key) pendingNotice = { ...identity };
+      const ticket = pendingNotice;
+      return (result: FeedbackKind, message: string) => {
+        if (pendingNotice === ticket) notify(identity, result, message);
+      };
+    }
+    if (pendingNotice?.scope !== identity.scope || pendingNotice.key !== identity.key) pendingNotice = null;
     if (active?.single && active.identity.scope === identity.scope &&
         active.identity.key === identity.key && active.view.kind === kind &&
         active.view.title === title && now() - active.at <= 1500) {
@@ -80,6 +95,7 @@ export function createFeedback(render: (view: FeedbackView | null) => void, now 
   }
   function clear() {
     active = null;
+    pendingNotice = null;
     render(null);
   }
   return { notify, task, batch, clear };

@@ -5,10 +5,12 @@ import { detectTitleLanguage, listingTextCount, localizedTitleLimit, preferredTi
 import { getCBTCategorySuggestions, type AICopyProduct, type CBTCategorySuggestion, type CBTCategoryRules, type CBTAttributeRule } from "./collections";
 import { useEffect, useRef, useState } from "react";
 import { moveGalleryImage, removeDuplicateGalleryLinks, toggleVariantImage, renameVariantAttribute, planSecondaryImageReuse } from "./editorUx";
+import { useOperationFeedback } from "./operationFeedbackContext";
 import { useSiteTitleMode } from "./titleModePreference";
 
 type Props={value:ListingFields;onChange:(next:ListingFields)=>void;disabled?:boolean;aiProduct?:AICopyProduct;aiSaved?:Partial<ListingFields>};
 export default function ListingFieldsEditor({value,onChange,disabled=false,aiProduct,aiSaved}:Props) {
+  const feedback = useOperationFeedback();
   const set=(key:keyof ListingFields,val:ListingFields[typeof key])=>onChange({...value,[key]:val});
   const [categoryRules,setCategoryRules]=useState<CBTCategoryRules|null>(null);
   const [suggestions,setSuggestions]=useState<CBTCategorySuggestion[]>([]);
@@ -163,6 +165,13 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
     const changed=[...plans].filter(([,p])=>p.changed);
     if(changed.some(([i])=>variants[i].image_urls.length>1)&&!window.confirm("将覆盖 "+changed.filter(([i])=>variants[i].image_urls.length>1).length+" 个变体已有副图，保留主图。是否继续？"))return;
     if(changed.length)set("variants",variants.map((v,i)=>plans.get(i)?.changed?{...v,image_urls:plans.get(i)!.urls}:v));
+    if (reuseMode === "bulk" && plans.size) {
+      const batch = feedback.batch({ scope: "listing-editor", key: "reuse-secondary-images" }, "批量复用副图", plans.size);
+      for (const [index, plan] of plans) {
+        batch.record(String(index), plan.changed ? "success" : "skipped");
+      }
+      batch.finish("副图复用结果");
+    }
     const skipped=[...plans].filter(([,p])=>p.error).map(([i,p])=>variantLabel(variants[i],i)+"："+p.error);
     setReuseMessage("已更新 "+changed.length+" 个变体；未变更 "+(plans.size-changed.length)+" 个。"+(skipped.length?" "+skipped.join("；"):""));
   };

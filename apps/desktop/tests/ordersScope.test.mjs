@@ -12,6 +12,8 @@ import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import OrdersPage, { dispatchDeadlineLabel } from "/src/OrdersPage.tsx";
+import { createFeedback } from "/src/operationFeedback.ts";
+import { OperationFeedbackContext } from "/src/operationFeedbackContext.ts";
 import { displayOrderStatus, hasProcurement, orderMoney, orderStatusLabel, orderVariationText,
   shouldApplyOrderRefresh, shouldStopLogisticsBatch, shipmentStatusLabel, orderDate, officialTrackingURL, orderUSD, orderFulfillmentStatus } from "/src/orders.ts";
 
@@ -241,9 +243,12 @@ const start = async () => {
 };
 let active = 0;
 try {
-  createRoot(document.querySelector("main")).render(React.createElement(OrdersPage, {
+  const feedback = createFeedback(() => {});
+  createRoot(document.querySelector("main")).render(React.createElement(OperationFeedbackContext.Provider, {
+    value: feedback,
+  }, React.createElement(OrdersPage, {
     installingUpdate: false, beginSync() { active++; return () => active--; },
-  }));
+  })));
   const filter = (label) => [...document.querySelectorAll(".orders-procurement-toolbar button")]
     .find((item) => item.textContent === label);
   await waitFor(() => filter("待关联"), "purchase filter unavailable");

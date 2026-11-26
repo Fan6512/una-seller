@@ -1,3 +1,4 @@
+import { useOperationFeedback } from "./operationFeedbackContext";
 import { useEffect, useRef, useState } from "react";
 import ListingFieldsEditor from "./ListingFieldsEditor";
 import { initialListingFields, listingTextCount, preferredTitle, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
@@ -20,6 +21,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   const [revision, setRevision] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [reload, setReload] = useState(0);
+  const feedback = useOperationFeedback();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -91,6 +93,9 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     const controller = new AbortController();
     active.current?.abort();
     active.current = controller;
+    const task = feedback.task({ scope: String(collectionId), key: "working-draft-save" }, "正在保存工作稿");
+    const onAbort = () => task.finish("warning", "工作稿保存等待已结束");
+    controller.signal.addEventListener("abort", onAbort, { once: true });
     setSaving(true);
     setError("");
     setNotice("");
@@ -106,8 +111,10 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       setTouched(false);
       setRevision(draft.revision);
       setNotice("已保存到云端整理工作稿，关闭窗口后可恢复。");
+      task.finish("success", "工作稿已保存");
     } catch (e) {
       if (!controller.signal.aborted) {
+        task.finish("error", "工作稿保存未完成");
         // A timed-out PUT may have committed. Never blindly retry the same revision.
         if (!isDraftRejected(e)) setLoadState("error");
         setError(isDraftConverted(e)
@@ -121,6 +128,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
             : (e instanceof Error ? e.message : "保存失败") + "。保存状态未确认，请重新加载后再试。");
       }
     } finally {
+      controller.signal.removeEventListener("abort", onAbort);
       if (!controller.signal.aborted) setSaving(false);
     }
   };
