@@ -11,7 +11,7 @@ type OperationsStoreSummary struct {
 	Connected        bool     `json:"connected"`
 	PaidOrders       int      `json:"paid_orders"`
 	CachedUnanswered *int     `json:"cached_unanswered"`
-	IncomingMessages *int     `json:"incoming_messages_7d"`
+	PendingMessages  *int     `json:"pending_message_conversations"`
 	OpenClaims       *int     `json:"open_claims"`
 	PausedItems      *int     `json:"paused_items"`
 	PendingJobs      int      `json:"pending_jobs"`
@@ -25,6 +25,22 @@ type OperationsSummary struct {
 	Truncated bool                     `json:"truncated"`
 	CacheOnly bool                     `json:"cache_only"`
 }
+
+// Group available message snapshots by the exact conversation scope. Use
+// provider creation time, not notification arrival/check time, so duplicates
+// and out-of-order deliveries cannot reopen a replied conversation.
+const operationsMessageConversationsSQL = `SELECT store_id,owner_user_id,parent_seller_id,seller_id,site_id,related_id,
+	max(created_at) FILTER (WHERE direction='incoming') AS last_incoming,
+	max(created_at) FILTER (WHERE direction='outgoing') AS last_outgoing
+	FROM app.meli_customer_notifications
+	WHERE owner_user_id=$1::uuid AND topic='marketplace_messages' AND status='available'
+	  AND direction IN ('incoming','outgoing') AND related_id ~ '^[1-9][0-9]{0,29}$'
+	GROUP BY store_id,owner_user_id,parent_seller_id,seller_id,site_id,related_id`
+
+// Equal timestamps do not prove that the outgoing message followed the incoming
+// one. Keep the conversation pending until a strictly later reply is observed.
+const operationsMessagePendingSQL = `(n.last_incoming IS NOT NULL
+	AND (n.last_outgoing IS NULL OR n.last_incoming>=n.last_outgoing))`
 
 // A local, owner-scoped summary. Never calls the provider or infers unread
 // status, verified delivery, or current completeness from a cached count.
@@ -47,11 +63,10 @@ func (s *Service) OperationsSummary(ctx context.Context, owner string) (Operatio
 		    AND n.parent_seller_id=c.seller_id AND n.topic='marketplace_questions'
 		    AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.marketplaces) m(value)
 		      WHERE m.value->>'user_id'=n.seller_id AND m.value->>'site_id'=n.site_id)),
-		(SELECT CASE WHEN count(*)>0 THEN count(*) FILTER (WHERE n.status='available'
-		    AND n.direction='incoming' AND n.created_at>now()-interval '7 days') END
-		  FROM app.meli_customer_notifications n
+		(SELECT CASE WHEN count(*)>0 THEN count(*) FILTER (WHERE `+operationsMessagePendingSQL+`) END
+		  FROM (`+operationsMessageConversationsSQL+`) n
 		  WHERE c.connected AND n.store_id=c.id AND n.owner_user_id=c.owner_user_id
-		    AND n.parent_seller_id=c.seller_id AND n.topic='marketplace_messages'
+		    AND n.parent_seller_id=c.seller_id
 		    AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.marketplaces) m(value)
 		      WHERE m.value->>'user_id'=n.seller_id AND m.value->>'site_id'=n.site_id)),
 		(SELECT CASE WHEN count(*)>0 THEN count(*) FILTER (WHERE n.status='opened') END
@@ -87,7 +102,7 @@ func (s *Service) OperationsSummary(ctx context.Context, owner string) (Operatio
 	for rows.Next() {
 		var v OperationsStoreSummary
 		if err := rows.Scan(&v.StoreID, &v.Nickname, &v.Connected, &v.PaidOrders, &v.CachedUnanswered,
-			&v.IncomingMessages, &v.OpenClaims, &v.PausedItems, &v.PendingJobs, &v.DeadJobs, &v.Sites); err != nil {
+			&v.PendingMessages, &v.OpenClaims, &v.PausedItems, &v.PendingJobs, &v.DeadJobs, &v.Sites); err != nil {
 			return out, err
 		}
 		out.Stores = append(out.Stores, v)
@@ -161,9 +176,17 @@ func (s *Service) OperationsOverview(ctx context.Context, owner, store, site str
 		  o.status IN ('awaiting_dispatch','label_printed','logistics_exception','shipment_cancelled') AS todo
 		FROM order_states o
 		UNION ALL
-		SELECT n.store_id::text,n.site_id,CASE WHEN n.topic='marketplace_questions' THEN 'question' ELSE 'message' END,
-		  n.resource_id,n.status,n.checked_at,NULL::timestamptz,n.topic='marketplace_questions' AND n.status='UNANSWERED'
+		SELECT n.store_id::text,n.site_id,'question',
+		  n.resource_id,n.status,n.checked_at,NULL::timestamptz,n.status='UNANSWERED'
 		FROM app.meli_customer_notifications n
+		WHERE n.topic='marketplace_questions' AND EXISTS (SELECT 1 FROM markets m WHERE m.id=n.store_id AND m.owner_user_id=n.owner_user_id
+		  AND m.parent_id=n.parent_seller_id AND m.site=n.site_id AND m.child=n.seller_id)
+		UNION ALL
+		SELECT n.store_id::text,n.site_id,'message',n.related_id,
+		  CASE WHEN `+operationsMessagePendingSQL+` THEN 'pending_reply'
+		       WHEN n.last_incoming IS NOT NULL THEN 'replied' ELSE 'sent' END,
+		  greatest(n.last_incoming,n.last_outgoing),NULL::timestamptz,`+operationsMessagePendingSQL+`
+		FROM (`+operationsMessageConversationsSQL+`) n
 		WHERE EXISTS (SELECT 1 FROM markets m WHERE m.id=n.store_id AND m.owner_user_id=n.owner_user_id
 		  AND m.parent_id=n.parent_seller_id AND m.site=n.site_id AND m.child=n.seller_id)
 		UNION ALL

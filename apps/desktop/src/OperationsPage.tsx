@@ -4,7 +4,7 @@ import "./operations.css";
 
 type StoreSummary = {
   store_id: string; nickname: string; connected: boolean; sites: string[];
-  paid_orders: number; cached_unanswered: number | null; incoming_messages_7d: number | null;
+  paid_orders: number; cached_unanswered: number | null; pending_message_conversations: number | null;
   open_claims: number | null; paused_items: number | null; pending_jobs: number; dead_jobs: number;
 };
 type WorkRow = { store_id: string; site: string; kind: string; resource_id: string; status: string; observed_at: string; due_at?: string };
@@ -12,13 +12,13 @@ type Summary = { stores: StoreSummary[]; checked_at: string; truncated: boolean;
 type Target = "orders" | "published";
 const metrics = [
   ["paid_orders", "缓存已付款订单"], ["cached_unanswered", "缓存未回答问答"],
-  ["incoming_messages_7d", "近7日收到消息"], ["open_claims", "缓存进行中投诉"],
+  ["pending_message_conversations", "待回复会话"], ["open_claims", "缓存进行中投诉"],
   ["paused_items", "缓存暂停商品"], ["pending_jobs", "待处理通知"], ["dead_jobs", "待核实失败通知"],
 ] as const;
 const kinds: Record<string, string> = { order: "订单", question: "问答", message: "消息", claim: "投诉", item: "商品", sync_failure: "同步异常" };
 const states: Record<string, string> = { paid: "已付款", cancelled: "已取消", awaiting_dispatch: "待发货", label_printed: "已打印面单",
   logistics_exception: "物流异常", shipment_cancelled: "物流取消", delivered: "已签收", shipped: "已发货", in_transit: "运输中", out_for_delivery: "派送中",
-  UNANSWERED: "未回答", ANSWERED: "已回答", available: "已收录", opened: "进行中", closed: "已关闭", paused: "暂停", active: "在售", failed: "待核实" };
+  UNANSWERED: "未回答", ANSWERED: "已回答", available: "已收录", pending_reply: "待回复", replied: "已回复 / 已处理", sent: "已发送", opened: "进行中", closed: "已关闭", paused: "暂停", active: "在售", failed: "待核实" };
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
 
 export default function OperationsPage({ onNavigate }: { onNavigate: (target: Target) => void }) {
@@ -88,7 +88,7 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
     });
     return sorted.length ? <ul className="operations-list">{sorted.map((row, index) => <li key={row.store_id + row.site + row.kind + row.resource_id + index}>
       <div><strong>{kinds[row.kind] ?? row.kind} · {states[row.status] ?? row.status}</strong>
-        <span>{stores.find(s => s.store_id === row.store_id)?.nickname || "店铺"} · {row.site || "站点未确认"} · {row.resource_id}</span></div>
+        <span>{stores.find(s => s.store_id === row.store_id)?.nickname || "店铺"} · {row.site || "站点未确认"} · {row.kind === "message" ? "会话 " : ""}{row.resource_id}</span></div>
       <div className="operations-row-time">{row.due_at && <strong>缓存期限：{date(row.due_at)}</strong>}<span>{date(row.observed_at)}</span>
         {todos && row.kind === "order" && <button type="button" onClick={() => onNavigate("orders")}>订单管理</button>}
         {todos && row.kind === "item" && <button type="button" onClick={() => onNavigate("published")}>已刊登商品</button>}
@@ -115,8 +115,8 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
       )}</div> : <p className="operations-note">当前授权不可用，暂不展示缓存指标。请前往设置检查店铺连接。</p>}
     </article>)}
     <div className="operations-work">
-      <article className="operations-store"><h2>待办事项</h2><p className="operations-note">按已知期限优先，最多30条。业务操作在对应模块处理；未开发的模块仅展示。</p>{currentRows ? list(currentRows.todos, true) : <p className="operations-note">当前筛选暂无摘要。</p>}</article>
-      <article className="operations-store"><h2>最新动态</h2><p className="operations-note">最近30条本地观察，时间为本地记录更新时间，并非平台事件发生时间。</p>{currentRows ? list(currentRows.activity, false) : <p className="operations-note">当前筛选暂无摘要。</p>}</article>
+      <article className="operations-store"><h2>待办事项</h2><p className="operations-note">按已知期限优先，最多30条。回复已同步的消息自动移出待办，新买家消息才重新列入；其他操作在对应模块处理。</p>{currentRows ? list(currentRows.todos, true) : <p className="operations-note">当前筛选暂无摘要。</p>}</article>
+      <article className="operations-store"><h2>最新动态</h2><p className="operations-note">最近30条本地观察；消息按会话最新消息时间，其余为本地记录更新时间。</p>{currentRows ? list(currentRows.activity, false) : <p className="operations-note">当前筛选暂无摘要。</p>}</article>
     </div>
   </section>;
 }

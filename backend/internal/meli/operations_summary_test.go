@@ -54,16 +54,12 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO app.meli_customer_notifications
-		(store_id,owner_user_id,parent_seller_id,seller_id,site_id,topic,resource_id,status,created_at,checked_at)
-		VALUES($1,$2,'900','111','MLB','marketplace_questions','1','UNANSWERED',now(),now()),
-		($1,$2,'900','111','MLB','marketplace_questions','2','ANSWERED',now(),now()),
-		($1,$2,'900','111','MLB','marketplace_messages','aaaaaaaaaaaaaaaa','available',now()-interval '1 day',now()),
-		($1,$2,'900','111','MLB','marketplace_messages','bbbbbbbbbbbbbbbb','available',now()-interval '1 day',now())`,
+		(store_id,owner_user_id,parent_seller_id,seller_id,site_id,topic,resource_id,related_id,status,direction,created_at,checked_at)
+		VALUES($1,$2,'900','111','MLB','marketplace_questions','1','CBT1','UNANSWERED','',now(),now()),
+		($1,$2,'900','111','MLB','marketplace_questions','2','CBT1','ANSWERED','',now(),now()),
+		($1,$2,'900','111','MLB','marketplace_messages','aaaaaaaaaaaaaaaa','700','available','incoming',now()-interval '2 days',now()),
+		($1,$2,'900','111','MLB','marketplace_messages','bbbbbbbbbbbbbbbb','700','available','outgoing',now()-interval '1 day',now())`,
 		storeA, ownerA); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, `UPDATE app.meli_customer_notifications SET direction='incoming' WHERE resource_id='aaaaaaaaaaaaaaaa';
-		UPDATE app.meli_customer_notifications SET direction='outgoing' WHERE resource_id='bbbbbbbbbbbbbbbb'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO app.meli_claim_notifications
@@ -95,7 +91,7 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 	}
 	s := got.Stores[0]
 	if !s.Connected || s.PaidOrders != 1 || s.CachedUnanswered == nil || *s.CachedUnanswered != 1 ||
-		s.IncomingMessages == nil || *s.IncomingMessages != 1 || s.OpenClaims == nil || *s.OpenClaims != 1 ||
+		s.PendingMessages == nil || *s.PendingMessages != 0 || s.OpenClaims == nil || *s.OpenClaims != 1 ||
 		s.PausedItems == nil || *s.PausedItems != 1 || s.PendingJobs != 2 || s.DeadJobs != 1 {
 		t.Fatalf("summary mismatch: %+v", s)
 	}
@@ -120,12 +116,38 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(overview.Activity) != 10 || len(overview.Todos) != 3 {
+	if len(overview.Activity) != 9 || len(overview.Todos) != 3 {
 		t.Fatalf("filtered activity/todos: %+v", overview)
 	}
 	for _, row := range overview.Todos {
 		if row.StoreID != storeA || row.Site != "MLB" {
 			t.Fatalf("out-of-scope todo: %+v", row)
+		}
+	}
+	// A cached reply closes the conversation; a new incoming message reopens it.
+	// A delayed older incoming observation cannot change the latest message time.
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_customer_notifications
+		(store_id,owner_user_id,parent_seller_id,seller_id,site_id,topic,resource_id,related_id,status,direction,created_at,checked_at)
+		VALUES($1,$2,'900','111','MLB','marketplace_messages','cccccccccccccccc','700','available','incoming',now()-interval '3 days',now())`, storeA, ownerA); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := svc.OperationsOverview(ctx, ownerA, storeA, "MLB")
+	if err != nil || len(processed.Todos) != 3 || processed.Stores[0].PendingMessages == nil || *processed.Stores[0].PendingMessages != 0 {
+		t.Fatalf("late old message reopened replied conversation: %+v %v", processed, err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_customer_notifications
+		(store_id,owner_user_id,parent_seller_id,seller_id,site_id,topic,resource_id,related_id,status,direction,created_at,checked_at)
+		VALUES($1,$2,'900','111','MLB','marketplace_messages','dddddddddddddddd','700','available','incoming',now(),now()),
+		($1,$2,'900','111','MLB','marketplace_messages','eeeeeeeeeeeeeeee','700','available','incoming',now(),now())`, storeA, ownerA); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := svc.OperationsOverview(ctx, ownerA, storeA, "MLB")
+	if err != nil || len(reopened.Todos) != 4 || reopened.Stores[0].PendingMessages == nil || *reopened.Stores[0].PendingMessages != 1 {
+		t.Fatalf("new messages did not reopen exactly one conversation: %+v %v", reopened, err)
+	}
+	for _, row := range reopened.Todos {
+		if row.Kind == "message" && (row.ResourceID != "700" || row.Status != "pending_reply") {
+			t.Fatalf("incorrect conversation todo: %+v", row)
 		}
 	}
 	foreign, err := svc.OperationsOverview(ctx, ownerB, storeA, "")
@@ -140,7 +162,7 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = revoked.Stores[0]
-	if s.Connected || s.PaidOrders != 0 || s.CachedUnanswered != nil || s.IncomingMessages != nil ||
+	if s.Connected || s.PaidOrders != 0 || s.CachedUnanswered != nil || s.PendingMessages != nil ||
 		s.OpenClaims != nil || s.PausedItems != nil || s.PendingJobs != 0 || s.DeadJobs != 0 {
 		t.Fatalf("revoked authorization leaked cached metrics: %+v", s)
 	}
