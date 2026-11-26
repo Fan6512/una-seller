@@ -5,6 +5,8 @@
 package publication
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -53,24 +55,29 @@ type Variant struct {
 }
 
 type Input struct {
-	FamilyName, CategoryID, Description string
-	Target                              Target
-	Rules                               []Rule
-	Variants                            []Variant
+	Copy       Copy
+	CategoryID string
+	Target     Target
+	Rules      []Rule
+	Variants   []Variant
 }
 
-// Prepared keeps local variant keys separate from the official wire body.
-// The keys describe request order, not a guarantee of response ordering.
+// Prepared keeps local variant identity separate from the official wire body.
+// Variants are in request order; never match the response by array position.
 type Prepared struct {
-	Path        string
-	Body        []byte
-	VariantKeys []string
+	Path     string
+	Body     []byte
+	Variants []ExpectedVariant
+	Target   Target
+	Copy     Copy
 }
 
 type site struct {
-	ID          string `json:"site_id"`
-	Logistic    string `json:"logistic_type"`
-	ListingType string `json:"listing_type_id"`
+	ID          string       `json:"site_id"`
+	Logistic    string       `json:"logistic_type"`
+	ListingType string       `json:"listing_type_id"`
+	FamilyName  string       `json:"family_name,omitempty"`
+	Description *description `json:"description,omitempty"`
 }
 
 type picture struct {
@@ -115,8 +122,10 @@ func Prepare(in Input) (Prepared, error) {
 		!sitePattern.MatchString(t.Site) || (t.ListingType != "gold_pro" && t.ListingType != "gold_special") {
 		return Prepared{}, fmt.Errorf("unsupported publication target")
 	}
-	if !categoryPattern.MatchString(in.CategoryID) || !textOK(in.FamilyName, 500) ||
-		!textOK(in.Description, 20000) || len(in.Variants) == 0 || len(in.Variants) > 100 {
+	if err := in.Copy.validate(); err != nil {
+		return Prepared{}, err
+	}
+	if !categoryPattern.MatchString(in.CategoryID) || len(in.Variants) == 0 || len(in.Variants) > 100 {
 		return Prepared{}, fmt.Errorf("invalid publication input")
 	}
 	rules := make(map[string]Rule, len(in.Rules))
@@ -147,7 +156,11 @@ func Prepare(in Input) (Prepared, error) {
 	seenKeys, seenSKUs, seenChildren := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	var sharedParent string
 	items := make([]up, 0, len(in.Variants))
-	keys := make([]string, 0, len(in.Variants))
+	expected := make([]ExpectedVariant, 0, len(in.Variants))
+	destination := site{ID: t.Site, Logistic: t.Logistic, ListingType: t.ListingType, FamilyName: in.Copy.SiteFamilyName}
+	if in.Copy.SiteDescription != "" {
+		destination.Description = &description{PlainText: in.Copy.SiteDescription}
+	}
 	for _, v := range in.Variants {
 		if !textOK(v.Key, 120) || seenKeys[v.Key] || (v.Key == SingleKey && len(in.Variants) != 1) ||
 			!textOK(v.SKU, 120) || strings.TrimSpace(v.SKU) != v.SKU || seenSKUs[v.SKU] ||
@@ -218,12 +231,12 @@ func Prepare(in Input) (Prepared, error) {
 		}
 		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 		items = append(items, up{
-			FamilyName: in.FamilyName, CategoryID: in.CategoryID, Currency: "USD",
+			FamilyName: in.Copy.FamilyName, CategoryID: in.CategoryID, Currency: "USD",
 			NetProceeds: json.Number(v.NetProceeds), Quantity: *v.Quantity,
-			Description: description{PlainText: in.Description}, Pictures: pics, Attributes: ordered,
-			Sites: []site{{ID: t.Site, Logistic: t.Logistic, ListingType: t.ListingType}},
+			Description: description{PlainText: in.Copy.Description}, Pictures: pics, Attributes: ordered,
+			Sites: []site{destination},
 		})
-		keys = append(keys, v.Key)
+		expected = append(expected, ExpectedVariant{Key: v.Key, SKU: v.SKU})
 	}
 	path := FamilyPath
 	var body any = items
@@ -234,7 +247,7 @@ func Prepare(in Input) (Prepared, error) {
 	if err != nil {
 		return Prepared{}, err
 	}
-	return Prepared{Path: path, Body: data, VariantKeys: keys}, nil
+	return Prepared{Path: path, Body: data, Variants: expected, Target: t, Copy: in.Copy}, nil
 }
 
 // Use official value IDs where available; free text must already be normalized
@@ -255,4 +268,10 @@ func groupKey(attrs map[string]Attribute, ids []string) string {
 	}
 	b, _ := json.Marshal(values)
 	return string(b)
+}
+
+// PayloadSHA256 is the digest of the exact wire bytes, not a re-marshaled body.
+func (p Prepared) PayloadSHA256() string {
+	sum := sha256.Sum256(p.Body)
+	return hex.EncodeToString(sum[:])
 }

@@ -17,7 +17,7 @@ func sample() Input {
 			attr("ITEM_CONDITION", "2230284", "New")}
 	}
 	return Input{
-		FamilyName: "Example Tool", CategoryID: "CBT123", Description: "Example plain text.",
+		Copy: Copy{Mode: PlatformAuto, FamilyName: "Example Tool", Description: "Example plain text."}, CategoryID: "CBT123",
 		Target: Target{Site: "MLM", Logistic: "remote", Mode: "standard_up", Pricing: "net_proceeds", ListingType: "gold_pro"},
 		Rules:  []Rule{{ID: "BRAND", Hierarchy: "PARENT_PK", Enumerated: true}, {ID: "COLOR", Hierarchy: "CHILD_PK", Enumerated: true}, {ID: "ITEM_CONDITION", Required: true, Enumerated: true}},
 		Variants: []Variant{
@@ -33,7 +33,7 @@ func TestPrepareFamilyAndSingle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Path != FamilyPath || len(got.VariantKeys) != 2 || got.VariantKeys[1] != "variant-b" {
+	if got.Path != FamilyPath || len(got.Variants) != 2 || got.Variants[1].Key != "variant-b" {
 		t.Fatalf("bad route or local mapping: %+v", got)
 	}
 	var items []up
