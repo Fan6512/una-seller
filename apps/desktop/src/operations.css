@@ -1,0 +1,24 @@
+.operations-page { max-width: 1280px; margin: 0 auto; color: var(--ui-text); }
+.operations-store { background: var(--ui-surface); border: 1px solid var(--ui-outline); border-radius: 16px; padding: 20px; margin: 16px 0; }
+.operations-store-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.operations-store-header h2 { font-size: 17px; margin: 0 0 12px; overflow-wrap: anywhere; }
+.operations-store-header span, .operations-note { font-size: 12px; color: var(--ui-muted); }
+.operations-error { border-left: 3px solid currentColor; color: #a44d35; padding: 10px; font-size: 13px; }
+.operations-metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(145px,100%),1fr)); gap: 10px; }
+.operations-metric { background: var(--ui-elevated); padding: 14px; border-radius: 12px; min-width: 0; }
+.operations-metric span { display: block; color: var(--ui-muted); font-size: 12px; overflow-wrap: anywhere; }
+.operations-metric strong { display: block; font-size: 26px; font-variant-numeric: tabular-nums; margin-top: 6px; overflow-wrap: anywhere; }
+
+.operations-filters { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.operations-filters label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ui-muted); }
+.operations-filters select { max-width: 240px; padding: 7px 10px; border: 1px solid var(--ui-outline); border-radius: 8px; background: var(--ui-surface); color: var(--ui-text); }
+.operations-work { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(340px,100%),1fr)); gap: 16px; align-items: start; }
+.operations-work > article { margin: 0 0 16px; min-width: 0; }
+.operations-work h2 { font-size: 16px; margin: 0 0 8px; }
+.operations-list { list-style: none; padding: 0; margin: 0; }
+.operations-list li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--ui-outline); overflow-wrap: anywhere; }
+.operations-list li:last-child { border-bottom: 0; }
+.operations-list strong, .operations-list span { display: block; font-size: 13px; }
+.operations-list span { color: var(--ui-muted); font-size: 12px; margin-top: 4px; }
+.operations-row-time { text-align: right; min-width: 0; }
+.operations-row-time button { margin-top: 6px; color: var(--ui-accent); background: transparent; border: 0; cursor: pointer; padding: 4px; }
