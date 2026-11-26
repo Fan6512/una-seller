@@ -115,7 +115,35 @@ func TestWorkerActivationRequiresAllAcceptedTopics(t *testing.T) {
 	}
 	if err := NewWorker(PostgresInbox{}, "123", map[string]Prepare{
 		"marketplace_orders": prepare, "marketplace_shipments": prepare,
+		"marketplace_questions": prepare, "marketplace_messages": prepare,
+		"marketplace_claims": prepare, "marketplace_items": prepare,
 	}).ValidateActivation(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCustomerNotificationResourceAllowlist(t *testing.T) {
+	for _, tc := range []struct {
+		topic, path, id string
+	}{
+		{"marketplace_questions", "/marketplace/questions/123", "123"},
+		{"marketplace_messages", "/marketplace/messages/a35cf79864a845ca9a3bf6aee59bb4d7", "a35cf79864a845ca9a3bf6aee59bb4d7"},
+		{"marketplace_messages", "/marketplace/messages/../../orders/1", ""},
+		{"marketplace_messages", "/marketplace/messages/abc123abc123abc123?mark_as_read=true", ""},
+		{"marketplace_questions", "/marketplace/questions/123/answers", ""},
+		{"marketplace_claims", "/marketplace/claims/123", "123"},
+		{"marketplace_items", "/marketplace/items/MLB123", "MLB123"},
+		{"marketplace_items", "/marketplace/items/CBT123", ""},
+		{"marketplace_items", "/marketplace/items/MLB123/price_to_win", ""},
+	} {
+		body := strings.Replace(strings.Replace(sample, "marketplace_orders", tc.topic, 1), "/marketplace/orders/1499111111", tc.path, 1)
+		got, err := parse(strings.NewReader(body), "2069392825111111")
+		if tc.id == "" {
+			if err == nil {
+				t.Fatalf("unsafe resource accepted: %s", tc.path)
+			}
+		} else if err != nil || got.ResourceID != tc.id {
+			t.Fatalf("valid resource rejected: %s %v", tc.path, err)
+		}
 	}
 }

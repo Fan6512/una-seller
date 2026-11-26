@@ -83,7 +83,7 @@ type Worker struct {
 
 func NewWorker(inbox PostgresInbox, appID string, handlers map[string]Prepare) *Worker {
 	w := &Worker{inbox: inbox, appID: appID, handlers: make(map[string]Prepare), topics: []string{}}
-	for _, topic := range []string{"marketplace_orders", "marketplace_shipments"} {
+	for _, topic := range []string{"marketplace_orders", "marketplace_shipments", "marketplace_questions", "marketplace_messages", "marketplace_claims", "marketplace_items"} {
 		if prepare := handlers[topic]; prepare != nil {
 			w.handlers[topic] = prepare
 			w.topics = append(w.topics, topic)
@@ -96,10 +96,26 @@ func NewWorker(inbox PostgresInbox, appID string, handlers map[string]Prepare) *
 // accepted topic must have a real handler; otherwise a disabled deployment
 // could fill its global queue with jobs that cannot be consumed.
 func (w *Worker) ValidateActivation() error {
-	for _, topic := range []string{"marketplace_orders", "marketplace_shipments"} {
+	for _, topic := range []string{"marketplace_orders", "marketplace_shipments", "marketplace_questions", "marketplace_messages", "marketplace_claims", "marketplace_items"} {
 		if w.handlers[topic] == nil {
 			return errors.New("notification activation requires all accepted topic handlers")
 		}
+	}
+	return nil
+}
+
+// ValidateTopicsActivation verifies the exact explicitly enabled topics;
+// a partial production worker cannot accept an unregistered event.
+func (w *Worker) ValidateTopicsActivation(topics []string) error {
+	if len(topics) == 0 || len(w.topics) != len(topics) {
+		return errors.New("notification activation requires exact enabled topic handlers")
+	}
+	seen := make(map[string]bool)
+	for _, topic := range topics {
+		if seen[topic] || w.handlers[topic] == nil {
+			return errors.New("notification activation requires exact enabled topic handlers")
+		}
+		seen[topic] = true
 	}
 	return nil
 }
@@ -246,7 +262,7 @@ func (j Job) checkScope(ctx context.Context, tx pgx.Tx, seller string) error {
 
 func (w *Worker) finish(ctx context.Context, j Job, resource VerifiedResource) error {
 	if resource.Topic != j.Topic || resource.ResourceID != j.ResourceID ||
-		!idPattern.MatchString(resource.SellerID) || resource.Apply == nil {
+		!idPattern.MatchString(resource.SellerID) || !ValidResourceID(j.Topic, resource.ResourceID) || resource.Apply == nil {
 		return ErrScope
 	}
 	return pgx.BeginFunc(ctx, w.inbox.DB, func(tx pgx.Tx) error {
@@ -336,16 +352,18 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 	return pgx.BeginFunc(ctx, w.inbox.DB, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE app.meli_notification_jobs
-			SET lease_token=NULL, lease_until=NULL, last_failure=$3,
-			    available_at=clock_timestamp()+CASE WHEN $8::boolean
-			      THEN least(interval '1 hour',
+			SET lease_token=NULL, lease_until=NULL,
+			    last_failure=CASE WHEN generation<>$9 THEN NULL ELSE $3 END,
+			    available_at=clock_timestamp()+CASE WHEN generation<>$9 AND NOT $6::boolean THEN interval '0 seconds'
+			      WHEN $8::boolean THEN least(interval '1 hour',
 			                 interval '1 minute' * power(2, least(floor(extract(epoch from clock_timestamp()-pending_since)/600), 6)))
 			      ELSE $4*interval '1 second' END,
-			    attempts=CASE WHEN $6::boolean THEN greatest(attempts-1,0) ELSE attempts END,
-			    dead_at=CASE WHEN $7::boolean OR ($6::boolean AND pending_since <= clock_timestamp()-interval '24 hours')
+			    attempts=CASE WHEN generation<>$9 THEN 0 WHEN $6::boolean THEN greatest(attempts-1,0) ELSE attempts END,
+			    dead_at=CASE WHEN generation<>$9 THEN NULL
+			                 WHEN $7::boolean OR ($6::boolean AND pending_since <= clock_timestamp()-interval '24 hours')
 			                      OR (NOT $6::boolean AND attempts >= $5) THEN clock_timestamp() END
 			WHERE id=$1 AND lease_token=$2 AND lease_until > clock_timestamp()`,
-			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts, refund, terminal, backoff)
+			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts, refund, terminal, backoff, j.generation)
 		if err != nil {
 			return err
 		}

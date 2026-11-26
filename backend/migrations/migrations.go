@@ -53,6 +53,21 @@ var notificationInboxSQL string
 //go:embed 0015_meli_order_read_coordination.sql
 var orderReadCoordinationSQL string
 
+//go:embed 0016_meli_customer_notifications.sql
+var customerNotificationSQL string
+
+//go:embed 0017_meli_status_notifications.sql
+var statusNotificationSQL string
+
+//go:embed 0018_meli_compensation_source.sql
+var compensationSourceSQL string
+
+//go:embed 0019_meli_order_discovery.sql
+var orderDiscoverySQL string
+
+//go:embed 0020_meli_missed_feed_replay.sql
+var missedFeedReplaySQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -119,6 +134,26 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, orderReadCoordinationSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply order read coordination schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, customerNotificationSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply customer notification schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, statusNotificationSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply status notification schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, compensationSourceSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply compensation source schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, orderDiscoverySQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply order discovery schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, missedFeedReplaySQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply missed feed replay schema: %w", err)
 	}
 	return nil
 }

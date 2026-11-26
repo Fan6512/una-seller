@@ -70,7 +70,7 @@
   to { opacity: 1; }
 }
 
-/* A hidden page stays hidden and mounted; no state/focus reset or delayed close. */
+/* Respect existing conditional mounting and Settings visibility; no delayed close. */
 [data-motion-view="true"]:not([hidden]) > :is(.published-page, .orders-page) > .page-heading {
   animation: una-feedback-in var(--motion-standard) var(--motion-ease);
 }
