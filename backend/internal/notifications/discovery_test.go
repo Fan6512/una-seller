@@ -11,11 +11,16 @@ import (
 func seedDiscovery(t *testing.T, ctx context.Context, p PostgresInbox) {
 	t.Helper()
 	seedStores(t, ctx, p)
-	// TEST_DATABASE_URL is shared across packages. A sweep creates checkpoints
-	// for every verified mapping in the database, so leftovers from other
-	// packages would win the oldest-due reservation and break these assertions.
-	mustExec(t, ctx, p, `DELETE FROM app.meli_store_connections WHERE id NOT IN ($1,$2)`,
-		testStoreA, testStoreB)
+	// The scheduler intentionally sees every store in the isolated test DB.
+	// Never delete another test's fixtures to force the desired reservation.
+	var foreign int
+	if err := p.DB.QueryRow(ctx, `SELECT count(*) FROM app.meli_store_connections
+		WHERE id NOT IN ($1,$2)`, testStoreA, testStoreB).Scan(&foreign); err != nil {
+		t.Fatal(err)
+	}
+	if foreign != 0 {
+		t.Fatal("discovery requires a fresh isolated TEST_DATABASE_URL and serial package tests (-p 1); foreign store fixtures were preserved")
+	}
 	mustExec(t, ctx, p, `UPDATE app.meli_store_connections SET marketplaces=
 		'[{"user_id":"99011","site_id":"MLB","logistic_type":"remote"}]' WHERE id=$1`, testStoreA)
 }

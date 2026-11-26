@@ -336,16 +336,18 @@ func (w *Worker) retry(ctx context.Context, j Job, cause error) error {
 	return pgx.BeginFunc(ctx, w.inbox.DB, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE app.meli_notification_jobs
-			SET lease_token=NULL, lease_until=NULL, last_failure=$3,
-			    available_at=clock_timestamp()+CASE WHEN $8::boolean
-			      THEN least(interval '1 hour',
+			SET lease_token=NULL, lease_until=NULL,
+			    last_failure=CASE WHEN generation<>$9 THEN NULL ELSE $3 END,
+			    available_at=clock_timestamp()+CASE WHEN generation<>$9 AND NOT $6::boolean THEN interval '0 seconds'
+			      WHEN $8::boolean THEN least(interval '1 hour',
 			                 interval '1 minute' * power(2, least(floor(extract(epoch from clock_timestamp()-pending_since)/600), 6)))
 			      ELSE $4*interval '1 second' END,
-			    attempts=CASE WHEN $6::boolean THEN greatest(attempts-1,0) ELSE attempts END,
-			    dead_at=CASE WHEN $7::boolean OR ($6::boolean AND pending_since <= clock_timestamp()-interval '24 hours')
+			    attempts=CASE WHEN generation<>$9 THEN 0 WHEN $6::boolean THEN greatest(attempts-1,0) ELSE attempts END,
+			    dead_at=CASE WHEN generation<>$9 THEN NULL
+			                 WHEN $7::boolean OR ($6::boolean AND pending_since <= clock_timestamp()-interval '24 hours')
 			                      OR (NOT $6::boolean AND attempts >= $5) THEN clock_timestamp() END
 			WHERE id=$1 AND lease_token=$2 AND lease_until > clock_timestamp()`,
-			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts, refund, terminal, backoff)
+			j.ID, j.leaseToken, reason, delay.Seconds(), maxAttempts, refund, terminal, backoff, j.generation)
 		if err != nil {
 			return err
 		}

@@ -193,7 +193,8 @@ func (p PostgresInbox) enqueueScoped(ctx context.Context, e Event, expected *sto
 			SELECT * FROM receipt
 			ON CONFLICT (store_id,owner_user_id,parent_seller_id,application_id,topic,resource_id)
 			WHERE dead_at IS NULL
-			DO UPDATE SET generation=j.generation+1, notification_user_id=EXCLUDED.notification_user_id`,
+			DO UPDATE SET generation=j.generation+1, notification_user_id=EXCLUDED.notification_user_id,
+			    attempts=0, pending_since=clock_timestamp(), last_failure=NULL`,
 			scope.storeID, scope.ownerID, scope.parentID, e.ApplicationID, e.Topic,
 			e.ResourceID, e.UserID, e.Key, e.ReceivedAt, source)
 		return err

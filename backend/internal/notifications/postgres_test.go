@@ -324,7 +324,7 @@ func TestNotificationPostgresWorker(t *testing.T) {
 	assertACK(t, h, 200, testOrder, "898", testParentA, "during-lease")
 	mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET lease_until=now()-interval '1 second' WHERE id=$1`, old.ID)
 	fresh, err := orderWorker.claim(ctx)
-	if err != nil || fresh.ID != old.ID || fresh.leaseToken == old.leaseToken || fresh.generation != 2 || fresh.attempts != 2 {
+	if err != nil || fresh.ID != old.ID || fresh.leaseToken == old.leaseToken || fresh.generation != 2 || fresh.attempts != 1 {
 		t.Fatalf("lease not recovered: %+v %v", fresh, err)
 	}
 	verified, _ := result(ctx, old)
@@ -738,4 +738,69 @@ func TestStatusTopicsDurableAdmissionPostgres(t *testing.T) {
 		}
 	}
 	assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE store_id=$1`, testStoreA)
+}
+
+func TestNotificationNewGenerationSurvivesOldFailurePostgres(t *testing.T) {
+	ctx, p := testDatabase(t)
+	seedStores(t, ctx, p)
+	defer cleanStores(t, ctx, p)
+	h := testReceiver(t, p)
+	prepare := func(_ context.Context, j Job) (VerifiedResource, error) {
+		return VerifiedResource{Topic: j.Topic, ResourceID: j.ResourceID, SellerID: j.NotificationUserID,
+			Apply: func(context.Context, LocalWriter) error { return nil }}, nil
+	}
+	w := NewWorker(p, testApp, map[string]Prepare{testOrder: prepare})
+	for i, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{"permanent", ErrPermanentScope},
+		{"final_attempt", errors.New("synthetic failure")},
+		{"expired_lease", nil},
+		{"rate_limited", &RateLimited{RetryAfter: time.Minute}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := fmt.Sprint(8100 + i)
+			assertACK(t, h, 200, testOrder, id, testChildA, "first")
+			mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET attempts=7
+				WHERE store_id=$1 AND resource_id=$2`, testStoreA, id)
+			old, err := w.claim(ctx)
+			if err != nil || old.ResourceID != id || old.attempts != 8 {
+				t.Fatalf("final claim: %+v %v", old, err)
+			}
+			assertACK(t, h, 200, testOrder, id, testChildA, "first")
+			assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+				WHERE id=$1 AND generation=1 AND attempts=8`, old.ID)
+			assertACK(t, h, 200, testOrder, id, testParentA, "new")
+			assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+				WHERE id=$1 AND generation=2 AND attempts=0 AND dead_at IS NULL AND lease_token=$2`, old.ID, old.leaseToken)
+			if tc.cause == nil {
+				mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET lease_until=now()-interval '1 second' WHERE id=$1`, old.ID)
+			} else {
+				if err := w.retry(ctx, old, tc.cause); err != nil {
+					t.Fatal(err)
+				}
+				assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_jobs
+					WHERE id=$1 AND generation=2 AND attempts=0 AND dead_at IS NULL AND lease_token IS NULL`, old.ID)
+				if tc.name == "rate_limited" {
+					assertCount(t, ctx, p, 1, `SELECT count(*) FROM app.meli_notification_cooldowns
+						WHERE store_id=$1 AND available_at>now()`, testStoreA)
+					if _, err := w.claim(ctx); !errors.Is(err, pgx.ErrNoRows) {
+						t.Fatalf("new generation bypassed real cooldown: %v", err)
+					}
+					mustExec(t, ctx, p, `UPDATE app.meli_notification_cooldowns SET available_at=now()-interval '1 second' WHERE store_id=$1`, testStoreA)
+				}
+				mustExec(t, ctx, p, `UPDATE app.meli_notification_jobs SET available_at=now()-interval '1 second' WHERE id=$1`, old.ID)
+			}
+			fresh, err := w.claim(ctx)
+			if err != nil || fresh.ID != old.ID || fresh.generation != 2 || fresh.attempts != 1 || fresh.leaseToken == old.leaseToken {
+				t.Fatalf("new generation lost: %+v %v", fresh, err)
+			}
+			resource, _ := prepare(ctx, fresh)
+			if err := w.finish(ctx, fresh, resource); err != nil {
+				t.Fatal(err)
+			}
+			assertCount(t, ctx, p, 0, `SELECT count(*) FROM app.meli_notification_jobs WHERE id=$1`, old.ID)
+		})
+	}
 }

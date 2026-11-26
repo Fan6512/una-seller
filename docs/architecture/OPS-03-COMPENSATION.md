@@ -22,15 +22,19 @@ If the provider reports total below the current offset, rewind the same fixed wi
 
 ## 2026-11-26 final acceptance update
 
-- PASS: fixed a shared-TEST_DATABASE_URL hazard where leftovers from other
-  packages could win the oldest-due discovery reservation; discovery tests now
-  remove foreign stores before sweeping. Added
-  `TestDiscoveryToWorkerRoundtripPostgres`: a locally absent, never-webhooked
-  order is found by search, durably admitted (inbox source=compensation),
-  read back by the real worker handler, upserted into `meli_orders`, the job is
-  completed and the watermark advances. The desktop idle refresh reads only
-  local SQL (no official call) and pauses for hidden windows, dialogs, manual
-  operations and non-first pages.
+- Prior PASS: b3930bc CI and local PG17 evidence. Follow-up replaces destructive
+  deletion of foreign test stores with a fail-fast guard. Use a fresh isolated
+  database, serial packages (`go test -p 1 ./...`), and never stop PostgreSQL
+  during the full suite. New E2E candidate calls the actual search adapter,
+  enables shared coordination, checks the search watermark at durable admission
+  (not worker completion), forces a detail 503, and verifies retry/commit/delete.
+- Shared queue follow-up: a distinct delivery creates a fresh generation budget
+  without stealing an existing lease. A stale generation's terminal failure
+  or exhausted lease cannot dead-letter the newer delivery. Real rate-limit
+  cooldown remains effective; duplicate receipt does not reset attempts.
+  No new migration or queue. New exact-HEAD CI and local PG verification pending.
+- Desktop idle refresh reads only local SQL by source inspection; actual
+  timed UI interactions and Windows acceptance remain NOT_RUN.
 - NOT_RUN: live official `date_created.from/to`, `date_asc`, `offset`/`limit`
   and pack envelope checks. The stored access token expired at
   2026-11-25T23:10:46Z and refreshing it is out of scope; the endpoints and
