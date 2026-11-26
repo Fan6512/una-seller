@@ -22,7 +22,9 @@ type marketplaceStatusNotice struct {
 
 	quantity *int
 
-	price, subStatus, actions string
+	price, actions string
+
+	subStatus *string
 
 	dueAt *time.Time
 
@@ -147,7 +149,15 @@ func decodeMarketplaceStatusNotice(raw json.RawMessage, job notifications.Job, a
 				return n, ErrOrderInvalidResponse
 			}
 		}
-		n.subStatus = strings.Join(p.SubStatus, ",")
+		// Missing/null sub_status is not proof that moderation has cleared.
+		// An explicit empty array is authoritative and clears the old value.
+		if p.SubStatus != nil {
+			subStatus := strings.Join(p.SubStatus, ",")
+			if len(subStatus) > 160 {
+				return n, ErrOrderInvalidResponse
+			}
+			n.subStatus = &subStatus
+		}
 		n.sourceSeller, n.site, n.status, n.updated, n.quantity = p.SellerID.String(), p.SiteID, p.Status, p.Updated, p.Quantity
 	default:
 		return n, notifications.ErrScope
@@ -226,9 +236,9 @@ AND (c.last_updated,c.checked_at)<=(EXCLUDED.last_updated,EXCLUDED.checked_at)`,
 	case "marketplace_items":
 		_, err := tx.Exec(ctx, `INSERT INTO app.meli_item_notifications AS c
 (store_id,owner_user_id,parent_seller_id,seller_id,site_id,item_id,status,sub_status,price,available_quantity,last_updated,checked_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::numeric,$10,$11,$12)
+VALUES($1,$2,$3,$4,$5,$6,$7,COALESCE($8::text,''),NULLIF($9,'')::numeric,$10,$11,$12)
 ON CONFLICT(store_id,site_id,seller_id,item_id) DO UPDATE SET
-status=EXCLUDED.status,sub_status=EXCLUDED.sub_status,
+status=EXCLUDED.status,sub_status=COALESCE($8::text,c.sub_status),
 price=COALESCE(EXCLUDED.price,c.price),
 available_quantity=COALESCE(EXCLUDED.available_quantity,c.available_quantity),
 last_updated=EXCLUDED.last_updated,checked_at=EXCLUDED.checked_at

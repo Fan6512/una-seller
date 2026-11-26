@@ -119,3 +119,60 @@ func TestClaimActionScopeAndMandatoryDeadline(t *testing.T) {
 		t.Fatalf("invalid mandatory deadline accepted: %v", err)
 	}
 }
+
+func TestItemNotificationOptionalFieldsAndStaleSnapshotPostgres(t *testing.T) {
+	var version atomic.Int32
+	c := newNotificationCase(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/marketplace/items/MLB123" {
+			http.NotFound(w, r)
+			return
+		}
+		switch version.Load() {
+		case 0:
+			fmt.Fprint(w, `{"id":"MLB123","site_id":"MLB","seller_id":987654,"status":"paused",
+"sub_status":["under_review"],"price":29.87,"available_quantity":45,"last_updated":"2026-11-22T00:00:00Z"}`)
+		case 1:
+			fmt.Fprint(w, `{"id":"MLB123","site_id":"MLB","seller_id":987654,"status":"paused",
+"last_updated":"2026-11-23T00:00:00Z"}`)
+		case 2:
+			fmt.Fprint(w, `{"id":"MLB123","site_id":"MLB","seller_id":987654,"status":"active",
+"sub_status":[],"price":0,"available_quantity":0,"last_updated":"2026-11-24T00:00:00Z"}`)
+		case 3:
+			fmt.Fprint(w, `{"id":"MLB123","site_id":"MLB","seller_id":987654,"status":"paused",
+"sub_status":["under_review"],"price":99,"available_quantity":99,"last_updated":"2026-11-21T00:00:00Z"}`)
+		default:
+			fmt.Fprint(w, `{"id":"MLB123","site_id":"MLB","seller_id":987654,"status":"paused",
+"sub_status":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cccccccccccccccccccccccccccccccccccccccc","dddddddddddddddddddddddddddddddddddddddd"],"last_updated":"2026-11-25T00:00:00Z"}`)
+		}
+	})
+	job := c.job("marketplace_items", "MLB123", "987654")
+	apply := func(v int32) {
+		t.Helper()
+		version.Store(v)
+		resource, err := c.prepare(t, job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.apply(t, resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply(0)
+	apply(1)
+	if got := c.count(t, `SELECT count(*) FROM app.meli_item_notifications WHERE store_id=$1
+AND item_id='MLB123' AND sub_status='under_review' AND price=29.87 AND available_quantity=45
+AND last_updated='2026-11-23T00:00:00Z'::timestamptz`, c.store); got != 1 {
+		t.Fatal("omitted fields erased existing values")
+	}
+	apply(2)
+	apply(3)
+	if got := c.count(t, `SELECT count(*) FROM app.meli_item_notifications WHERE store_id=$1
+AND item_id='MLB123' AND status='active' AND sub_status='' AND price=0 AND available_quantity=0
+AND last_updated='2026-11-24T00:00:00Z'::timestamptz`, c.store); got != 1 {
+		t.Fatal("explicit clear/zero or stale-update protection failed")
+	}
+	version.Store(4)
+	if _, err := c.prepare(t, job); !errors.Is(err, ErrOrderInvalidResponse) {
+		t.Fatalf("oversized sub_status reached database write path: %v", err)
+	}
+}
