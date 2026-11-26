@@ -504,10 +504,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--ui-chrome);
+  background: var(--ui-surface);
   border-bottom: 1px solid var(--ui-outline);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  /* Opaque chrome avoids recompositing a large blur during scroll/motion. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .brand-name, .page-heading h1, .login-heading h1, .product-summary h2 {
   font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -697,3 +698,17 @@ button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visibl
   .topbar-spacer { flex: 1 1 auto; }
   .account-email { max-width: 120px; }
 }
+
+/* Ding adapter: clip the whole animation to the content area below the
+   measured sticky header, including the responsive wrapped navigation. */
+.una-feedback-layer .tst-viewport {
+  inset: var(--una-feedback-top, 64px) 0 0 !important;
+  overflow: hidden;
+}
+/* Keep spring shape/opacity feedback; avoid expensive per-frame blur. */
+.una-feedback-layer .tst,
+.una-feedback-layer .tst-body,
+.una-feedback-layer .tst-ghost,
+.una-feedback-layer .tst-svg,
+.una-feedback-layer .tst-action,
+.una-feedback-layer .tst-close { filter: none !important; }

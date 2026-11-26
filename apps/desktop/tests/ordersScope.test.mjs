@@ -243,7 +243,8 @@ const start = async () => {
 };
 let active = 0;
 try {
-  const feedback = createFeedback(() => {});
+  let feedbackView;
+  const feedback = createFeedback(view => { feedbackView = view; });
   createRoot(document.querySelector("main")).render(React.createElement(OperationFeedbackContext.Provider, {
     value: feedback,
   }, React.createElement(OrdersPage, {
@@ -287,7 +288,8 @@ try {
     assert(!document.querySelector(".orders-notice, .orders-review"), "previous result appeared in current scope");
   }
   (await start()).resolve(Response.json({ ...progress, has_more: false }));
-  await waitFor(() => document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"), "current success missing");
+  await waitFor(() => feedbackView?.kind === "success" && feedbackView.title === "订单同步完成", "current success missing");
+  assert(!document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"), "duplicate legacy success notice");
   (await start()).resolve(reviewResponse());
   await waitFor(() => document.querySelector(".orders-review")?.textContent.includes("102"), "current Review missing");
 
@@ -351,7 +353,7 @@ try {
   const afterRefresh = await start();
   stores[0].status = "connected";
   afterRefresh.resolve(Response.json({ ...progress, has_more: false }));
-  await waitFor(() => document.querySelector(".orders-notice")?.textContent.includes("订单同步完成"),
+  await waitFor(() => feedbackView?.kind === "success" && feedbackView.title === "订单同步完成",
     "sync success not confirmed");
   await waitFor(() => [...document.querySelectorAll(".orders-filter-note")]
     .some((item) => item.textContent.includes("当前店铺") && item.textContent.includes("已连接")),

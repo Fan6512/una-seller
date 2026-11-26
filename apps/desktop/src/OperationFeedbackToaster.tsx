@@ -4,24 +4,24 @@ import type { FeedbackView } from "./operationFeedback";
 
 const capsuleId = "una-operation-feedback";
 let layer: HTMLDivElement | null = null;
+let lastModal: Element | null = null;
+let queued: FeedbackView | null = null;
+let frame = 0;
 
-export function renderOperationFeedback(view: FeedbackView | null) {
-  if (!view) {
-    // Ding's singleton retains the last text in each live region after dismissal.
-    const { status, alert } = toast.getState();
-    toast.configure({ sound: false });
-    if (status.trim()) toast.info("", { id: capsuleId, duration: 0 });
-    if (alert.trim()) toast.error("", { id: capsuleId, duration: 0 });
-    toast.dismiss(undefined, { immediate: true });
-    return;
-  }
-  // Order details use a native modal dialog. Raise the capsule above its backdrop.
-  if (layer?.showPopover) {
+function present(view: FeedbackView) {
+  if (!layer?.isConnected) return;
+  // Only change top-layer ordering when a new native modal actually opens.
+  if (layer.showPopover) {
     const modal = document.querySelector("dialog:modal");
-    if (layer.matches(":popover-open") && modal) {
-      layer.hidePopover();
+    if (layer.matches(":popover-open")) {
+      if (modal && modal !== lastModal) {
+        layer.hidePopover();
+        layer.showPopover();
+      }
+    } else {
+      layer.showPopover();
     }
-    layer.showPopover();
+    lastModal = modal;
   }
   toast.show(view.kind, view.title, {
     id: capsuleId,
@@ -32,9 +32,60 @@ export function renderOperationFeedback(view: FeedbackView | null) {
   });
 }
 
+export function renderOperationFeedback(view: FeedbackView | null) {
+  if (!view) {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+    queued = null;
+    lastModal = null;
+    // Ding's singleton retains the last text in each live region after dismissal.
+    const { status, alert } = toast.getState();
+    toast.configure({ sound: false });
+    if (status.trim()) toast.info("", { id: capsuleId, duration: 0 });
+    if (alert.trim()) toast.error("", { id: capsuleId, duration: 0 });
+    toast.dismiss(undefined, { immediate: true });
+    return;
+  }
+  // Synchronous bursts (e.g. local variant reuse) need only their latest
+  // visual state, not one spring restart and React render per item.
+  queued = view;
+  if (frame) return;
+  frame = requestAnimationFrame(() => {
+    frame = 0;
+    const next = queued;
+    queued = null;
+    if (!next) return;
+    try {
+      present(next);
+    } catch {
+      // Deferred presentation must preserve the same failure isolation as
+      // the business feedback boundary. Do not log customer content.
+    }
+  });
+}
+
 export function OperationFeedbackToaster({ sound = false }: { sound?: boolean }) {
-  useLayoutEffect(() => { toast.configure({ held: "replace", sound }); }, [sound]);
-  return <div ref={(element) => { layer = element; }} popover="manual"
+  useLayoutEffect(() => {
+    toast.configure({
+      held: "replace", sound,
+      springs: { enter: { stiffness: 360, damping: 36 }, morph: { stiffness: 360, damping: 36 } },
+    });
+  }, [sound]);
+  useLayoutEffect(() => {
+    const host = layer;
+    const topbar = document.querySelector<HTMLElement>(".topbar");
+    if (!host || !topbar) return;
+    const measure = () => host.style.setProperty("--una-feedback-top", Math.ceil(topbar.getBoundingClientRect().bottom) + "px");
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(topbar);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  return <div ref={(element) => { layer = element; }} className="una-feedback-layer" popover="manual"
     style={{ inset: 0, margin: 0, border: 0, padding: 0, background: "transparent",
       overflow: "visible", pointerEvents: "none" }}>
     <Toaster position="top-center" theme="light"

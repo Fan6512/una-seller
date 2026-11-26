@@ -258,15 +258,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [slaProgress, setSLAProgress] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  useEffect(() => {
-    if (!notice.startsWith("本次尝试补全")) return;
-    const timer = window.setTimeout(() => setNotice((current) => current === notice ? "" : current), 8000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
   const [review, setReview] = useState<OrderReview | null>(null);
-  const [progress, setProgress] = useState<OrderProgress | null>(null);
   const [syncState, setSyncState] = useState<OrderSyncState | null>(null);
-  const [completedBatches, setCompletedBatches] = useState(0);
   const [purchase, setPurchase] = useState<OrderPurchase | null>(null);
   const [purchaseNumber, setPurchaseNumber] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
@@ -612,13 +605,17 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     }).slice(0, manual ? 5 : PAGE_SIZE);
     if (!manual) autoImageView.current = imageView;
     if (!snapshot.length) {
-      if (manual) setNotice("本页已有可用主图，或平台未返回商品明细。");
+      if (manual) {
+        setNotice("");
+        feedback.notify({ scope: feedbackScope, key: "order-images" }, "info", "本页无待补全主图");
+      }
       return;
     }
     const controller = new AbortController();
     imageAbort.current = controller;
     const batch = manual ? feedback.batch({ scope: feedbackScope, key: "order-images" }, "补全订单主图", snapshot.length) : null;
-    if (!manual) autoImageController.current = controller;
+    if (manual) setNotice("");
+    else autoImageController.current = controller;
     setImageBusy(true);
     let completed = 0;
     try {
@@ -660,9 +657,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         } finally {
           if (controller.signal.aborted && imageAttempts.current.get(key) === controller) imageAttempts.current.delete(key);
         }
-      }
-      if (manual && !controller.signal.aborted) {
-        setNotice("本次尝试补全 " + completed + " 笔订单的主图。剩余缺图可再次点击；不存在可信图片时仍显示暂无图片。");
       }
     } finally {
       batch?.finish(controller.signal.aborted ? "订单主图补全已停止" : "订单主图补全结果");
@@ -778,8 +772,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     syncAbort.current = controller;
     const task = feedback.task({ scope: feedbackScope, key: "order-sync" }, "准备同步订单");
     setRunning(true);
-    setCompletedBatches(0);
-    setProgress(null);
     setNotice("");
     setReview(null);
     setListError("");
@@ -794,8 +786,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         controller.signal.throwIfAborted();
         saved += current.saved;
         last = current;
-        setCompletedBatches(batches + 1);
-        setProgress({ ...current, saved });
         task.update("正在同步订单", undefined, "已处理 " + (batches + 1) + " 批 · 已保存 " + saved + " 笔");
         if (!current.has_more) break;
       }
@@ -844,9 +834,11 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         logisticsNote = " 物流未更新：" + displayError(error) + "。已保存的订单不受影响。";
       }
       controller.signal.throwIfAborted();
-      setNotice(orderNote + logisticsNote);
       const needsFollowup = last?.has_more || logisticsIncomplete;
-      task.finish(needsFollowup ? "warning" : "success", needsFollowup ? "本轮同步结束，仍有待处理项" : "订单同步完成");
+      // Routine success belongs to Ding; actionable partial results remain inline.
+      if (needsFollowup) setNotice(orderNote + logisticsNote);
+      task.finish(needsFollowup ? "warning" : "success", needsFollowup ? "本轮同步结束，仍有待处理项" : "订单同步完成",
+        needsFollowup ? undefined : "本轮保存 " + saved + " 笔。" + logisticsNote);
       if (store?.status === "token_expired") void reloadStores();
     } catch (error) {
       if (controller.signal.aborted) {
@@ -857,7 +849,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         setReview(error.review);
         const committed = error.progress?.saved ?? 0;
         saved += committed;
-        setProgress(error.progress ? { ...error.progress, saved } : null);
         setNotice("本轮已保存 " + saved + " 笔订单，有一笔详情异常，等待核实。");
       } else {
         const detail = error instanceof OrderRequestError
@@ -882,10 +873,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     reviewAbort.current = controller;
     setActionBusy(true);
     try {
-      const result = await skipOrder(scope, review, controller.signal);
+      await skipOrder(scope, review, controller.signal);
       if (controller.signal.aborted) return;
       setReview(null);
-      setProgress(result);
       setNotice("已记录人工跳过订单 " + review.order_id + "；其他订单仍可正常同步。");
       loadRows();
     } catch (error) {
@@ -902,9 +892,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     reviewAbort.current = controller;
     setActionBusy(true);
     try {
-      const result = await resetOrderCursor(scope, syncState.next_offset, controller.signal);
+      await resetOrderCursor(scope, syncState.next_offset, controller.signal);
       if (controller.signal.aborted) return;
-      setProgress(result);
       setSyncState({ next_offset: 0, can_reset: false });
       setNotice("重扫游标已归零，不会删除已有订单或人工 Skip 审计。");
       loadRows();
@@ -1086,10 +1075,6 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <span>按数据库关联状态筛选 · 不代表厂家已发货</span>
         </div>
 
-        {running && <div className="orders-notice" role="status">
-          正在同步：已完成 {completedBatches} 批，本次已保存 {progress?.saved ?? 0} 笔。
-          最近一批处理 {progress?.processed ?? 0} 个搜索结果组；单次操作最多 20 批。
-        </div>}
         {(notice || syncState?.can_reset) && <div className="orders-notice" role="status">
           <span>{notice || "当前存在可重新扫描的服务器同步窗口。"}</span>
           <div className="orders-notice-actions">

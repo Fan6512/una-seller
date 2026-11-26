@@ -174,7 +174,10 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       batch.finish("副图复用结果");
     }
     const skipped=[...plans].filter(([,p])=>p.error).map(([i,p])=>variantLabel(variants[i],i)+"："+p.error);
-    setReuseMessage("已更新 "+changed.length+" 个变体；未变更 "+(plans.size-changed.length)+" 个。"+(skipped.length?" "+skipped.join("；"):""));
+    // Bulk counts are shown once in Ding. Keep specific corrective details
+    // inline, and retain the single-variant flow's existing result.
+    setReuseMessage(reuseMode==="bulk" ? skipped.join("；") :
+      "已更新 "+changed.length+" 个变体；未变更 "+(plans.size-changed.length)+" 个。"+(skipped.length?" "+skipped.join("；"):""));
   };
   const reusePanel=reuseMode&&<div className="listing-variant-image-picker" aria-label="复用副图">
     <strong>{reuseMode==="bulk"?"批量复用副图":"复用副图"}</strong>

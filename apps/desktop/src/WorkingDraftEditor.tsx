@@ -24,7 +24,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   const feedback = useOperationFeedback();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const active = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -32,7 +31,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     active.current = controller;
     setLoadState("loading");
     setError("");
-    setNotice("");
     void getWorkingDraft(collectionId, controller.signal).then(({ draft }) => {
       if (controller.signal.aborted) return;
       const next = draft
@@ -78,7 +76,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   const change = (key: keyof DraftFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }));
     setTouched(true);
-    setNotice("");
   };
 
   const refreshDraft = () => {
@@ -98,7 +95,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     controller.signal.addEventListener("abort", onAbort, { once: true });
     setSaving(true);
     setError("");
-    setNotice("");
     try {
       const { draft } = await saveWorkingDraft(collectionId, {
         ...fields, expected_revision: revision,
@@ -110,8 +106,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       setSaved(next);
       setTouched(false);
       setRevision(draft.revision);
-      setNotice("已保存到云端整理工作稿，关闭窗口后可恢复。");
-      task.finish("success", "工作稿已保存");
+      task.finish("success", "工作稿已保存", "关闭窗口后可恢复");
     } catch (e) {
       if (!controller.signal.aborted) {
         task.finish("error", "工作稿保存未完成");
@@ -143,7 +138,7 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       aiProduct={{source_product_id:collectionId,expected_revision:revision}} aiSaved={saved?.listing_fields}
       onChange={listing_fields=>{
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
-        setTouched(true);setNotice("");
+        setTouched(true);
       }} />
     {legacyDescriptionOversize&&<details className="listing-fields-note">
       <summary>历史描述过长 · 查看及处理（非刊登描述）</summary>
@@ -160,7 +155,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     </label>
     {loadState === "ready" && validation && <p className="working-draft-error" role="alert">{validation}</p>}
     {error && <p className="working-draft-error" role="alert">{error}</p>}
-    {notice && <p className="working-draft-success" role="status">{notice}</p>}
     {loadState === "error" && <button type="button" className="refresh-button"
       disabled={locked} onClick={refreshDraft}>重新加载工作稿</button>}
     <button type="button" className="primary-button" onClick={() => void save()}
