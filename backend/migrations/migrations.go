@@ -68,6 +68,12 @@ var orderDiscoverySQL string
 //go:embed 0020_meli_missed_feed_replay.sql
 var missedFeedReplaySQL string
 
+//go:embed 0021_cbt_publication.sql
+var cbtPublicationSQL string
+
+//go:embed 0022_cbt_publication_recovery.sql
+var cbtPublicationRecoverySQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -154,6 +160,14 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, missedFeedReplaySQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply missed feed replay schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, cbtPublicationSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply CBT publication schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, cbtPublicationRecoverySQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply CBT publication recovery schema: %w", err)
 	}
 	return nil
 }

@@ -47,6 +47,7 @@ func HandlerWithAccountServices(store *collections.Store, verifier IdentityVerif
 	mux.HandleFunc("/api/v1/collections/", api.detail)
 	mux.HandleFunc("/api/v1/products", api.ownProducts)
 	mux.HandleFunc("/api/v1/products/", api.ownProductDetail)
+	mux.HandleFunc("/api/v1/products/{id}/publication", api.productPublication(storeService))
 	mux.HandleFunc("/api/v1/products/ai-copy", api.aiCopyHandler(aiCopy))
 	mux.HandleFunc("/api/v1/account/service-configs", api.accountServiceConfigs(accounts))
 	mux.HandleFunc("/api/v1/account/service-configs/", api.accountServiceConfigAction(accounts))

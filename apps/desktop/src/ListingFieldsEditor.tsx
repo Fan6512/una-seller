@@ -368,6 +368,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           <small>{modelHint}</small>
         </label>
         {field("主商品 SKU（内部编码）","seller_sku","例如：FLOOR-001")}
+        {variants.length===0&&<label className="listing-field">可售库存<input type="number" min={0} step={1} max={2147483647} disabled={disabled}
+          value={value.available_quantity??""} onChange={event=>set("available_quantity",event.target.value===""?null:Number(event.target.value))} placeholder="待填写"/></label>}
         {field("条码 GTIN / EAN（有则填）","gtin","不编造条码",50)}
       </div>
     </fieldset>
@@ -468,7 +470,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
       <div className="listing-variant-toolbar">
         <strong>现有 {variants.length} 个变体</strong>
         <button type="button" disabled={disabled||variants.length>=100}
-          onClick={()=>set("variants",[...variants,{seller_sku:"",attributes:{},price:"",currency:"",image_urls:[],
+          onClick={()=>set("variants",[...variants,{seller_sku:"",variant_id:"",available_quantity:null,attributes:{},price:"",currency:"",image_urls:[],
             purchase_cost_cny:"",target_net_proceeds_usd:"",category_attributes:[]}])}>
           + 添加变体
         </button>
@@ -484,7 +486,7 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
         </label>)}
       </div>}
       <div className="listing-variant-list">
-        {variants.map((v,i)=><article className="listing-variant-card" key={i} aria-label={"变体 "+(i+1)}>
+        {variants.map((v,i)=><article className="listing-variant-card" key={v.variant_id||"draft-"+i} aria-label={"变体 "+(i+1)}>
           <div className="listing-variant-card-heading">
             <strong>{variantLabel(v,i)}</strong>
             <small>来源价格：{v.price? v.price+" "+(v.currency||"币种未确认"):"—"}</small>
@@ -497,6 +499,8 @@ export default function ListingFieldsEditor({value,onChange,disabled=false,aiPro
           <div className="listing-variant-card-fields">
             <label className="listing-field">自定义 SKU<input disabled={disabled} aria-label={"变体 "+(i+1)+" SKU"} value={v.seller_sku}
               maxLength={120} onChange={e=>updateVariant(i,{seller_sku:e.target.value})} placeholder="自定义 SKU"/></label>
+            <label className="listing-field">可售库存<input type="number" min={0} step={1} max={2147483647} disabled={disabled} aria-label={"变体 "+(i+1)+" 可售库存"}
+              value={v.available_quantity??""} onChange={event=>updateVariant(i,{available_quantity:event.target.value===""?null:Number(event.target.value)})} placeholder="待填写"/></label>
             <label className="listing-field">采购成本（¥）<input disabled={disabled} aria-label={"变体 "+(i+1)+" 采购成本（¥）"} value={v.purchase_cost_cny??""}
               inputMode="decimal" maxLength={21} onChange={e=>updateVariant(i,{purchase_cost_cny:e.target.value})} placeholder="CNY"/></label>
             <label className="listing-field">目标净收益（USD）<input disabled={disabled} aria-label={"变体 "+(i+1)+" 目标净收益（USD）"} value={v.target_net_proceeds_usd??""}

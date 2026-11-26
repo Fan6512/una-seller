@@ -84,3 +84,27 @@ export function approveCollection(id:string,revision:number,signal:AbortSignal) 
   return request<{product:OwnProduct;result:"created"|"already_approved"}>(
     "/api/v1/collections/"+encodeURIComponent(id)+"/approve",signal,"POST",{expected_revision:revision});
 }
+
+export type ProductPublicationTarget = {
+  store_id: string;
+  store_name: string;
+  site_id: string;
+  listing_type_id?: string;
+  state?: "submitting" | "pending_verify" | "success";
+};
+type ProductPublicationResult = {
+  request_id: string;
+  state: NonNullable<ProductPublicationTarget["state"]>;
+  pending: string[];
+  variants: { Key: string; TitleVerified: boolean; Listing: { SKU: string; ItemID: string } }[];
+};
+const publicationPath = (id: string) => "/api/v1/products/" + encodeURIComponent(id) + "/publication";
+export function getPublicationTargets(id: string, signal: AbortSignal) {
+  return request<{ targets: ProductPublicationTarget[] }>(publicationPath(id), signal);
+}
+export function confirmPublication(id: string, target: ProductPublicationTarget, signal: AbortSignal,
+  confirmation?: { expected_revision: number; title_mode: import("./titleModePreference").SiteTitleMode }) {
+  return request<ProductPublicationResult>(publicationPath(id), signal, "POST", {
+    store_id: target.store_id, site_id: target.site_id, ...(confirmation ?? { verify: true }),
+  });
+}
