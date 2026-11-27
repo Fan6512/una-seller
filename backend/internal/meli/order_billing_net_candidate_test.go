@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+// Diagnostic arithmetic fixture only; production uses billingEstimatedNet.
+func billingExpectedNetCandidate(e billingExpectedNetEvidence) (string, bool) {
+	return billingNetArithmetic(e, false)
+}
+
 func billingCandidateFixture() billingExpectedNetEvidence {
 	checked := time.Date(2026, time.November, 27, 0, 0, 0, 0, time.UTC)
 	const order = "2000000000000001"

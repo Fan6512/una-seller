@@ -20,14 +20,6 @@ type billingExpectedNetEvidence struct {
 	Billing        BillingOrderPreview
 }
 
-// billingExpectedNetCandidate computes a candidate only. Even success is not
-// a confirmed expected net: absence of additional charges/discounts/taxes
-// still needs a verified source contract. Do not pass the result to the
-// confirmed-profit path or expose it as actual settlement.
-func billingExpectedNetCandidate(e billingExpectedNetEvidence) (string, bool) {
-	return billingNetArithmetic(e, false)
-}
-
 // billingNetArithmetic is shared only with the explicitly labelled estimate
 // path. allowUnknownShipment is private; callers must first prove that the
 // official membership read was denied, not that it returned a different order.

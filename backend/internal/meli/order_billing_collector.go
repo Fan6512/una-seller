@@ -28,6 +28,7 @@ type billingCollectionAttempt struct {
 	RelationAttempts int                  `json:"relation_attempts"`
 	RetryUnix        int64                `json:"retry_unix"`
 	Preview          *BillingOrderPreview `json:"preview,omitempty"`
+	Reason           string               `json:"reason,omitempty"`
 }
 
 type billingCollectionWork struct {
@@ -54,12 +55,7 @@ func (s *Service) billingCollectionTargets(ctx context.Context, now time.Time) (
 	SELECT * FROM candidates WHERE attempt->>'evidence' IS DISTINCT FROM evidence
 	OR (attempt->>'state' IN ('pending','billing_read')
 	  AND CASE WHEN attempt->>'retry_unix' ~ '^[0-9]{1,12}$'
-	    THEN (attempt->>'retry_unix')::bigint ELSE 0 END <= $2
-	  AND CASE WHEN attempt->>'state'='pending' THEN
-	    CASE WHEN attempt->>'billing_attempts' ~ '^[0-9]{1,3}$'
-	      THEN (attempt->>'billing_attempts')::int ELSE $3 END
-	    ELSE CASE WHEN attempt->>'relation_attempts' ~ '^[0-9]{1,3}$'
-	      THEN (attempt->>'relation_attempts')::int ELSE $3 END END < $3)
+	    THEN (attempt->>'retry_unix')::bigint ELSE 0 END <= $2)
 	), first_scope AS (
 	SELECT owner_id,store_id,site_id,logistic_type FROM due
 	ORDER BY date_created,store_id,site_id,order_id LIMIT 1
@@ -67,7 +63,7 @@ func (s *Service) billingCollectionTargets(ctx context.Context, now time.Time) (
 	SELECT d.owner_id,d.store_id,d.site_id,d.logistic_type,d.order_id,d.pack_id,d.shipment_id,
 		d.last_updated,d.evidence,d.revision,d.billing_snapshot,d.attempt
 	FROM due d JOIN first_scope f USING (owner_id,store_id,site_id,logistic_type)
-	ORDER BY d.date_created,d.order_id LIMIT $4`, now, now.Unix(), billing.MaxAttempts, billing.MaxBatch)
+	ORDER BY d.date_created,d.order_id LIMIT $3`, now, now.Unix(), billing.MaxBatch)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +90,11 @@ func (s *Service) saveBillingCollectionState(ctx context.Context, w billingColle
 	}
 	var estimate any
 	if net != nil {
-		b, err := json.Marshal(storedBillingEstimate{BillingEstimatedUSDNet: *net, Evidence: t.evidence})
+		stored, err := newStoredBillingEstimate(*net, t.evidence)
+		if err != nil {
+			return err
+		}
+		b, err := json.Marshal(stored)
 		if err != nil {
 			return err
 		}
@@ -137,15 +137,25 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 	}
 	defer conn.Release()
 	var locked bool
-	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", billingCollectorLock).Scan(&locked); err != nil || !locked {
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", billingCollectorLock).Scan(&locked); err != nil {
+		// The server may have acquired the session lock before Scan failed.
+		// Remove the physical connection from the pool, even on cancellation.
+		uncertain := conn.Hijack()
+		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = uncertain.Close(cleanup)
 		return err
+	}
+	if !locked {
+		return nil
 	}
 	defer func() {
 		unlock, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		var released bool
 		if err := conn.QueryRow(unlock, "SELECT pg_advisory_unlock($1)", billingCollectorLock).Scan(&released); err != nil || !released {
-			_ = conn.Conn().Close(unlock)
+			uncertain := conn.Hijack()
+			_ = uncertain.Close(unlock)
 		}
 	}()
 	targets, err := s.billingCollectionTargets(ctx, now)
@@ -160,10 +170,19 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 			a = billingCollectionAttempt{Evidence: t.evidence}
 		}
 		w := billingCollectionWork{target: t, attempt: a}
+		// Also repairs an exhausted attempt left by a crash before finalization.
+		if (a.State == "pending" && a.BillingAttempts >= billing.MaxAttempts) ||
+			(a.State == "billing_read" && a.RelationAttempts >= billing.MaxAttempts) {
+			w.attempt.State, w.attempt.Preview, w.attempt.Reason = "review", nil, "attempts_exhausted"
+			if err := s.saveBillingCollectionState(ctx, w, true, nil); err != nil && !errors.Is(err, ErrOrderAuthorizationChanged) {
+				return err
+			}
+			continue
+		}
 		switch {
 		case a.State == "billing_read":
 			if a.Preview == nil || a.Preview.OrderID != t.order || !a.Preview.Available || a.Preview.CheckedAt == nil {
-				w.attempt.State, w.attempt.Preview = "review", nil
+				w.attempt.State, w.attempt.Preview, w.attempt.Reason = "review", nil, "invalid_saved_preview"
 				if err := s.saveBillingCollectionState(ctx, w, true, nil); err != nil && !errors.Is(err, ErrOrderAuthorizationChanged) {
 					return err
 				}
@@ -199,20 +218,27 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 		for i, w := range fresh {
 			ids[i] = w.target.order
 		}
-		page, err := s.readOrderBillingMode(ctx, first.owner, first.store, first.scope, ids, false, false)
-		if err != nil {
-			return err // Durable pending attempts prevent immediate repeat, including 429.
+		var sent bool
+		page, err := s.readOrderBillingMode(withBillingRequestMarker(ctx, &sent), first.owner, first.store, first.scope, ids, false, false)
+		if err == nil && len(page.Items) != len(fresh) {
+			err = ErrOrderInvalidResponse
 		}
-		if len(page.Items) != len(fresh) {
-			return ErrOrderInvalidResponse
+		if err == nil {
+			for i, w := range fresh {
+				if page.Items[i].OrderID != w.target.order {
+					err = ErrOrderInvalidResponse
+					break
+				}
+			}
+		}
+		if err != nil {
+			return s.finishBillingCollectionFailure(ctx, fresh, false, sent, err)
 		}
 		observed := time.Now().UTC()
 		for i, w := range fresh {
 			item := page.Items[i]
-			if item.OrderID != w.target.order {
-				return ErrOrderInvalidResponse
-			}
 			if !item.Available {
+				w.attempt.Reason = "billing_unavailable"
 				if w.attempt.BillingAttempts >= billing.MaxAttempts {
 					w.attempt.State = "review"
 				}
@@ -222,7 +248,7 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 				continue
 			}
 			item.CheckedAt = &observed
-			w.attempt.State, w.attempt.Preview = "billing_read", &item
+			w.attempt.State, w.attempt.Preview, w.attempt.Reason = "billing_read", &item, ""
 			w.attempt.RetryUnix = now.Unix()
 			if err := s.saveBillingCollectionState(ctx, w, false, nil); errors.Is(err, ErrOrderAuthorizationChanged) {
 				continue
@@ -243,20 +269,70 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 		} else if err != nil {
 			return err
 		}
-		report, err := s.probeBillingByPack(ctx, t.owner, t.store, t.scope, t.pack, w.attempt.Preview)
+		var sent bool
+		report, err := s.probeBillingByPack(withBillingRequestMarker(ctx, &sent), t.owner, t.store, t.scope, t.pack, w.attempt.Preview)
 		if err != nil {
-			return err
+			return s.finishBillingCollectionFailure(ctx, []billingCollectionWork{w}, true, sent, err)
 		}
 		w.attempt.Preview = nil
-		w.attempt.State = "review"
+		w.attempt.State, w.attempt.Reason = "review", "estimate_gate_rejected"
 		if report.BillingEstimate != nil {
-			w.attempt.State = "done"
+			w.attempt.State, w.attempt.Reason = "done", ""
 		}
 		if err := s.saveBillingCollectionState(ctx, w, true, report.BillingEstimate); err != nil && !errors.Is(err, ErrOrderAuthorizationChanged) {
 			return err
 		}
 	}
 	return nil
+}
+
+// The marker is set at the existing GET transport boundary. Local contention
+// or cooldown before any provider read does not spend the attempt budget.
+type billingRequestMarkerKey struct{}
+
+func withBillingRequestMarker(ctx context.Context, sent *bool) context.Context {
+	return context.WithValue(ctx, billingRequestMarkerKey{}, sent)
+}
+
+func markBillingRequest(ctx context.Context) {
+	if sent, ok := ctx.Value(billingRequestMarkerKey{}).(*bool); ok {
+		*sent = true
+	}
+}
+
+func (s *Service) finishBillingCollectionFailure(ctx context.Context, works []billingCollectionWork, relation, sent bool, cause error) error {
+	reason := "provider_read_failed"
+	var rateLimit *OrderRateLimitError
+	busy := errors.Is(cause, ErrOrderBusy)
+	limited := errors.As(cause, &rateLimit)
+	if busy {
+		reason = "request_busy"
+	} else if limited {
+		reason = "rate_limited"
+	} else if errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, context.Canceled) {
+		reason = "request_interrupted"
+	}
+	// A separate bounded cleanup context also records timeouts/cancellation.
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	for _, w := range works {
+		count := &w.attempt.BillingAttempts
+		if relation {
+			count = &w.attempt.RelationAttempts
+		}
+		if !sent && (busy || limited) && *count > 0 {
+			*count--
+		}
+		w.attempt.Reason = reason
+		finish := *count >= billing.MaxAttempts
+		if finish {
+			w.attempt.State, w.attempt.Preview = "review", nil
+		}
+		if err := s.saveBillingCollectionState(cleanup, w, finish, nil); err != nil && !errors.Is(err, ErrOrderAuthorizationChanged) {
+			return errors.Join(cause, err)
+		}
+	}
+	return cause
 }
 
 func (s *Service) RunBillingCollector(ctx context.Context, logger *log.Logger) {

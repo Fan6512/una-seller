@@ -201,6 +201,7 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 		s.orderNextSearch = now.Add(orderSearchRequestInterval)
 	}
 	var response listingGETTiming
+	markBillingRequest(ctx)
 	status, err = s.listingGET(ctx, token, path, target, &response)
 	if status == http.StatusTooManyRequests {
 		now := time.Now()
