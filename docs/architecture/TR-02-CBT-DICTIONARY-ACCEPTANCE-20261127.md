@@ -12,7 +12,7 @@
 | --- | --- |
 | 主机 / 服务 | `152.136.41.105`，`una-seller-api`（用户 `una-seller`） |
 | 升级前 | `1f697fc8`，二进制 SHA-256 `41ca9a60…d99c6`，PID 1602721 |
-| 升级后 | `6a56734f`（V0.8.0 固定候选），SHA-256 `5d11e2d9…f42284`，PID 1649500，NRestarts=0 |
+| 升级后 | `6a56734f`（V0.8.0 固定候选），SHA-256 `5d11e2d9…f42284`，PID 1650639，NRestarts=0 |
 | 构建 | 洁净检出 + Docker `golang:1.26`，`vcs.modified=false`，`vcs.time=2026-11-27T09:12:08Z`，go1.26.11 |
 | 备份 | `/var/backups/una-seller/api-20261127T092726Z-pre-6a56734f/`（二进制、api.env、unit）；`/opt/una-seller/una-seller-api.rollback-20261127T092726Z-6a56734f` |
 | 健康 | 本机与公网 `/healthz` 200，匿名 `/api/v1/stores` 401，启动后无 panic/fatal，Nginx/systemd 未改 |
