@@ -60,7 +60,14 @@ window.fetch = (path, options) => {
   if (id === "CBT4") return Promise.resolve(Response.json({ error: "upstream failed" }, { status: 502 }));
   if (!options.headers.Authorization) throw Error("missing bearer");
   if (id === "MLB771") {
-    return Promise.resolve(Response.json({ category_id: id, attributes: [], path: [{ id, name: "Jarras" }] }));
+    return Promise.resolve(Response.json({ category_id: id, path: [{ id, name: "Jarras" }],
+      attributes: [
+        { id: "BRAND", name: "Marca", value_type: "string", attribute_group_name: "Outros", tags: { required: true } },
+        { id: "ITEM_CONDITION", name: "Condição do item", value_type: "list", attribute_group_name: "Outros",
+          tags: { required: true }, values: [{ id: "1", name: "Novo" }, { id: "2", name: "Usado" }] },
+      ],
+      translations_zh: { Jarras: "水壶", Marca: "品牌", Outros: "其他属性", Novo: "全新", Usado: "二手", Generic: "通用" },
+    }));
   }
   return Promise.resolve(Response.json({
     category_id: id, technical_specs_verified: true,
@@ -451,17 +458,29 @@ try {
   input(document.querySelector('input[aria-label="追加变体图片 URL"]'),img("overflow"));
   assert((await loaded("button","添加链接")).disabled,"variant image picker permits the 31st image");
   const published = { id: "MLB1", category_id: "MLB771", description: "Fixture details",
+    attributes: [{ id: "BRAND", value_name: "Generic" }, { id: "ITEM_CONDITION", value_name: "Novo" }],
     cbt_category_path: { original: ["Home", "Other"], zh: ["家居", "其他"] } };
   const showPublished = listing => flushSync(() => root.render(React.createElement(PublishedListingEditor, {
-    key: listing.id, listing, site: "MLB", logistic: "remote", store: "fixture", members: [listing],
+    key: listing.id, listing, site: "MLB", logistic: "remote", store: "fixture", members: [listing], onDirtyChange: () => {},
   })));
   showPublished(published);
-  await loaded(".published-category-path", "家居 / 其他");
-  await loaded(".published-hint", "Home / Other");
+  await loaded(".published-category-path", "Home / Other");
+  await loaded(".published-hint", "家居 / 其他");
   await loaded(".published-category-path", "Jarras");
+  await loaded(".published-hint", "水壶");
+  const brandInput = (await loaded(".published-edit-field", "品牌")).querySelector("input");
+  const conditionInput = (await loaded(".published-edit-field", "商品成色")).querySelector("select");
+  assert(brandInput.value === "Generic", "free-text brand was translated");
+  assert(conditionInput.value === "Novo" && conditionInput.selectedOptions[0].textContent === "全新",
+    "official choice did not retain the original submitted value");
+  input(conditionInput, "Usado");
+  await click("button", "保存本机草稿");
+  const publishedDraft = JSON.parse(localStorage.getItem("una-seller:published-draft:v1:fixture:MLB:remote:MLB1"));
+  assert(publishedDraft.attributes.BRAND === "Generic" && publishedDraft.attributes.ITEM_CONDITION === "Usado",
+    "Chinese presentation changed the saved draft values");
   showPublished({ ...published, id: "MLB2", cbt_category_path: undefined });
   await loaded(".published-category-path", "Jarras");
-  assert(![...document.querySelectorAll(".published-category-path")].some(node => node.textContent.includes("家居")),
+  assert(![...document.querySelectorAll(".published-category-path,.published-hint")].some(node => node.textContent.includes("家居") || node.textContent.includes("Home / Other")),
     "site-only listing reused another listing's CBT breadcrumb");
   document.body.dataset.result = "pass";
 } catch (error) { document.body.dataset.result = "fail"; document.body.append(error.message); }
