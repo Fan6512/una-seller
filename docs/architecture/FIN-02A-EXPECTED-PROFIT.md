@@ -42,3 +42,18 @@
 - GET/POST /api/v1/stores/{store}/orders/{order}/expected-profit 使用既有认证、订单范围和本地缓存；POST 必须显式 confirmed=true 和 revision，禁止自动重试；缺成本/日汇率/有效确认返回空利润。订单详情显示净额、固定汇率、采购/额外成本、人民币预计利润及原因；实际利润保持待核账。
 - OPS-05 首页在既有 sales 查询内关联采购和日汇率，使用同一计算逻辑、按北京创建日和店铺/站点，累计每单已舍入人民币利润，显示已核算/当前 paid 数；无可用订单为空，退款及未知不算0，截断隐藏金额。不是完整平台覆盖或实际回款。
 - 仅隔离合成确认测试、权限/冲突/失效及汇总检查；不录入任何生产订单确认、不调用真实账单、无生产迁移/部署。真实自动净回款来源与现场数据仍是待核项，不将本切片称为全自动净额。
+
+
+## 自动净额来源继续核查（2026-11-27）
+
+官方 [Billing Reports by Orders and Packs](https://global-selling.mercadolibre.com/devsite/en_us/validations-cbt/billing-reports-by-orders-and-packs) 字段定义明确：payment_id 是付款标识；sales_info.operation_id / order_id 是费用关联的交易/订单标识；transaction_amount_usd 是交易额而非净回款；base_amount_usd 是税基，sale_fee.net 是收费净额。shipping_info.pack_id 与多条 sales_info 有助识别共享费用，但不提供可直接信任的分摊。官方 [Reconciliation](https://sellers.mercadolibre.com/learning-center/nota/everything-you-need-to-know-about-reconciliation) 说明非直接从交易扣除的费用仍可能从 Mercado Pago 余额扣除；NO 不是免费，也不能默认全部计入本笔订单。官方 [Packs](https://global-selling.mercadolibre.com/devsite/category-dump-global-selling/packs) 与 [Shipments](https://global-selling.mercadolibre.com/devsite/api-docs/manage-shipments) 提供关联订单查询。已知实际 release CSV 的 PURCHASE_ID 为空，先前只尝试订单/Pack/货件编号；应另核 payment_id/operation_id 与 SOURCE_ID，不把批次总额当订单净额。
+
+本次扩充既有 Billing 白名单，仅保留 payment_id、每条费用 sales_info 的 order_id/operation_id/transaction_amount_usd、pack_id；保留多订单关联，不把多条交易额累加成净回款；重复费用 ID 内容冲突仍拒绝。无 PII/原始响应、无新迁移、无额外官方请求，不改变预计利润确认/汇总的门禁。已有缓存不会凭空得到新字段，需现场代表样本受控读取。
+
+现场继续核验（优先已登录 Seller Center 的订单详情真实显示及其正常页面读取响应，不猜私有端点、不复制凭据、不自动登录/绕过验证）：
+1. 同一真实完整作用域下，获取两笔已对照 MLB 样本及至少一笔 MLM 正常单；若有退款/共享 Pack，额外各取一笔。先复用既有回执及缓存，必要 Billing 按子卖家合批、<=60，遇429停，不能逐单轮询。核实页面是否有直接的 USD 订单级预计净额字段、字段路径、净额与费用/退款状态、币种和主体归属。
+2. 若直接字段可经官方公开授权 API 或用户已授权页面的正常可读数据取得，优先采用明确来源。若只有页面字段，先做独立浏览器采集插件的只读样本合同，不照搬私有 API、不持久化登录 Cookie；自动化是否支持需进一步审查。如果是货件合计、局部税基或当前刊登净收益则拒绝。
+3. 对照 Billing payment_id / operation_id 与已存在资金报告 SOURCE_ID，按订单/子卖家/币种/交易身份去重；只记录脱敏字段路径、关联个数、金额和差异。不把已释放当实际收款。按官方 Pack 与货件关联列表验证共享性，401/403 或无数据仍未知。
+4. 若直接字段不可用，只有代表样本证明费用、折扣、税、退款、共享归属及完整性时，才将相应版本/站点/物流的计算规则接入自动源；其它订单继续待核实。不可用时保持当前人工确认兜底，不能用已知两笔算式全量推广。
+
+本轮只完成文档与 parser 证据准备，真实页面/官方响应尚未取得，自动预计净回款仍未完成；保持 Draft。
