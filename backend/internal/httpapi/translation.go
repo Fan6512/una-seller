@@ -252,7 +252,7 @@ func categoryTranslationSource(categoryID string) string {
 // Volcengine batches a bounded larger budget without slowing order reads.
 func (s *TranslationService) translateCategoryRules(ctx context.Context, rules meli.CategoryRules) map[string]string {
 	timeout := 4 * time.Second
-	if s != nil && s.providerName == "volcengine" {
+	if s != nil && (s.providerName == "volcengine" || s.providerName == "baidu") {
 		timeout = 10 * time.Second
 	}
 	return s.translateWithin(ctx, categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules), timeout)
@@ -260,7 +260,7 @@ func (s *TranslationService) translateCategoryRules(ctx context.Context, rules m
 
 // TranslateCategoryBatch is for the offline CBT dictionary updater.
 func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts []string) map[string]string {
-	if s != nil && s.providerName == "volcengine" {
+	if s != nil && (s.providerName == "volcengine" || s.providerName == "baidu") {
 		return s.translateWithin(ctx, "en", texts, 30*time.Second)
 	}
 	return s.translate(ctx, "en", texts)
@@ -268,7 +268,7 @@ func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts [
 
 // CategoryBatchSize is the offline updater's maximum number of texts per request.
 func (s *TranslationService) CategoryBatchSize() int {
-	if s != nil && s.providerName == "volcengine" {
+	if s != nil && (s.providerName == "volcengine" || s.providerName == "baidu") {
 		return 16
 	}
 	return 120

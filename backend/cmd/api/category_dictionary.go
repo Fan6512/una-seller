@@ -7,6 +7,8 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -14,14 +16,59 @@ import (
 	"github.com/Fan6512/una-seller/backend/internal/httpapi"
 )
 
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func baiduUsagePath() string {
+	if path := strings.TrimSpace(os.Getenv("BAIDU_TRANSLATE_USAGE_FILE")); path != "" {
+		return path
+	}
+	if dir := strings.TrimSpace(os.Getenv("CBT_CATEGORY_DICTIONARY_DIR")); dir != "" {
+		return filepath.Join(dir, "baidu-usage.json")
+	}
+	return ""
+}
+
+// baiduMonthlyLimit defaults to the standard edition's 50,000 free characters.
+// Zero blocks all requests; an invalid value falls back to the default.
+func baiduMonthlyLimit() int {
+	raw := strings.TrimSpace(os.Getenv("BAIDU_TRANSLATE_MONTHLY_CHAR_LIMIT"))
+	if raw == "" {
+		return 50000
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 50000
+	}
+	return value
+}
+
 func configuredTranslator() *httpapi.TranslationService {
-	switch strings.TrimSpace(os.Getenv("TRANSLATION_PROVIDER")) {
+	baiduID := firstEnv("BAIDU_TRANSLATION_APP_ID", "BAIDU_TRANSLATE_APP_ID")
+	baiduSecret := firstEnv("BAIDU_TRANSLATION_SECRET_KEY", "BAIDU_TRANSLATE_SECRET")
+	provider := strings.TrimSpace(os.Getenv("TRANSLATION_PROVIDER"))
+	if provider == "" {
+		if baiduID != "" && baiduSecret != "" {
+			provider = "baidu"
+		} else {
+			provider = "azure"
+		}
+	}
+	switch provider {
 	case "volcengine":
 		return httpapi.NewVolcengineTranslationService(os.Getenv("VOLCENGINE_TRANSLATE_ACCESS_KEY_ID"), os.Getenv("VOLCENGINE_TRANSLATE_SECRET_ACCESS_KEY"))
+	case "baidu":
+		return httpapi.NewBaiduTranslationService(baiduID, baiduSecret, baiduUsagePath(), baiduMonthlyLimit())
 	}
-	return httpapi.NewTranslationService(os.Getenv("TRANSLATION_PROVIDER"),
+	return httpapi.NewTranslationService(provider,
 		os.Getenv("AZURE_TRANSLATOR_KEY"), os.Getenv("AZURE_TRANSLATOR_REGION"),
-		os.Getenv("BAIDU_TRANSLATE_APP_ID"), os.Getenv("BAIDU_TRANSLATE_SECRET"))
+		baiduID, baiduSecret)
 }
 
 func updateCBTCategories(args []string, dir string, translator *httpapi.TranslationService) error {

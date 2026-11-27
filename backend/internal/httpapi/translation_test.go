@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -443,5 +445,73 @@ func TestVolcengineAuthenticationCooldown(t *testing.T) {
 		len(service.TranslateCategoryBatch(context.Background(), []string{"b"})) != 0 ||
 		calls != 1 || time.Until(p.retryAfter) < time.Minute || time.Until(p.retryAfter) > 2*time.Minute {
 		t.Fatal("authentication cooldown failed")
+	}
+}
+
+func TestBaiduQuotaBlocksOverageAndPersists(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		original := r.FormValue("q")
+		_ = json.NewEncoder(w).Encode(map[string]any{"from": "en", "to": "zh",
+			"trans_result": []map[string]string{{"src": original, "dst": "译:" + original}}})
+	}))
+	defer server.Close()
+
+	usage := filepath.Join(t.TempDir(), "baidu-usage.json")
+	service := NewBaiduTranslationService("mock-id", "mock-value", usage, 10)
+	service.provider.(*baiduTranslationProvider).endpoint = server.URL
+	if got := service.translate(context.Background(), "en", []string{"Brand"}); got["Brand"] != "译:Brand" {
+		t.Fatalf("first translation failed: %#v", got)
+	}
+	if got := service.translate(context.Background(), "en", []string{"Bag"}); got["Bag"] != "译:Bag" {
+		t.Fatalf("second translation failed: %#v", got)
+	}
+	if got := service.translate(context.Background(), "en", []string{"Chair"}); len(got) != 0 || calls.Load() != 2 {
+		t.Fatalf("quota overage reached the provider: %#v calls=%d", got, calls.Load())
+	}
+	state, err := os.ReadFile(usage)
+	if err != nil || !strings.Contains(string(state), `"chars":8`) || !strings.Contains(string(state), `"month":"`) {
+		t.Fatalf("usage was not persisted: %s err=%v", state, err)
+	}
+
+	restarted := NewBaiduTranslationService("mock-id", "mock-value", usage, 10)
+	restarted.provider.(*baiduTranslationProvider).endpoint = server.URL
+	if got := restarted.translate(context.Background(), "en", []string{"Chair"}); len(got) != 0 {
+		t.Fatalf("restart lost quota usage: %#v", got)
+	}
+	if got := restarted.translate(context.Background(), "en", []string{"Hi"}); got["Hi"] != "译:Hi" || calls.Load() != 3 {
+		t.Fatalf("remaining quota was not usable: %#v calls=%d", got, calls.Load())
+	}
+}
+
+func TestBaiduRetriesTransientFailureOnce(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		original := r.FormValue("q")
+		_ = json.NewEncoder(w).Encode(map[string]any{"from": "en", "to": "zh",
+			"trans_result": []map[string]string{{"src": original, "dst": "译:" + original}}})
+	}))
+	defer server.Close()
+
+	service := NewBaiduTranslationService("mock-id", "mock-value", "", 50000)
+	service.provider.(*baiduTranslationProvider).endpoint = server.URL
+	if got := service.translate(context.Background(), "en", []string{"Brand"}); got["Brand"] != "译:Brand" || calls.Load() != 2 {
+		t.Fatalf("transient failure was not retried once: %#v calls=%d", got, calls.Load())
+	}
+}
+
+func TestBaiduSourceMapping(t *testing.T) {
+	for source, want := range map[string]string{"": "auto", "en": "en", "es": "spa", "pt": "pt"} {
+		if got, ok := baiduSourceCode(source); !ok || got != want {
+			t.Fatalf("source %q mapped to %q (%t), want %q", source, got, ok, want)
+		}
+	}
+	if _, ok := baiduSourceCode("fr"); ok {
+		t.Fatal("unsupported source language was accepted")
 	}
 }

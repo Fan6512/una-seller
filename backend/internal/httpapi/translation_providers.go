@@ -7,11 +7,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -130,18 +135,144 @@ func (p *azureTranslationProvider) translate(ctx context.Context, source string,
 	return out
 }
 
+const baiduDefaultMonthlyLimit = 50000
+
+type baiduQuotaState struct {
+	Month string `json:"month"`
+	Chars int    `json:"chars"`
+}
+
+// baiduQuota is a fail-closed monthly character budget persisted next to the
+// dictionary. A nil quota means the caller supplies its own billed key.
+type baiduQuota struct {
+	mu      sync.Mutex
+	path    string
+	limit   int
+	month   string
+	used    int
+	blocked bool
+	warned  bool
+}
+
+func baiduMonth() string {
+	return time.Now().In(time.FixedZone("CST", 8*60*60)).Format("2006-01")
+}
+
+func newBaiduQuota(path string, limit int) *baiduQuota {
+	q := &baiduQuota{path: path, limit: limit, month: baiduMonth()}
+	if path == "" {
+		return q
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return q
+	}
+	var state baiduQuotaState
+	if err != nil || json.Unmarshal(data, &state) != nil || state.Chars < 0 {
+		q.blocked = true
+		log.Print("translation provider=baidu outcome=quota_state_invalid")
+		return q
+	}
+	if state.Month == q.month {
+		q.used = state.Chars
+	}
+	return q
+}
+
+func (q *baiduQuota) reserve(n int) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if month := baiduMonth(); month != q.month {
+		q.month, q.used, q.blocked, q.warned = month, 0, false, false
+	}
+	if q.blocked {
+		return false
+	}
+	if q.used+n > q.limit {
+		if !q.warned {
+			q.warned = true
+			log.Printf("translation provider=baidu outcome=quota_exceeded limit=%d used=%d", q.limit, q.used)
+		}
+		return false
+	}
+	q.used += n
+	if err := q.saveLocked(); err != nil {
+		q.used -= n
+		q.blocked = true
+		log.Print("translation provider=baidu outcome=quota_state_unwritable")
+		return false
+	}
+	return true
+}
+
+func (q *baiduQuota) saveLocked() error {
+	if q.path == "" {
+		return nil
+	}
+	dir := filepath.Dir(q.path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(baiduQuotaState{Month: q.month, Chars: q.used})
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".baidu-usage-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), q.path)
+}
+
 type baiduTranslationProvider struct {
 	appID, secret, endpoint string
 	client                  *http.Client
+	quota                   *baiduQuota
 	nextRequest, retryAfter time.Time
 }
 
-func (p *baiduTranslationProvider) translate(ctx context.Context, source string, texts []string) []string {
+// NewBaiduTranslationService is the operator-owned provider. monthlyLimit is a
+// hard cap in source characters; the counter persists in usagePath.
+func NewBaiduTranslationService(appID, secret, usagePath string, monthlyLimit int) *TranslationService {
+	appID, secret = strings.TrimSpace(appID), strings.TrimSpace(secret)
+	if appID == "" || secret == "" || strings.ContainsAny(secret, "\r\n") {
+		return nil
+	}
+	return newTranslationService("baidu", &baiduTranslationProvider{
+		appID: appID, secret: secret, endpoint: baiduTranslateURL, client: newTranslationHTTPClient(),
+		quota: newBaiduQuota(usagePath, monthlyLimit),
+	})
+}
+
+func baiduSourceCode(source string) (string, bool) {
 	switch source {
 	case "":
-		source = "auto"
+		return "auto", true
+	case "en":
+		return "en", true
 	case "es":
-		source = "spa"
+		return "spa", true
+	case "pt":
+		return "pt", true
+	}
+	return "", false
+}
+
+func (p *baiduTranslationProvider) translate(ctx context.Context, source string, texts []string) []string {
+	source, ok := baiduSourceCode(source)
+	if !ok {
+		return make([]string, len(texts))
 	}
 
 	out := make([]string, len(texts))
@@ -178,44 +309,68 @@ func (p *baiduTranslationProvider) translateBatch(ctx context.Context, source st
 	if time.Now().Before(p.retryAfter) {
 		return false
 	}
+	text := strings.Join(batch, "\n")
+	characters := utf8.RuneCountInString(text)
+	if p.quota != nil && !p.quota.reserve(characters) {
+		return false
+	}
+	return p.sendBatch(ctx, source, batch, indexes, out, text)
+}
+
+// sendBatch retries one transient transport, 5xx or Baidu 52001/52002 failure.
+func (p *baiduTranslationProvider) sendBatch(ctx context.Context, source string, batch []string, indexes []int, out []string, text string) bool {
+	for attempt := 0; attempt < 2; attempt++ {
+		ok, retry := p.attemptBatch(ctx, source, batch, indexes, out, text)
+		if ok {
+			return true
+		}
+		if !retry || ctx.Err() != nil {
+			return false
+		}
+	}
+	return false
+}
+
+func (p *baiduTranslationProvider) attemptBatch(ctx context.Context, source string, batch []string, indexes []int, out []string, text string) (bool, bool) {
 	if delay := time.Until(p.nextRequest); delay > 0 {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
-			return false
+			return false, false
 		case <-timer.C:
 		}
 	}
 	if ctx.Err() != nil {
-		return false
+		return false, false
 	}
 
-	text := strings.Join(batch, "\n")
 	salt := rand.Text()
 	// The Baidu protocol requires MD5 of raw UTF-8 before form encoding.
 	sum := md5.Sum([]byte(p.appID + text + salt + p.secret))
 	form := url.Values{"appid": {p.appID}, "q": {text}, "from": {source}, "to": {"zh"}, "salt": {salt}, "sign": {hex.EncodeToString(sum[:])}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return false
+		return false, false
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	res, err := p.client.Do(req)
 	// Spacing from completion also covers requests delayed in transport.
 	p.nextRequest = time.Now().Add(time.Second)
 	if err != nil {
-		return false
+		return false, true
 	}
 	defer res.Body.Close()
 	switch res.StatusCode {
 	case http.StatusTooManyRequests:
 		p.retryAfter = translationRateLimitUntil(res)
+		return false, false
 	case http.StatusUnauthorized, http.StatusForbidden:
 		p.retryAfter = time.Now().Add(time.Hour)
+		return false, false
 	}
 	if res.StatusCode != http.StatusOK {
-		return false
+		return false, res.StatusCode >= http.StatusInternalServerError
 	}
 
 	var result struct {
@@ -228,31 +383,33 @@ func (p *baiduTranslationProvider) translateBatch(ctx context.Context, source st
 		} `json:"trans_result"`
 	}
 	if !readTranslationJSON(res.Body, &result) {
-		return false
+		return false, false
 	}
 	switch strings.Trim(string(result.ErrorCode), "\"") {
 	case "", "52000":
 	case "54003", "54005":
 		p.retryAfter = translationRateLimitUntil(res)
-		return false
+		return false, false
+	case "52001", "52002":
+		return false, true
 	case "52003", "54001", "54004", "58000", "58002", "58003", "90107":
 		p.retryAfter = time.Now().Add(time.Hour)
-		return false
+		return false, false
 	default:
-		return false
+		return false, false
 	}
 	if result.To != "zh" || result.From == "" || source != "auto" && result.From != source || len(result.Results) != len(batch) {
-		return true
+		return true, false
 	}
 	for i, row := range result.Results {
 		if row.Source != batch[i] || !validTranslatedText(row.Translated) {
-			return true
+			return true, false
 		}
 	}
 	for i, row := range result.Results {
 		out[indexes[i]] = row.Translated
 	}
-	return true
+	return true, false
 }
 
 func readTranslationJSON(body io.Reader, out any) bool {
