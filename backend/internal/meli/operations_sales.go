@@ -10,19 +10,19 @@ import (
 // OperationsSales is a cached merchandise subtotal, not settlement, paid-at
 // revenue, or a guarantee of complete platform coverage.
 type OperationsSales struct {
-	Day             string  `json:"day"`
-	AmountUSD       *string `json:"amount_usd"`
-	PaidOrders      int     `json:"paid_orders"`
-	IncludedOrders  int     `json:"included_orders"`
-	ReviewOrders    int     `json:"review_orders"`
-	RefundedOrders  int     `json:"refunded_orders"`
-	CancelledOrders int     `json:"cancelled_orders"`
-	OtherOrders     int     `json:"other_orders"`
-	ScopeAvailable  bool    `json:"scope_available"`
-	Truncated       bool    `json:"truncated"`
+	Day               string  `json:"day"`
+	AmountUSD         *string `json:"amount_usd"`
+	PaidOrders        int     `json:"paid_orders"`
+	IncludedOrders    int     `json:"included_orders"`
+	ReviewOrders      int     `json:"review_orders"`
+	RefundedOrders    int     `json:"refunded_orders"`
+	CancelledOrders   int     `json:"cancelled_orders"`
+	OtherOrders       int     `json:"other_orders"`
+	ScopeAvailable    bool    `json:"scope_available"`
+	Truncated         bool    `json:"truncated"`
 	ExpectedProfitCNY *string `json:"expected_profit_cny"`
-	ProfitOrders int `json:"profit_orders"`
-	ProfitRate *string `json:"profit_rate"`
+	ProfitOrders      int     `json:"profit_orders"`
+	ProfitRate        *string `json:"profit_rate"`
 }
 
 const operationsSalesLimit = 10000
