@@ -34,6 +34,12 @@ type billingCollectionAttempt struct {
 type billingCollectionWork struct {
 	target  billingCollectionTarget
 	attempt billingCollectionAttempt
+	stats   *billingPassStats
+}
+
+type billingPassStats struct {
+	targets, done, review int
+	lockBusy              bool
 }
 
 // One scope, bounded batch, explicit USD source. No full account billing
@@ -114,6 +120,14 @@ func (s *Service) saveBillingCollectionState(ctx context.Context, w billingColle
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrOrderAuthorizationChanged
 	}
+	if err == nil && finish && w.stats != nil {
+		switch w.attempt.State {
+		case "done":
+			w.stats.done++
+		case "review":
+			w.stats.review++
+		}
+	}
 	return err
 }
 
@@ -128,6 +142,10 @@ func reusableBillingPreview(t billingCollectionTarget) *BillingOrderPreview {
 }
 
 func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) error {
+	return s.refreshBillingEstimatesPass(ctx, now, &billingPassStats{})
+}
+
+func (s *Service) refreshBillingEstimatesPass(ctx context.Context, now time.Time, stats *billingPassStats) error {
 	ctx = backgroundOrderRead(ctx)
 	// One active pass even when two API processes overlap. The dedicated
 	// session holds only an advisory lock, not a database transaction.
@@ -147,6 +165,7 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 		return err
 	}
 	if !locked {
+		stats.lockBusy = true
 		return nil
 	}
 	defer func() {
@@ -161,6 +180,7 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 		}
 	}()
 	targets, err := s.billingCollectionTargets(ctx, now)
+	stats.targets = len(targets)
 	if err != nil || len(targets) == 0 {
 		return err
 	}
@@ -171,7 +191,7 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 		if json.Unmarshal(t.attempt, &a) != nil || a.Evidence != t.evidence {
 			a = billingCollectionAttempt{Evidence: t.evidence}
 		}
-		w := billingCollectionWork{target: t, attempt: a}
+		w := billingCollectionWork{target: t, attempt: a, stats: stats}
 		// Also repairs an exhausted attempt left by a crash before finalization.
 		if (a.State == "pending" && a.BillingAttempts >= billing.MaxAttempts) ||
 			(a.State == "billing_read" && a.RelationAttempts >= billing.MaxAttempts) {
@@ -338,5 +358,18 @@ func (s *Service) finishBillingCollectionFailure(ctx context.Context, works []bi
 }
 
 func (s *Service) RunBillingCollector(ctx context.Context, logger *log.Logger) {
-	billing.Run(ctx, logger, s.refreshBillingEstimates)
+	billing.Run(ctx, logger, func(pass context.Context, now time.Time) error {
+		stats := billingPassStats{}
+		err := s.refreshBillingEstimatesPass(pass, now, &stats)
+		result := "ok"
+		if err != nil {
+			result = "unavailable"
+		} else if stats.lockBusy {
+			result = "lock_busy"
+		}
+		// Only aggregate counts and a fixed status; no identifiers or raw errors.
+		logger.Printf("%s pass result=%s targets=%d done=%d review=%d deferred=%d",
+			billing.ID, result, stats.targets, stats.done, stats.review, stats.targets-stats.done-stats.review)
+		return err
+	})
 }

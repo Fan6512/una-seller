@@ -97,10 +97,11 @@ func lookupDailyFX(ctx context.Context, db *pgxpool.Pool, orderCreatedAt time.Ti
 	return fx, err
 }
 
-func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, now time.Time) error {
+func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, now time.Time, historyAfter *string) error {
 	today, _, _ := salesDay(now)
 	// Only public dates leave the server. Bound each pass to today's missing
-	// reference and one oldest missing cached-order day, not one call per order.
+	// reference and rotating missing cached-order days, not one call per order.
+	// Advance even on an unavailable historical quote; wrap at the end.
 	rows, err := db.Query(ctx, `WITH needed AS (
 		SELECT $1::date AS day
 		UNION
@@ -110,7 +111,8 @@ func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, 
 	)
 	SELECT n.day::text FROM needed n
 	WHERE NOT EXISTS (SELECT 1 FROM app.daily_usd_cny_rates r WHERE r.accounting_day=n.day)
-	ORDER BY CASE WHEN n.day=$1::date THEN 0 ELSE 1 END,n.day LIMIT 2`, today)
+	ORDER BY CASE WHEN n.day=$1::date THEN 0
+		WHEN n.day > COALESCE(NULLIF($2,'')::date, DATE '0001-01-01') THEN 1 ELSE 2 END,n.day LIMIT 2`, today, *historyAfter)
 	if err != nil {
 		return err
 	}
@@ -128,22 +130,31 @@ func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, 
 	if err != nil {
 		return err
 	}
+	var failed error
 	for _, day := range days {
-		rate, err := fetchDailyFX(ctx, client, day)
-		if err != nil {
-			return err // Retry next interval, never write a guessed value.
+		if ctx.Err() != nil {
+			return errors.Join(failed, ctx.Err())
 		}
-		if err := saveDailyFX(ctx, db, rate); err != nil {
-			return err
+		if day != today {
+			*historyAfter = day
+		}
+		rate, err := fetchDailyFX(ctx, client, day)
+		if err == nil {
+			err = saveDailyFX(ctx, db, rate)
+		}
+		if err != nil {
+			failed = errors.Join(failed, err)
 		}
 	}
-	return nil
+	return failed
 }
 
 // RunDailyFX is opt-in until the migration and real provider connectivity are
 // verified. It never gates startup, order ingestion or notification ACK.
 func RunDailyFX(ctx context.Context, db *pgxpool.Pool, logger *log.Logger) {
+	// The cursor is bounded process-local state, reset on restart.
+	historyAfter := ""
 	fx.Run(ctx, logger, func(pass context.Context, client *http.Client, now time.Time) error {
-		return refreshDailyFX(pass, db, client, now)
+		return refreshDailyFX(pass, db, client, now, &historyAfter)
 	})
 }

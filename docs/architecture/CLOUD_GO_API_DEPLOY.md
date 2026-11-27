@@ -117,3 +117,11 @@ curl -i https://mkd.186512.xyz/api/v1/collections
 Go 服务可执行文件更新前备份上一版；需要回滚时恢复对应二进制并 `sudo systemctl restart una-seller-api`。Nginx 每次修改前备份新建的 `mkd` vhost，`nginx -t` 失败绝不 reload；已有其他站点保持原样。不要清空 Supabase 数据库或修改其他 Docker 容器。
 
 **完成状态判定：** 仓库 CI 通过 = `CODE_READY`；Ubuntu 服务器进程、DNS、TLS、客户端 Bearer 读回均通过 = `CLOUD_DEPLOYED / PASS`。目前只提交代码与部署模板，尚无后者的实测证据。
+
+## FIN-02A 预计利润上线门禁（PR #118）
+
+仅在批准合并及生产升级后执行；不复制覆盖现有私有 env。顺序固定：备份与角色/锁检查 → 使用批准版本的 `api migrate` 应用 0023/0024/0025 → 两个采集开关均关闭启动 API 并核验健康及授权读写 → 单独启用 FX → 核验锁定汇率和缺失日回填 → 再启用 Billing。实际部署用同一服务的配置及运行角色，核对 0023 私有表读写权限；不得为解决权限错误开放匿名/客户端访问。使用 Session Pooler/Direct 连接，不使用 Transaction Pooler 运行持有会话 advisory lock 的 Billing collector。
+
+- `UNA_SELLER_DAILY_FX_ENABLED=1`：30分钟采集，订单北京日固定参考汇率，先写不覆盖；默认关闭。核对真实提供方连通和已锁定行。
+- `UNA_SELLER_BILLING_COLLECTOR_ENABLED=1`：默认关闭；必须有已配置 OAuth，当前每2小时一轮、单 scope 最多10单。观察 `collector.meli.billing pass result=... targets=... done=... review=... deferred=...` 脱敏日志、429退避、401风险及订单/首页一致性。
+- 任一阶段失败暂停下一步；可单独关闭采集模块，保留已保存记录。未人工完成 Windows GUI 验收前不标记正式发布通过。上述开关的生产启用需明确批准。
