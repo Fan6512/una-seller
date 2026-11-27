@@ -1,6 +1,9 @@
 package meli
 
-import "time"
+import (
+	"math/big"
+	"time"
+)
 
 // ConfirmedExpectedUSDNet is the observed order-level expected net in Seller
 // Center, never a settlement receipt or a number derived from a fee subtotal.
@@ -20,6 +23,7 @@ type ExpectedOrderProfitUSD struct {
 	NetSource     string    `json:"net_source"`
 	NetObservedAt time.Time `json:"net_observed_at"`
 	Kind          string    `json:"kind"`
+	ProfitCNY     string    `json:"profit_cny"`
 }
 
 // EstimateProfitFromExpectedNet requires an explicitly confirmed expected net,
@@ -33,7 +37,14 @@ func EstimateProfitFromExpectedNet(net ConfirmedExpectedUSDNet, fx ProfitFXRate,
 	if err != nil {
 		return ExpectedOrderProfitUSD{}, err
 	}
+	// Calculate directly in CNY before rounding, not from rounded USD profit.
+	usd, _ := ratOf(net.Amount)
+	rate, _ := ratOf(fx.CNYPerUSD)
+	purchase, _ := ratOf(purchaseCNY)
+	extra, _ := ratOf(extraCNY)
+	cny := new(big.Rat).Sub(new(big.Rat).Mul(usd, rate), new(big.Rat).Add(purchase, extra))
 	return ExpectedOrderProfitUSD{
+		ProfitCNY:          fixedPoint(roundRatio(cny, 100), 2),
 		EstimatedProfitUSD: profit,
 		NetSource:          net.Source,
 		NetObservedAt:      net.ObservedAt,

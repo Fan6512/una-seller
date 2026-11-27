@@ -13,14 +13,14 @@ func TestExpectedProfitConfirmedNet(t *testing.T) {
 	fx := ProfitFXRate{CNYPerUSD: "7", Source: "test accounting rate", AsOf: observed}
 	net := ConfirmedExpectedUSDNet{Amount: "7.90", Source: ExpectedNetSellerCenter, ObservedAt: observed}
 	got, err := EstimateProfitFromExpectedNet(net, fx, "35", "0")
-	if err != nil || got.Kind != "expected" || got.NetUSD != "7.90" || got.ProfitUSD != "2.90" ||
+	if err != nil || got.Kind != "expected" || got.NetUSD != "7.90" || got.ProfitUSD != "2.90" || got.ProfitCNY != "20.30" ||
 		got.NetSource != ExpectedNetSellerCenter || !got.NetObservedAt.Equal(observed) ||
 		got.MarginPercent == nil || *got.MarginPercent != "36.7" {
 		t.Fatalf("expected profit: %+v %v", got, err)
 	}
 	net.Amount = "8.99"
 	got, err = EstimateProfitFromExpectedNet(net, fx, "56", "7")
-	if err != nil || got.ProfitUSD != "-0.01" {
+	if err != nil || got.ProfitUSD != "-0.01" || got.ProfitCNY != "-0.07" {
 		t.Fatalf("expected loss: %+v %v", got, err)
 	}
 	for _, tc := range []struct {

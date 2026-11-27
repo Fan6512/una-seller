@@ -200,6 +200,10 @@ func main() {
 			go inbox.RunCompensation(context.Background(), id, log.Default(), meliService.SearchDiscoveryOrders)
 		}
 	}
+	// Independent public reference data; never on the notification ACK path.
+	if db != nil && os.Getenv("UNA_SELLER_DAILY_FX_ENABLED") == "1" {
+		go meli.RunDailyFX(context.Background(), db, log.Default())
+	}
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }

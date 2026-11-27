@@ -74,6 +74,9 @@ var cbtPublicationSQL string
 //go:embed 0022_cbt_publication_recovery.sql
 var cbtPublicationRecoverySQL string
 
+//go:embed 0023_daily_usd_cny_rates.sql
+var dailyUSDCNYRatesSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -168,6 +171,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, cbtPublicationRecoverySQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply CBT publication recovery schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, dailyUSDCNYRatesSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply daily USD/CNY reference rates schema: %w", err)
 	}
 	return nil
 }
