@@ -638,6 +638,24 @@ func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
 		if err != nil || saved.CheckedAt == nil {
 			t.Fatalf("restart fixture not saved: %+v %v", saved, err)
 		}
+		// Keep the restart harness small: verify the new finance columns on the
+		// same private order and rerun all idempotent migrations before restart.
+		if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET pack_id='20001' WHERE store_id=$1::uuid AND order_id='10001'`, store); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `UPDATE app.meli_orders o SET
+			expected_profit_billing_estimate=jsonb_build_object(
+				'amount_usd','4.50','source','billing_estimate','risk','shipment_membership_unknown',
+				'observed_at',to_jsonb(clock_timestamp()),'evidence',`+expectedProfitEvidence+`),
+			expected_profit_billing_attempt='{"state":"done","billing_attempts":1,"relation_attempts":1}'::jsonb,
+			expected_profit_extra_cny=2.50
+			FROM app.meli_store_connections c
+			WHERE o.store_id=c.id AND o.store_id=$1::uuid AND o.order_id='10001'`, store); err != nil {
+			t.Fatal(err)
+		}
+		if err := migrations.Apply(ctx, db); err != nil {
+			t.Fatal(err)
+		}
 		t.Logf("billing snapshot persisted before restart: checked_at=%s", saved.CheckedAt.Format(time.RFC3339Nano))
 		return
 	}
@@ -652,6 +670,32 @@ func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
 		cached.Items[0].Shipping == nil || cached.Items[0].Shipping.SellerNetCostUSD != "3.38" {
 		t.Fatalf("snapshot missing after restart: %+v %v", cached, err)
 	}
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var attemptOK, extraOK, rlsOK bool
+	if err := db.QueryRow(ctx, `SELECT expected_profit_billing_attempt='{"state":"done","billing_attempts":1,"relation_attempts":1}'::jsonb,
+		expected_profit_extra_cny=2.50,
+		(SELECT relrowsecurity FROM pg_class WHERE oid='app.meli_orders'::regclass)
+		FROM app.meli_orders WHERE store_id=$1::uuid AND order_id='10001'`, store).Scan(&attemptOK, &extraOK, &rlsOK); err != nil || !attemptOK || !extraOK || !rlsOK {
+		t.Fatalf("billing estimate state/cost/RLS lost: %v", err)
+	}
+	out, err := service.GetExpectedOrderProfit(ctx, owner, store, OrderScope{Site: "MLB", Logistic: "remote"}, "10001")
+	if err != nil || out.NetUSD == nil || *out.NetUSD != "4.50" || out.NetSource != ExpectedNetBillingEstimate ||
+		out.NetRisk != BillingEstimateShipmentUnknown || out.ExtraCNY == nil || *out.ExtraCNY != "2.5" || out.HasConfirmation {
+		t.Fatalf("estimated net/cost lost after restart: %+v %v", out, err)
+	}
+	for _, invalid := range []string{
+		"expected_profit_billing_estimate='[]'::jsonb",
+		"expected_profit_billing_attempt='[]'::jsonb",
+		"expected_profit_extra_cny=-1",
+		"expected_profit_extra_cny=1.001",
+	} {
+		if _, err := db.Exec(ctx, "UPDATE app.meli_orders SET "+invalid+" WHERE store_id=$1::uuid AND order_id='10001'", store); err == nil {
+			t.Fatalf("0025 accepted invalid value: %s", invalid)
+		}
+	}
+	t.Log("billing estimate, collection state and extra cost survived migration reruns and PostgreSQL restart; constraints and RLS checked")
 	if _, err := db.Exec(ctx, `DELETE FROM app.meli_store_connections WHERE id=$1::uuid`, store); err != nil {
 		t.Fatal(err)
 	}
