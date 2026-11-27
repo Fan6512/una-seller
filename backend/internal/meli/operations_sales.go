@@ -10,19 +10,21 @@ import (
 // OperationsSales is a cached merchandise subtotal, not settlement, paid-at
 // revenue, or a guarantee of complete platform coverage.
 type OperationsSales struct {
-	Day               string  `json:"day"`
-	AmountUSD         *string `json:"amount_usd"`
-	PaidOrders        int     `json:"paid_orders"`
-	IncludedOrders    int     `json:"included_orders"`
-	ReviewOrders      int     `json:"review_orders"`
-	RefundedOrders    int     `json:"refunded_orders"`
-	CancelledOrders   int     `json:"cancelled_orders"`
-	OtherOrders       int     `json:"other_orders"`
-	ScopeAvailable    bool    `json:"scope_available"`
-	Truncated         bool    `json:"truncated"`
-	ExpectedProfitCNY *string `json:"expected_profit_cny"`
-	ProfitOrders      int     `json:"profit_orders"`
-	ProfitRate        *string `json:"profit_rate"`
+	Day                       string  `json:"day"`
+	AmountUSD                 *string `json:"amount_usd"`
+	PaidOrders                int     `json:"paid_orders"`
+	IncludedOrders            int     `json:"included_orders"`
+	ReviewOrders              int     `json:"review_orders"`
+	RefundedOrders            int     `json:"refunded_orders"`
+	CancelledOrders           int     `json:"cancelled_orders"`
+	OtherOrders               int     `json:"other_orders"`
+	ScopeAvailable            bool    `json:"scope_available"`
+	Truncated                 bool    `json:"truncated"`
+	ExpectedProfitCNY         *string `json:"expected_profit_cny"`
+	ProfitOrders              int     `json:"profit_orders"`
+	BillingEstimatedProfitCNY *string `json:"billing_estimated_profit_cny"`
+	BillingEstimatedOrders    int     `json:"billing_estimated_orders"`
+	ProfitRate                *string `json:"profit_rate"`
 }
 
 const operationsSalesLimit = 10000
@@ -110,6 +112,7 @@ func (s *Service) operationsSales(ctx context.Context, owner, store, site string
 	defer rows.Close()
 	total := new(big.Rat)
 	profitTotal := new(big.Rat)
+	estimateTotal := new(big.Rat)
 	count := 0
 	for rows.Next() {
 		count++
@@ -134,8 +137,14 @@ func (s *Service) operationsSales(ctx context.Context, owner, store, site string
 			if err != nil {
 				return out, err
 			}
-			out.ProfitOrders++
-			profitTotal.Add(profitTotal, value)
+			switch result.Profit.NetSource {
+			case ExpectedNetSellerCenter:
+				out.ProfitOrders++
+				profitTotal.Add(profitTotal, value)
+			case ExpectedNetBillingEstimate:
+				out.BillingEstimatedOrders++
+				estimateTotal.Add(estimateTotal, value)
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -148,6 +157,10 @@ func (s *Service) operationsSales(ctx context.Context, owner, store, site string
 	if !out.Truncated && out.ProfitOrders > 0 {
 		amount := fixedPoint(roundRatio(profitTotal, 100), 2)
 		out.ExpectedProfitCNY = &amount
+	}
+	if !out.Truncated && out.BillingEstimatedOrders > 0 {
+		amount := fixedPoint(roundRatio(estimateTotal, 100), 2)
+		out.BillingEstimatedProfitCNY = &amount
 	}
 	return out, nil
 }
