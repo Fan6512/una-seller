@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
 )
 
 const (
@@ -145,13 +147,12 @@ type baiduQuotaState struct {
 // baiduQuota is a fail-closed monthly character budget persisted next to the
 // dictionary. A nil quota means the caller supplies its own billed key.
 type baiduQuota struct {
-	mu      sync.Mutex
-	path    string
-	limit   int
-	month   string
-	used    int
-	blocked bool
-	warned  bool
+	mu     sync.Mutex
+	path   string
+	limit  int
+	month  string
+	used   int
+	warned bool
 }
 
 func baiduMonth() string {
@@ -159,36 +160,49 @@ func baiduMonth() string {
 }
 
 func newBaiduQuota(path string, limit int) *baiduQuota {
-	q := &baiduQuota{path: path, limit: limit, month: baiduMonth()}
-	if path == "" {
-		return q
-	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return q
-	}
-	var state baiduQuotaState
-	if err != nil || json.Unmarshal(data, &state) != nil || state.Chars < 0 {
-		q.blocked = true
-		log.Print("translation provider=baidu outcome=quota_state_invalid")
-		return q
-	}
-	if state.Month == q.month {
-		q.used = state.Chars
-	}
-	return q
+	return &baiduQuota{path: path, limit: limit}
 }
 
 func (q *baiduQuota) reserve(n int) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if month := baiduMonth(); month != q.month {
-		q.month, q.used, q.blocked, q.warned = month, 0, false, false
-	}
-	if q.blocked {
+	if q.path == "" || n <= 0 || q.limit <= 0 {
 		return false
 	}
-	if q.used+n > q.limit {
+	if err := os.MkdirAll(filepath.Dir(q.path), 0700); err != nil {
+		return false
+	}
+	// Lock the stable sidecar, not the atomically replaced usage file.
+	// Both API and CLI must reload and reserve while holding this OS lock.
+	lock, err := cbtcategory.LockFile(q.path + ".lock")
+	if err != nil {
+		return false
+	}
+	defer lock.Close()
+	month := baiduMonth()
+	if q.month != month {
+		q.warned = false
+	}
+	q.month, q.used = month, 0
+	data, err := os.ReadFile(q.path)
+	if !errors.Is(err, os.ErrNotExist) {
+		var state struct {
+			Month string `json:"month"`
+			Chars *int   `json:"chars"`
+		}
+		if err != nil || json.Unmarshal(data, &state) != nil || state.Chars == nil || *state.Chars < 0 {
+			log.Print("translation provider=baidu outcome=quota_state_invalid")
+			return false
+		}
+		if parsed, err := time.Parse("2006-01", state.Month); err != nil || parsed.Format("2006-01") != state.Month || state.Month > month {
+			log.Print("translation provider=baidu outcome=quota_state_invalid")
+			return false
+		}
+		if state.Month == month {
+			q.used = *state.Chars
+		}
+	}
+	if q.used > q.limit || n > q.limit-q.used {
 		if !q.warned {
 			q.warned = true
 			log.Printf("translation provider=baidu outcome=quota_exceeded limit=%d used=%d", q.limit, q.used)
@@ -197,8 +211,6 @@ func (q *baiduQuota) reserve(n int) bool {
 	}
 	q.used += n
 	if err := q.saveLocked(); err != nil {
-		q.used -= n
-		q.blocked = true
 		log.Print("translation provider=baidu outcome=quota_state_unwritable")
 		return false
 	}
@@ -286,7 +298,7 @@ func (p *baiduTranslationProvider) translate(ctx context.Context, source string,
 			continue
 		}
 		// Auto-detection returns one source language per request.
-		if characters > 0 && (source == "auto" || characters+1+count > 1000) {
+		if characters > 0 && (source == "auto" || len(batch) >= 16 || characters+1+count > 1000) {
 			if !p.translateBatch(ctx, source, batch, indexes, out) {
 				return out
 			}
@@ -310,10 +322,6 @@ func (p *baiduTranslationProvider) translateBatch(ctx context.Context, source st
 		return false
 	}
 	text := strings.Join(batch, "\n")
-	characters := utf8.RuneCountInString(text)
-	if p.quota != nil && !p.quota.reserve(characters) {
-		return false
-	}
 	return p.sendBatch(ctx, source, batch, indexes, out, text)
 }
 
@@ -354,6 +362,10 @@ func (p *baiduTranslationProvider) attemptBatch(ctx context.Context, source stri
 		return false, false
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// Reserve every actual attempt, including retries; never refund uncertain requests.
+	if p.quota != nil && !p.quota.reserve(utf8.RuneCountInString(text)) {
+		return false, false
+	}
 	res, err := p.client.Do(req)
 	// Spacing from completion also covers requests delayed in transport.
 	p.nextRequest = time.Now().Add(time.Second)
