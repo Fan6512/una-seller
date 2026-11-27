@@ -1,5 +1,7 @@
 # UNA Seller · 功能状态总台账
 
+> V0.8.0交付更新（2026-11-27）：固定提交 `6a56734f` 已运行于生产；已发布签名 Pre-release V0.8.0。Windows人工验收待执行，OTA测试通道0.8.0、正式通道204已验证。详见 [联合交付回执](../architecture/V080-JOINT-DELIVERY-20261127.md)。
+
 > **日常功能进度与需求登记的统一入口** · 首次盘点：2026-11-23  
 > 核对基线：2026-11-27 main `abe3eb2b`（#115/#116/#117 已合并）；最近已记录生产 API `b1dd92ff`（0014–0020，订单/货件通知与自动补偿已启用）；联合生产升级未获批/未执行。当前已发布签名测试版 V0.5.0。旧基线与证据保留在 [整理前台账](https://github.com/Fan6512/una-seller/blob/abe3eb2b7c77caa589daafb61b1c42ac09c5da7d/docs/product/FEATURE-STATUS.md) 和各行历史记录。
 > 产品范围：自用的 Mercado Libre CBT ERP；核心链路 **采集 → 工作稿/产品箱 → AI 整理 → CBT 刊登 → 已刊登管理 → 订单/财务**。Amazon 等平台只作为采集来源。  
