@@ -8,7 +8,7 @@ type StoreSummary = {
   open_claims: number | null; paused_items: number | null; pending_jobs: number; dead_jobs: number;
 };
 type WorkRow = { store_id: string; site: string; kind: string; resource_id: string; status: string; observed_at: string; due_at?: string };
-type Sales = { day: string; amount_usd: string | null; paid_orders: number; included_orders: number; review_orders: number; refunded_orders: number; cancelled_orders: number; other_orders: number; scope_available: boolean; truncated: boolean; expected_profit_cny?: string | null; profit_orders?: number; profit_rate?: string | null };
+type Sales = { day: string; amount_usd: string | null; paid_orders: number; included_orders: number; review_orders: number; refunded_orders: number; cancelled_orders: number; other_orders: number; scope_available: boolean; truncated: boolean; expected_profit_cny?: string | null; profit_orders?: number; billing_estimated_profit_cny?: string | null; billing_estimated_orders?: number; profit_rate?: string | null };
 type Summary = { sales?: Sales; stores: StoreSummary[]; checked_at: string; truncated: boolean; cache_only: boolean; activity: WorkRow[]; todos: WorkRow[] };
 type Target = "orders" | "published";
 const metrics = [
@@ -157,7 +157,7 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
       <div className="operations-section-heading"><h2>经营总览</h2><BeijingClock onDay={setDay} /></div>
       <div className="operations-overview-cards">
         <article className="operations-kpi operations-financial"><span>今日销售额（缓存）</span><strong>{isCurrentSales && sales?.amount_usd != null ? "USD " + sales.amount_usd : "—"}</strong><small>{salesNote}</small></article>
-        <article className="operations-kpi operations-financial"><span>今日预计利润（缓存）</span><strong>{isCurrentSales && sales?.scope_available && !sales.truncated && sales.expected_profit_cny != null ? "¥" + sales.expected_profit_cny : "—"}</strong><small>{!isCurrentSales || !sales?.scope_available || sales.truncated || sales.profit_orders == null ? "当前范围暂无可用预计利润" : "已核算 " + sales.profit_orders + "/" + sales.paid_orders + " 笔已付款订单" + (sales.profit_rate ? " · 固定汇率 " + sales.profit_rate : " · 汇率待获取") + " · 未核实订单及退款排除，非实收"}</small></article>
+        <article className="operations-kpi operations-financial"><span>今日预计利润（已核实）</span><strong>{isCurrentSales && sales?.scope_available && !sales.truncated && sales.expected_profit_cny != null ? "¥" + sales.expected_profit_cny : "—"}</strong><small>{!isCurrentSales || !sales?.scope_available || sales.truncated || sales.profit_orders == null ? "当前范围暂无可用预计利润" : "已核实 " + sales.profit_orders + "/" + sales.paid_orders + " 笔已付款订单" + (sales.profit_rate ? " · 固定汇率 " + sales.profit_rate : " · 汇率待获取") + " · 非实收"}</small><small>{isCurrentSales && sales?.scope_available && !sales.truncated && sales.billing_estimated_orders != null ? "账单估算：" + (sales.billing_estimated_profit_cny == null ? "—" : "¥" + sales.billing_estimated_profit_cny) + " · " + sales.billing_estimated_orders + "/" + sales.paid_orders + " 笔；仅供参考，未计入已核实金额" : "账单估算暂无数据"}</small></article>
       </div>
       <div className="operations-section-heading operations-subheading"><h3>运营指标</h3><span className="operations-note">店铺整体缓存 · 不随站点筛选</span></div>
       <div className="operations-overview-cards operations-count-cards">
