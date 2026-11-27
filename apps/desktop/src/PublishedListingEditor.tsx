@@ -307,13 +307,18 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
     <section className="published-block">
       <div className="published-block-head"><h3>商品分类</h3><span>仅编辑本地草稿</span></div>
       {cbtPath && <>
-        <p className="published-category-path">{site !== "CBT" && "CBT 分类 · "}{(cbtPath.zh ?? cbtPath.original).join(" / ")}</p>
-        {cbtPath.zh && <p className="published-hint">{cbtPath.original.join(" / ")}</p>}
+        <p className="published-category-path">{site !== "CBT" && "CBT 分类 · "}{cbtPath.original.join(" / ")}</p>
+        {cbtPath.zh?.length === cbtPath.original.length && cbtPath.zh.join(" / ") !== cbtPath.original.join(" / ") &&
+          <p className="published-hint">{cbtPath.zh.join(" / ")}</p>}
       </>}
-      {site !== "CBT" || !cbtPath ? <p className="published-category-path">
-        {categoryPath.length ? readablePath.join(" / ") : loading ? "正在加载分类名称…" : "官方分类名称暂未返回"}
-      </p> : null}
-      {categoryPath.length > 0 && readablePath.join(" / ") !== categoryPath.join(" / ") && <p className="published-hint">{categoryPath.join(" / ")}</p>}
+      {(site !== "CBT" || !cbtPath) && <>
+        <p className="published-category-path">
+          {site !== "CBT" && cbtPath && "站点分类 · "}
+          {categoryPath.length ? categoryPath.join(" / ") : loading ? "正在加载分类名称…" : "官方分类名称暂未返回"}
+        </p>
+        {categoryPath.length > 0 && readablePath.join(" / ") !== categoryPath.join(" / ") &&
+          <p className="published-hint">{readablePath.join(" / ")}</p>}
+      </>}
       <details className="published-detail-expand">
         <summary>调整类目（高级）</summary>
         <label className="published-edit-field">
