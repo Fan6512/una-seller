@@ -498,7 +498,7 @@ func TestBaiduRetriesTransientFailureOnce(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := NewBaiduTranslationService("mock-id", "mock-value", "", 50000)
+	service := NewBaiduTranslationService("mock-id", "mock-value", filepath.Join(t.TempDir(), "usage.json"), 50000)
 	service.provider.(*baiduTranslationProvider).endpoint = server.URL
 	if got := service.translate(context.Background(), "en", []string{"Brand"}); got["Brand"] != "译:Brand" || calls.Load() != 2 {
 		t.Fatalf("transient failure was not retried once: %#v calls=%d", got, calls.Load())
@@ -513,5 +513,74 @@ func TestBaiduSourceMapping(t *testing.T) {
 	}
 	if _, ok := baiduSourceCode("fr"); ok {
 		t.Fatal("unsupported source language was accepted")
+	}
+}
+
+func TestBaiduQuotaIndependentInstancesAndInvalidState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.json")
+	a, b := newBaiduQuota(path, 10), newBaiduQuota(path, 10)
+	if !a.reserve(6) || b.reserve(5) || !b.reserve(4) || a.reserve(1) {
+		t.Fatal("independent instances did not share the persisted budget")
+	}
+	for _, bad := range []string{`{}`, `{"month":"2026-11"}`, `{"month":"invalid","chars":0}`} {
+		if err := os.WriteFile(path, []byte(bad), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if a.reserve(1) {
+			t.Fatal("invalid quota state accepted")
+		}
+	}
+	if newBaiduQuota("", 10).reserve(1) {
+		t.Fatal("missing persistence path accepted")
+	}
+}
+
+func TestBaiduRetryConsumesQuotaBeforeEachAttempt(t *testing.T) {
+	for _, limit := range []int{5, 10} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			path := filepath.Join(t.TempDir(), "usage.json")
+			service := NewBaiduTranslationService("mock-id", "mock-value", path, limit)
+			service.provider.(*baiduTranslationProvider).endpoint = server.URL
+			service.translate(context.Background(), "en", []string{"Brand"})
+			data, err := os.ReadFile(path)
+			var state baiduQuotaState
+			if err != nil || json.Unmarshal(data, &state) != nil || state.Chars != limit || int(calls.Load()) != limit/5 {
+				t.Fatalf("retry budget mismatch: state=%+v calls=%d err=%v", state, calls.Load(), err)
+			}
+		})
+	}
+}
+
+func TestBaiduPersonalKeyKeepsLargeKnownLanguageBatch(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		rows := make([]map[string]string, 0)
+		for _, original := range strings.Split(r.FormValue("q"), "\n") {
+			rows = append(rows, map[string]string{"src": original, "dst": "译:" + original})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"from": "en", "to": "zh", "trans_result": rows})
+	}))
+	defer server.Close()
+	texts := make([]string, 32)
+	for i := range texts {
+		texts[i] = fmt.Sprintf("Label %d", i)
+	}
+	personal := NewTranslationService("baidu", "", "", "mock-id", "mock-value")
+	personal.provider.(*baiduTranslationProvider).endpoint = server.URL
+	if got := personal.translate(context.Background(), "en", texts); len(got) != len(texts) || calls.Load() != 1 {
+		t.Fatalf("personal key batching regressed: translated=%d requests=%d", len(got), calls.Load())
+	}
+	calls.Store(0)
+	public := NewBaiduTranslationService("mock-id", "mock-value", filepath.Join(t.TempDir(), "usage.json"), 50000)
+	public.provider.(*baiduTranslationProvider).endpoint = server.URL
+	if got := public.TranslateCategoryBatch(context.Background(), texts); len(got) != len(texts) || calls.Load() != 2 {
+		t.Fatalf("public key did not retain 16-text batches: translated=%d requests=%d", len(got), calls.Load())
 	}
 }
