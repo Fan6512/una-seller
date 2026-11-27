@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { expandedRowEnd, galleryColumns } from "./publishedGalleryLayout";
 import PublishedListingEditor from "./PublishedListingEditor";
 import "./publishedListings.css";
 
@@ -25,7 +26,8 @@ export type Listing = {
   description?: string;
 };
 type Group = { key: string; familyId?: string; members: Listing[] };
-type Props = { items: Listing[]; selectedId: string; onSelect: (id: string) => void; site: string; logistic: string; store: string };
+export type PublishedViewMode = "family" | "listing";
+type Props = { mode: PublishedViewMode; onModeChange: (mode: PublishedViewMode) => void; selectionDisabled?: boolean; items: Listing[]; selectedId: string; onSelect: (id: string) => void; site: string; logistic: string; store: string; allowDiscard: () => boolean; onDirtyChange: (dirty: boolean) => void };
 type SkuRow = { key: string; sku?: string; name: string; pictures: Picture[]; stock?: number | null; fromItem: Listing };
 
 function getFamily(item: Listing): { key: string; id?: string } {
@@ -89,11 +91,8 @@ function statusName(status?: string): string {
   return status ? STATUS_LABELS[status] || status : "状态未返回";
 }
 
-function priceName(item: Listing): string {
-  return item.price != null ? item.price.toFixed(2) + (item.currency_id ? " " + item.currency_id : "") : "未返回";
-}
-
 function thumb(item: Listing): string | undefined {
+  if (item.secure_thumbnail?.startsWith("https://")) return item.secure_thumbnail;
   const pic = safePictures(item)[0];
   return pic?.secure_url || pic?.url;
 }
@@ -126,24 +125,40 @@ function SkuGallery({ members }: { members: Listing[] }) {
   </section>;
 }
 
-function Detail({ group, selected, site, logistic, store }: { group: Group; selected: Listing; site: string; logistic: string; store: string }) {
+function Detail({ group, selected, site, logistic, store, familyMode, onDirtyChange }: { group: Group; selected: Listing; site: string; logistic: string; store: string; familyMode: boolean; onDirtyChange: (dirty: boolean) => void }) {
   return <article className="published-detail-card">
     <header className="published-detail-header">
       <div><span className="published-eyebrow">{site} · 已刊登商品</span>
-        <h2>{selected.family_name || selected.title || selected.id}</h2>
-        <p>{group.key.startsWith("siteless-family:") ? "Siteless Family ID" : "Family ID"}：{group.familyId || "平台未返回"} · 当前可见 {group.members.length} 条刊登</p>
+        <h2>{selected.title || selected.family_name || selected.id}</h2>
+        {familyMode && <p>{group.key.startsWith("siteless-family:") ? "Siteless Family ID" : "Family ID"}：{group.familyId || "平台未返回"} · 本页 {group.members.length} 条刊登</p>}
+        <p>刊登 ID：{selected.id}</p>
       </div>
       <span className={"published-state " + (selected.status === "active" ? "is-active" : "")}>{statusName(selected.status)}</span>
     </header>
     {selected.detail_unavailable_at && <p className="published-warning">平台当前无法取得详情，下方展示上次保存的信息。</p>}
-    <SkuGallery members={group.members}/>
-    <PublishedListingEditor key={selected.id + ":" + site} listing={selected} site={site} logistic={logistic} store={store} members={group.members}/>
+    <SkuGallery members={[selected]}/>
+    <PublishedListingEditor key={selected.id + ":" + site} listing={selected} site={site} logistic={logistic} store={store} members={group.members} onDirtyChange={onDirtyChange}/>
   </article>;
 }
 
-export default function PublishedListingView({ items, selectedId, onSelect, site, logistic, store }: Props) {
-  const [mode, setMode] = useState<"family" | "listing">("family");
+function CardImage({ url, className = "" }: { url?: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  return <span className={"published-card-image " + className}>
+    {url && !failed ? <img src={url} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}/> : <span>暂无图片</span>}
+  </span>;
+}
+
+export default function PublishedListingView({ items, selectedId, onSelect, mode, onModeChange, selectionDisabled, site, logistic, store, allowDiscard, onDirtyChange }: Props) {
   const [search, setSearch] = useState("");
+  const [expandedKey, setExpandedKey] = useState("");
+  const [variantKey, setVariantKey] = useState("");
+  const gridRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const expansionRef = useRef<HTMLElement>(null);
+  const expansionTrigger = useRef<HTMLButtonElement | null>(null);
+  const expansionId = useId();
+  const [columns, setColumns] = useState(1);
   const groups = useMemo<Group[]>(() => {
     const map = new Map<string, Group>();
     for (const item of items) {
@@ -152,53 +167,129 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
       if (group) group.members.push(item);
       else map.set(family.key, { key: family.key, familyId: "id" in family ? family.id : undefined, members: [item] });
     }
+    return Array.from(map.values());
+  }, [items, mode]);
+  const rowsByGroup = useMemo(() => new Map(mode === "family" ? groups.map(group => [group.key, skuRows(group.members)] as const) : []), [groups, mode]);
+  const visibleGroups = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
-    return Array.from(map.values()).filter((group) => !query ||
-      group.members.some((item) => [item.title, item.id, item.category_id, item.seller_custom_field,
-        item.user_product_id, group.familyId].some((field) => String(field || "").toLocaleLowerCase().includes(query))));
-  }, [items, mode, search]);
-  const active = groups.find((group) => group.members.some((member) => member.id === selectedId)) || groups[0];
-  const selected = active?.members.find((item) => item.id === selectedId) || active?.members[0];
+    return groups.filter((group) => !query || group.members.some((item) =>
+      [item.title, item.family_name, item.id, item.category_id, getSKU(item), item.user_product_id,
+        getFamily(item).id, ...(item.variations || []).map((v) => getSKU(item, v))]
+        .some((field) => String(field || "").toLocaleLowerCase().includes(query))));
+  }, [groups, search]);
+  const active = groups.find((group) => group.members.some((member) => member.id === selectedId));
+  const selected = active?.members.find((item) => item.id === selectedId);
+  const expanded = mode === "family" ? visibleGroups.find((group) => group.key === expandedKey) : undefined;
+  const rowEnd = expandedRowEnd(visibleGroups.findIndex((group) => group === expanded), columns, visibleGroups.length);
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    // Measure the inner grid itself; .published-wall padding is outside it.
+    const measure = () => setColumns(galleryColumns(grid.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    if (detailRef.current) detailRef.current.scrollTop = 0;
+  }, [selectedId]);
+
+  useLayoutEffect(() => {
+    if (expandedKey) expansionRef.current?.focus({ preventScroll: true });
+  }, [expandedKey]);
+
+  function collapseFamily() {
+    setExpandedKey("");
+    expansionTrigger.current?.focus({ preventScroll: true });
+  }
+  function select(item: Listing, key = item.id) {
+    if (selectionDisabled) return;
+    if (item.id !== selectedId && !allowDiscard()) return;
+    setVariantKey(key);
+    onSelect(item.id);
+  }
+  function closeDetail() {
+    if (!allowDiscard()) return;
+    onSelect("");
+    setVariantKey("");
+  }
+  function switchMode(next: PublishedViewMode) {
+    if (next === mode || !allowDiscard()) return;
+    onModeChange(next);
+    setExpandedKey("");
+    setVariantKey("");
+    onSelect("");
+  }
+
   return <div className="published-browser">
     <div className="published-browser-toolbar">
       <div className="published-view-switch" role="group" aria-label="商品查看方式">
         <button type="button" className={mode === "family" ? "active" : ""} aria-pressed={mode === "family"}
-          onClick={() => setMode("family")}>家族视图</button>
+          onClick={() => switchMode("family")}>家族视图</button>
         <button type="button" className={mode === "listing" ? "active" : ""} aria-pressed={mode === "listing"}
-          onClick={() => setMode("listing")}>刊登明细</button>
+          onClick={() => switchMode("listing")}>刊登视图</button>
       </div>
       <label className="published-search"><span>搜索当前页</span>
         <input value={search} onChange={(e) => setSearch(e.target.value)}
           placeholder="标题 / SKU / Family ID / 刊登 ID" /></label>
-      <span className="published-browser-count">当前页 {items.length} 条刊登</span>
+      <span className="published-browser-count">当前页 {items.length} 条刊登{mode === "family" ? " · " + groups.length + " 组" : ""}</span>
     </div>
-    <div className="published-browser-main">
-      <aside className="published-side" aria-label="商品列表">
-        <div className="published-side-title">商品列表 <span>{groups.length} 组</span></div>
-        {mode === "family" && <p className="published-side-note">仅按平台实际 Family ID 归组；未取得关联的独立显示。</p>}
-        <ul className="published-item-list">
-          {groups.map((group) => {
+    <div className={"published-browser-main" + (selected ? " has-detail" : "")}>
+      <section className="published-wall" aria-label="商品图片墙">
+        {mode === "family" && <p className="published-side-note">仅按当前页实际 Family ID 归组；未取得关联的独立显示。跨页家族可能不完整。</p>}
+        <div className="published-gallery-grid" ref={gridRef} style={{ gridTemplateColumns: "repeat(" + columns + ", minmax(0, 1fr))" }}>
+          {visibleGroups.map((group, index) => {
             const item = group.members[0];
-            const cover = thumb(item);
-            return <li key={group.key}><button className={"published-item " + (group === active ? "selected" : "")}
-              aria-pressed={group === active} onClick={() => onSelect(item.id)} type="button">
-              <span className="published-item-image">{cover
-                ? <img src={cover} alt="" loading="lazy" referrerPolicy="no-referrer" />
-                : <span>暂无图片</span>}</span>
-              <span className="published-item-info">
-                <strong title={item.title || item.id}>{item.family_name || item.title || item.id}</strong>
-                <small>{group.familyId ? (group.key.startsWith("siteless-family:") ? "Siteless Family " : "Family ") + group.familyId + " · " + group.members.length + " 条刊登"
-                  : "刊登 " + item.id}</small>
-                <span className="published-item-bottom"><em>{statusName(item.status)}</em><b>{priceName(item)}</b></span>
-              </span>
-            </button></li>;
+            const title = (mode === "family" ? item.family_name : item.title) || item.title || item.id;
+            const rows = rowsByGroup.get(group.key) ?? [];
+            const isExpanded = expandedKey === group.key && mode === "family";
+            return <Fragment key={group.key}>
+              <article className={"published-gallery-card" + (group === active ? " selected" : "") + (isExpanded ? " expanded" : "")}>
+                <button type="button" className="published-cover-button" disabled={selectionDisabled} aria-pressed={group === active} onClick={() => select(item)}>
+                  <CardImage key={thumb(item)} url={thumb(item)}/>
+                  <strong className="published-card-title" title={title}>{title}</strong>
+                </button>
+                {mode === "family" && <>
+                  <div className="published-variant-preview">
+                    {rows.slice(0, 4).map((row) => <button type="button" key={row.key}
+                      title={row.name} disabled={selectionDisabled} aria-label={"查看 " + row.name} onClick={() => select(row.fromItem, row.key)}>
+                      <CardImage key={row.pictures[0] && pictureURL(row.pictures[0])} url={row.pictures[0] && pictureURL(row.pictures[0])}/>
+                    </button>)}
+                    {rows.length > 4 && <span>+{rows.length - 4}</span>}
+                  </div>
+                  <button type="button" className="published-expand-family" aria-expanded={isExpanded} aria-controls={isExpanded ? expansionId : undefined}
+                    onClick={event => { expansionTrigger.current = event.currentTarget; if (isExpanded) collapseFamily(); else setExpandedKey(group.key); }}>
+                    {rows.length} 个规格 · {group.members.length} 条刊登 <span aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
+                  </button>
+                </>}
+              </article>
+              {index === rowEnd && expanded && <section className="published-family-expansion" id={expansionId} ref={expansionRef} tabIndex={-1} aria-label="当前家族规格">
+                <header><div><strong>{expanded.members[0].family_name || expanded.members[0].title || expanded.members[0].id}</strong>
+                  <p>{expanded.familyId ? "Family " + expanded.familyId + " · " : ""}当前页 {(rowsByGroup.get(expanded.key) ?? []).length} 个规格</p></div>
+                  <button type="button" onClick={collapseFamily}>收起 ×</button></header>
+                <div className="published-variant-grid">
+                  {(rowsByGroup.get(expanded.key) ?? []).map((row) => <button type="button" key={row.key}
+                    className={"published-variant-card" + (selectedId === row.fromItem.id && (variantKey === row.key || variantKey === row.fromItem.id && !row.fromItem.variations?.length) ? " selected" : "")}
+                    disabled={selectionDisabled} onClick={() => select(row.fromItem, row.key)} title={row.name}>
+                    <CardImage key={row.pictures[0] && pictureURL(row.pictures[0])} url={row.pictures[0] && pictureURL(row.pictures[0])}/>
+                    <strong>{row.name}</strong><small>{row.sku || row.fromItem.id}</small>
+                  </button>)}
+                </div>
+                {expanded.members.some((member) => member.variations?.length) && <p className="published-hint">同一传统刊登内的多个规格共用刊登级详情和本地草稿。</p>}
+              </section>}
+            </Fragment>;
           })}
-        </ul>
-        {groups.length === 0 && <p className="published-empty">当前页没有匹配的商品。</p>}
-      </aside>
-      <div className="published-detail-wrap">{active && selected
-        ? <Detail key={active.key + ":" + selected.id} group={active} selected={selected} site={site} logistic={logistic} store={store}/>
-        : <p className="published-empty">选择左侧商品查看详情。</p>}</div>
+        </div>
+        {visibleGroups.length === 0 && <p className="published-empty">当前页没有匹配的商品。</p>}
+      </section>
+      {active && selected && <aside className="published-detail-wrap" ref={detailRef} aria-label="商品详情">
+        <div className="published-detail-toolbar"><strong>商品详情</strong>
+          <button type="button" aria-label="关闭商品详情" onClick={closeDetail}>关闭 ×</button></div>
+        <Detail key={selected.id + ":" + site} group={active} selected={selected} site={site} logistic={logistic} store={store}
+          familyMode={mode === "family"} onDirtyChange={onDirtyChange}/>
+      </aside>}
     </div>
   </div>;
 }

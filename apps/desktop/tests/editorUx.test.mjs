@@ -187,3 +187,32 @@ test("secondary reuse skips missing main, invalid and empty source without delet
   assert.ok(planSecondaryImageReuse(target,[]).error);
   assert.ok(planSecondaryImageReuse(["https://cdn.example/a",...Array.from({length:30},(_,i)=>"https://cdn.example/"+i)],target).error);
 });
+
+test("published gallery inserts only the selected family after its entire current row", async () => {
+  const { galleryColumns, expandedRowEnd } = await import("../src/publishedGalleryLayout.ts");
+  assert.equal(galleryColumns(1079), 5);
+  assert.equal(galleryColumns(1080), 6);
+  assert.equal(galleryColumns(534), 3);
+  assert.equal(galleryColumns(160), 1);
+  assert.equal(expandedRowEnd(2, 6, 12), 5);
+  assert.equal(expandedRowEnd(2, 3, 12), 2);
+  assert.equal(expandedRowEnd(10, 6, 11), 10);
+  assert.equal(expandedRowEnd(-1, 6, 12), -1);
+  assert.equal(expandedRowEnd(12, 6, 12), -1);
+});
+
+test("published metadata localizes labels and official choices without translating identifiers", async () => {
+  const { publishedMetadataLabel, publishedChoiceLabel } = await import("../src/publishedMetadataLabels.ts");
+  const map = { Marca: "品牌", Filtros: "滤芯", Generic: "通用", Blue: "蓝色", Otros: "其他属性" };
+  assert.equal(publishedMetadataLabel("Marca", map), "品牌");
+  assert.equal(publishedMetadataLabel("Filtros", map), "滤芯");
+  assert.equal(publishedMetadataLabel("Otros", map), "其他属性");
+  assert.equal(publishedMetadataLabel("Modelo", {}), "型号");
+  assert.equal(publishedMetadataLabel("unknown label", {}), "unknown label");
+  assert.equal(publishedChoiceLabel("BRAND", "Generic", map), "Generic");
+  assert.equal(publishedChoiceLabel("MODEL", "Blue", map), "Blue");
+  assert.equal(publishedChoiceLabel("COLOR", "Blue", map), "蓝色");
+  assert.equal(publishedChoiceLabel("COLOR", "Other", {}), "其他");
+  assert.equal(publishedChoiceLabel("MEASURE", "Unit", {}), "Unit");
+  assert.equal(publishedChoiceLabel("SALE_FORMAT", "Unit", {}), "单件");
+});

@@ -3,7 +3,8 @@ import { authLifetime } from "./auth";
 import { recordCacheHit } from "./DevelopmentDiagnostics";
 import { cachedListingPage, cachedStores, ensureStoreConnection, invalidateListingPages, listingAccessDenied, listingErrorMessage, listStores, loadListingPage, storeRequest, watchStoreList, readableStoreError, type ListingPage, type Review, type StoreConnection } from "./stores";
 import { runListingBatches, type ListingBatch } from "./listingBatches";
-import PublishedListingView from "./PublishedListingView";
+import PublishedListingView, { type PublishedViewMode } from "./PublishedListingView";
+import { usePublishedDraftGuard } from "./publishedDraftGuard";
 
 const eligibleStores = (items: StoreConnection[]) =>
   items.filter((store) => store.status === "connected" || store.status === "token_expired");
@@ -41,6 +42,7 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
   const storeCacheReported = useRef(false);
   const [storeId, setStoreId] = useState("");
   const [scope, setScope] = useState("");
+  const { allowDiscard, onDirtyChange, hasUnsaved } = usePublishedDraftGuard();
   const [error, setError] = useState("");
   useEffect(() => {
     if (!storeCacheReported.current && cachedStores()) {
@@ -78,12 +80,12 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
     {store && <>
       <div className="published-top-filters">
         <label>店铺
-          <select value={store.id} onChange={(event) => { setStoreId(event.target.value); setScope(""); }}>
+          <select value={store.id} onChange={(event) => { if (allowDiscard()) { setStoreId(event.target.value); setScope(""); } }}>
             {stores?.map((item) => <option key={item.id} value={item.id}>{item.nickname || item.seller_id}</option>)}
           </select>
         </label>
         <label>站点
-          <select value={scopeValue} onChange={(event) => setScope(event.target.value)} disabled={markets.length === 0}>
+          <select value={scopeValue} onChange={(event) => { if (allowDiscard()) setScope(event.target.value); }} disabled={markets.length === 0}>
             {markets.map((market) => {
               const value = market.site_id + ":" + market.logistic_type;
               return <option key={value} value={value}>{SITE_LABELS[market.site_id] || market.site_id} · {market.logistic_type}</option>;
@@ -94,18 +96,21 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
       </div>
       {scopeValue
         ? <ListingScope key={store.id + ":" + scopeValue} store={store.id} scope={scopeValue}
-            beginSync={beginSync} installingUpdate={installingUpdate} />
+            beginSync={beginSync} installingUpdate={installingUpdate} allowDiscard={allowDiscard}
+            onDirtyChange={onDirtyChange} hasUnsaved={hasUnsaved} />
         : <p className="published-empty">该店铺尚无已验证的站点，请到店铺管理检查站点关联。</p>}
     </>}
   </div>;
 }
 
-function ListingScope({ store, scope, beginSync, installingUpdate }: {
+function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard, onDirtyChange, hasUnsaved }: {
   store: string; scope: string; beginSync: BeginSync; installingUpdate: boolean;
+  allowDiscard: () => boolean; onDirtyChange: (dirty: boolean) => void; hasUnsaved: () => boolean;
 }) {
   const [offset, setOffset] = useState(0);
   const [revision, setRevision] = useState(0);
   const [selectedId, setSelectedId] = useState("");
+  const [mode, setMode] = useState<PublishedViewMode>("family");
   const [progress, setProgress] = useState<Progress>();
   const [notice, setNotice] = useState("");
   const active = useRef<AbortController | null>(null);
@@ -133,11 +138,12 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     loadListingPage(pagePath, controller.signal).then((next) => {
       if (controller.signal.aborted) return;
       setLoaded({ path: pagePath, page: next });
-      setSelectedId((old) => next.items.some((item) => item.id === old) ? old : next.items[0]?.id ?? "");
+      setSelectedId((old) => next.items.some((item) => item.id === old) ? old : "");
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) {
         if (listingAccessDenied(e)) {
           invalidateListingPages(store);
+          setSelectedId("");
           setLoaded({ path: pagePath });
         }
         setReadError(message(e));
@@ -159,6 +165,10 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     if (remoteOffset == null) return;
     const finishSync = beginSync();
     if (!finishSync) return;
+    if (hasUnsaved()) {
+      if (!allowDiscard()) { finishSync(); return; }
+    }
+    setSelectedId("");
     const controller = new AbortController();
     const lifetime = authLifetime();
     active.current = controller;
@@ -240,16 +250,17 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     </div>
     {error && <p role="alert">{error}</p>}
     {readError && <p role="alert">{readError} <button type="button" disabled={busy || reading}
-      onClick={() => { setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
+      onClick={() => { if (hasUnsaved() && !allowDiscard()) return; setSelectedId(""); setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
     {reading && <p role="status">{page ? "正在更新已保存商品…" : "正在读取已保存商品…"}</p>}
     {!reading && page?.items.length === 0 && <p>此范围暂无已保存商品。</p>}
     {!!page?.items.length && <PublishedListingView
-      items={page.items} selectedId={selectedId} onSelect={setSelectedId} site={site} logistic={logistic} store={store}
+      key={pagePath} items={page.items} selectedId={selectedId} onSelect={setSelectedId} mode={mode} onModeChange={setMode} site={site} logistic={logistic} store={store}
+      allowDiscard={allowDiscard} onDirtyChange={onDirtyChange} selectionDisabled={busy || reading}
     />}
     {(offset > 0 || page?.has_more) && <p className="page-actions">
-      <button type="button" disabled={reading || offset === 0} onClick={() => setOffset(offset - pageSize)}>上一页</button>
+      <button type="button" disabled={reading || offset === 0} onClick={() => { if (allowDiscard()) { setSelectedId(""); setOffset(offset - pageSize); } }}>上一页</button>
       <span>第 {offset / pageSize + 1} 页</span>
-      <button type="button" disabled={reading || !page?.has_more} onClick={() => setOffset(offset + pageSize)}>下一页</button>
+      <button type="button" disabled={reading || !page?.has_more} onClick={() => { if (allowDiscard()) { setSelectedId(""); setOffset(offset + pageSize); } }}>下一页</button>
     </p>}
   </>;
 }
