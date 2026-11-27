@@ -105,6 +105,11 @@ func redactBillingProbe(scope OrderScope, orderID, packID, status string, lines 
 // Billing read without updating the financial snapshot. OAuth refresh may
 // still use the service's existing credential persistence path.
 func (s *Service) ProbeBillingByPack(ctx context.Context, owner, store string, scope OrderScope, packID string) (BillingProbeReport, error) {
+	return s.probeBillingByPack(ctx, owner, store, scope, packID, nil)
+}
+
+// A collector can supply a sanitized batch item instead of re-fetching Billing.
+func (s *Service) probeBillingByPack(ctx context.Context, owner, store string, scope OrderScope, packID string, preloaded *BillingOrderPreview) (BillingProbeReport, error) {
 	if !validUUID(owner) || !validUUID(store) || !orderScopeValid(scope) || !billingIDsValid([]string{packID}) {
 		return BillingProbeReport{}, ErrOrderBillingInvalid
 	}
@@ -145,22 +150,48 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 	if err != nil {
 		return BillingProbeReport{}, err
 	}
-	page, err := s.readOrderBilling(ctx, owner, store, scope, []string{order.id}, false)
-	if err != nil {
-		return BillingProbeReport{}, err
+	item := BillingOrderPreview{}
+	if preloaded == nil {
+		page, err := s.readOrderBilling(ctx, owner, store, scope, []string{order.id}, false)
+		if err != nil {
+			return BillingProbeReport{}, err
+		}
+		if len(page.Items) != 1 {
+			return BillingProbeReport{}, ErrOrderInvalidResponse
+		}
+		item = page.Items[0]
+	} else {
+		item = *preloaded
 	}
 	observedAt := time.Now().UTC()
-	if len(page.Items) != 1 || page.Items[0].OrderID != order.id {
+	if item.CheckedAt != nil {
+		observedAt = *item.CheckedAt
+	}
+	if item.OrderID != order.id {
 		return BillingProbeReport{}, ErrOrderInvalidResponse
 	}
-	report := redactBillingProbe(scope, order.id, packID, order.status, nil, page.Items[0])
-	if orderSLAShipmentID.MatchString(order.shipment) {
+	report := redactBillingProbe(scope, order.id, packID, order.status, nil, item)
+	if item.Available && orderSLAShipmentID.MatchString(order.shipment) {
 		auth, child, err := s.RequireSiteConnection(ctx, owner, store, scope.Site, scope.Logistic)
 		if err != nil {
 			return BillingProbeReport{}, err
 		}
 		if child != order.child {
 			return BillingProbeReport{}, ErrOrderAuthorizationChanged
+		}
+		if preloaded != nil && item.Shipping == nil {
+			shipping := &BillingShipping{}
+			shipping.SellerChargeUSD, shipping.SellerChargeDetailID = billingShippingDebit(item.Charges, order.shipment)
+			var costs json.RawMessage
+			code, err := s.orderGET(ctx, auth.AccessToken, "/marketplace/shipments/"+order.shipment+"/costs", &costs)
+			if err != nil && code != http.StatusUnauthorized && code != http.StatusForbidden && code != http.StatusNotFound {
+				return BillingProbeReport{}, err
+			}
+			if code == http.StatusOK {
+				shipping.BuyerCostUSD, shipping.SellerNetCostUSD = parseBillingShipping(costs, child)
+			}
+			item.Shipping = shipping
+			report = redactBillingProbe(scope, order.id, packID, order.status, nil, item)
 		}
 		// Official documented relationship endpoints only. A non-200 stops
 		// relationship reads; 401/403 remains unknown, never a local fallback.
@@ -178,7 +209,7 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 			return BillingProbeReport{}, err
 		}
 		report.PackMembership = billingProbeMembers{HTTPStatus: code, Rows: len(pack.Orders), Matches: code == http.StatusOK && pack.ID.String() == packID && pack.Shipment.ID.String() == order.shipment && len(pack.Orders) == 1 && pack.Orders[0].ID.String() == order.id}
-		if code == http.StatusOK {
+		if report.PackMembership.Matches {
 			var members []struct {
 				Order  json.Number `json:"order_id"`
 				Pack   json.Number `json:"pack_id"`
@@ -188,7 +219,7 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 			if err != nil && code != http.StatusUnauthorized && code != http.StatusForbidden && code != http.StatusNotFound {
 				return BillingProbeReport{}, err
 			}
-			matches := code == http.StatusOK && len(members) > 0
+			matches := code == http.StatusOK && len(members) == 1
 			for _, m := range members {
 				matches = matches && m.Order.String() == order.id && m.Pack.String() == packID && m.Seller.String() == child
 			}
@@ -222,7 +253,6 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 		if report.ShipmentMembership.HTTPStatus == http.StatusOK && report.ShipmentMembership.Matches {
 			shipmentOrders = []string{order.id}
 		}
-		item := page.Items[0]
 		item.CheckedAt = &observedAt
 		report.BillingEstimate, _ = billingEstimatedNet(billingExpectedNetEvidence{
 			Scope: scope, OrderID: order.id, PackID: packID, ShipmentID: order.shipment,
