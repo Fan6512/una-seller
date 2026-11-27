@@ -33,7 +33,7 @@ type llmReviewRequest struct {
 
 type llmReviewProvider struct {
 	appID, key, endpoint string
-	client              *http.Client
+	client               *http.Client
 }
 
 // The operator supplied the official Bearer/JSON parameter and response examples.
