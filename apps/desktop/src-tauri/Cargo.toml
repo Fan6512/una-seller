@@ -1,6 +1,6 @@
 [package]
 name = "una-seller"
-version = "0.5.0"
+version = "0.6.0"
 description = "Una Seller desktop"
 edition = "2021"
 rust-version = "1.90"
