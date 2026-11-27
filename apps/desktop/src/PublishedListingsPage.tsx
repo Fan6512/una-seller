@@ -143,6 +143,7 @@ function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard,
       if (!controller.signal.aborted) {
         if (listingAccessDenied(e)) {
           invalidateListingPages(store);
+          setSelectedId("");
           setLoaded({ path: pagePath });
         }
         setReadError(message(e));
@@ -249,12 +250,12 @@ function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard,
     </div>
     {error && <p role="alert">{error}</p>}
     {readError && <p role="alert">{readError} <button type="button" disabled={busy || reading}
-      onClick={() => { if (hasUnsaved()) { if (!allowDiscard()) return; setSelectedId(""); } setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
+      onClick={() => { if (hasUnsaved() && !allowDiscard()) return; setSelectedId(""); setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
     {reading && <p role="status">{page ? "正在更新已保存商品…" : "正在读取已保存商品…"}</p>}
     {!reading && page?.items.length === 0 && <p>此范围暂无已保存商品。</p>}
     {!!page?.items.length && <PublishedListingView
       key={pagePath} items={page.items} selectedId={selectedId} onSelect={setSelectedId} mode={mode} onModeChange={setMode} site={site} logistic={logistic} store={store}
-      allowDiscard={allowDiscard} onDirtyChange={onDirtyChange} selectionDisabled={busy}
+      allowDiscard={allowDiscard} onDirtyChange={onDirtyChange} selectionDisabled={busy || reading}
     />}
     {(offset > 0 || page?.has_more) && <p className="page-actions">
       <button type="button" disabled={reading || offset === 0} onClick={() => { if (allowDiscard()) { setSelectedId(""); setOffset(offset - pageSize); } }}>上一页</button>
