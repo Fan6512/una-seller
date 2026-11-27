@@ -57,11 +57,15 @@ type BillingTax struct {
 	OriginalUSD string `json:"original_usd,omitempty"`
 	RefundedUSD string `json:"refunded_usd,omitempty"`
 }
+const billingShippingSingleSender = "single_sender_observed"
+const billingShippingAmbiguousSender = "ambiguous_sender_scope"
+
 type BillingShipping struct {
 	BuyerCostUSD         string `json:"buyer_cost_usd,omitempty"`
 	SellerChargeUSD      string `json:"seller_charge_usd,omitempty"`
 	SellerNetCostUSD     string `json:"seller_net_cost_usd,omitempty"`
 	SellerChargeDetailID string `json:"seller_charge_detail_id,omitempty"`
+	SenderScope          string `json:"sender_scope,omitempty"`
 }
 
 type BillingOrderPreview struct {
@@ -278,6 +282,14 @@ func groupBillingCharges(charges []BillingCharge) []BillingChargeGroup {
 // Shipment cost is scoped to a seller within the Shipment. Its net cost is
 // already reported by the platform. Billing's original debit is a separate fact.
 func parseBillingShipping(raw []byte, child string) (buyer, sellerNet string) {
+	buyer, sellerNet, _ = parseBillingShippingEvidence(raw, child)
+	return buyer, sellerNet
+}
+
+// Preserve the manual seller-scoped amounts while retaining only a redacted
+// sender-scope classification. A single observed sender is not proof of
+// complete official shipment membership.
+func parseBillingShippingEvidence(raw []byte, child string) (buyer, sellerNet, senderScope string) {
 	var payload struct {
 		Currency string `json:"currency_id"`
 		Senders  []struct {
@@ -294,23 +306,32 @@ func parseBillingShipping(raw []byte, child string) (buyer, sellerNet string) {
 	}
 	if json.Unmarshal(raw, &payload) != nil || payload.Currency != "USD" ||
 		len(payload.Senders) > 60 || len(payload.Receiver.Details) > 60 {
-		return "", ""
+		return "", "", ""
+	}
+	senderScope = billingShippingAmbiguousSender
+	if len(payload.Senders) == 1 && payload.Senders[0].UserID.String() == child {
+		senderScope = billingShippingSingleSender
+		for _, detail := range payload.Receiver.Details {
+			if detail.SenderID.String() != child {
+				senderScope = billingShippingAmbiguousSender
+			}
+		}
 	}
 	for _, sender := range payload.Senders {
 		if sender.UserID.String() == child {
 			if sellerNet != "" || !orderAmountPattern.MatchString(sender.Cost.String()) {
-				return "", ""
+				return "", "", senderScope
 			}
 			sellerNet = sender.Cost.String()
 		}
 	}
 	if sellerNet == "" {
-		return "", ""
+		return "", "", senderScope
 	}
 	for _, detail := range payload.Receiver.Details {
 		if detail.SenderID.String() == child {
 			if buyer != "" || !orderAmountPattern.MatchString(detail.Amount.String()) {
-				return "", sellerNet
+				return "", sellerNet, senderScope
 			}
 			buyer = detail.Amount.String()
 		}
@@ -319,7 +340,7 @@ func parseBillingShipping(raw []byte, child string) (buyer, sellerNet string) {
 		orderAmountPattern.MatchString(payload.Receiver.Cost.String()) {
 		buyer = payload.Receiver.Cost.String()
 	}
-	return buyer, sellerNet
+	return buyer, sellerNet, senderScope
 }
 
 func billingShippingDebit(charges []BillingCharge, shipment string) (amount, detailID string) {
@@ -414,7 +435,7 @@ func (s *Service) readOrderBillingMode(ctx context.Context, owner, store string,
 		shipping.SellerChargeUSD, shipping.SellerChargeDetailID = billingShippingDebit(item.Charges, shipment)
 		var costs json.RawMessage
 		if code, err := s.orderGET(fetchCtx, auth.AccessToken, "/marketplace/shipments/"+shipment+"/costs", &costs); err == nil && code == http.StatusOK {
-			shipping.BuyerCostUSD, shipping.SellerNetCostUSD = parseBillingShipping(costs, child)
+			shipping.BuyerCostUSD, shipping.SellerNetCostUSD, shipping.SenderScope = parseBillingShippingEvidence(costs, child)
 		}
 		scoped, currentShipment, err := checkScope()
 		if err != nil {

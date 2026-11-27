@@ -15,6 +15,7 @@ func TestBillingEstimatedNetShipmentRisk(t *testing.T) {
 		e.Billing.Charges[i].SalesRefs = []BillingSaleRef{{OrderID: e.OrderID, OperationID: "10001"}}
 	}
 	e.ShipmentOrders = nil
+	e.Billing.Shipping.SenderScope = billingShippingSingleSender
 	if _, ok := billingExpectedNetCandidate(e); ok {
 		t.Fatal("strict candidate accepted unknown membership")
 	}
@@ -40,6 +41,38 @@ func TestBillingEstimatedNetShipmentRisk(t *testing.T) {
 	e.Billing.Charges[0].SalesRefs[0].OperationID = ""
 	if _, ok := billingEstimatedNet(e, http.StatusOK, 1); ok {
 		t.Fatal("unattributed operation accepted")
+	}
+}
+
+func TestBillingEstimateRejectsAmbiguousSenderScope(t *testing.T) {
+	e := billingCandidateFixture()
+	for i := range e.Billing.Charges {
+		e.Billing.Charges[i].PackID = e.PackID
+		e.Billing.Charges[i].SalesRefs = []BillingSaleRef{{OrderID: e.OrderID, OperationID: "10001"}}
+	}
+	e.ShipmentOrders = nil
+	// Old caches do not prove even a single observed sender.
+	if _, ok := billingEstimatedNet(e, http.StatusUnauthorized, 1); ok {
+		t.Fatal("legacy shipping without sender scope accepted")
+	}
+	for _, raw := range []string{
+		`{"currency_id":"USD","senders":[{"user_id":111,"cost":3.15},{"user_id":222,"cost":2}],"receiver":{"cost_details":[{"sender_id":111,"amount":7.63}]}}`,
+		`{"currency_id":"USD","senders":[{"user_id":111,"cost":3.15}],"receiver":{"cost_details":[{"sender_id":111,"amount":7.63},{"sender_id":222,"amount":1}]}}`,
+	} {
+		buyer, seller, scope := parseBillingShippingEvidence([]byte(raw), "111")
+		if buyer != "7.63" || seller != "3.15" || scope != billingShippingAmbiguousSender {
+			t.Fatalf("manual amounts or scope changed: %s/%s/%s", buyer, seller, scope)
+		}
+		e.Billing.Shipping.SenderScope = scope
+		if _, ok := billingEstimatedNet(e, http.StatusUnauthorized, 1); ok {
+			t.Fatal("known ambiguous shipment costs accepted after 401")
+		}
+	}
+	buyer, seller, scope := parseBillingShippingEvidence([]byte(`{"currency_id":"USD","senders":[{"user_id":111,"cost":3.15}],"receiver":{"cost":7.63}}`), "111")
+	e.Billing.Shipping.SenderScope = scope
+	got, ok := billingEstimatedNet(e, http.StatusUnauthorized, 1)
+	if buyer != "7.63" || seller != "3.15" || !ok || got.Amount != "4.50" || got.Risk != BillingEstimateShipmentUnknown {
+		t.Fatalf("single observed sender lost estimate or risk: %+v", got)
 	}
 }
 

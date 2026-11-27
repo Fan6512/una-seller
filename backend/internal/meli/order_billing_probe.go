@@ -57,6 +57,7 @@ type billingProbeShipping struct {
 	BuyerCostUSD     string `json:"buyer_cost_usd,omitempty"`
 	SellerChargeUSD  string `json:"seller_charge_usd,omitempty"`
 	SellerNetCostUSD string `json:"seller_net_cost_usd,omitempty"`
+	SenderScope      string `json:"sender_scope,omitempty"`
 }
 
 func redactBillingProbe(scope OrderScope, orderID, packID, status string, lines []OrderLine, item BillingOrderPreview) BillingProbeReport {
@@ -94,7 +95,7 @@ func redactBillingProbe(scope OrderScope, orderID, packID, status string, lines 
 	if item.Shipping != nil {
 		out.Shipping = &billingProbeShipping{
 			BuyerCostUSD: item.Shipping.BuyerCostUSD, SellerChargeUSD: item.Shipping.SellerChargeUSD,
-			SellerNetCostUSD: item.Shipping.SellerNetCostUSD,
+			SellerNetCostUSD: item.Shipping.SellerNetCostUSD, SenderScope: item.Shipping.SenderScope,
 		}
 	}
 	return out
@@ -179,7 +180,8 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 		if child != order.child {
 			return BillingProbeReport{}, ErrOrderAuthorizationChanged
 		}
-		if preloaded != nil && item.Shipping == nil {
+		// Old snapshots lack sender scope. Re-read only shipment costs, not Billing.
+		if preloaded != nil && (item.Shipping == nil || item.Shipping.SenderScope == "") {
 			shipping := &BillingShipping{}
 			shipping.SellerChargeUSD, shipping.SellerChargeDetailID = billingShippingDebit(item.Charges, order.shipment)
 			var costs json.RawMessage
@@ -188,7 +190,7 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 				return BillingProbeReport{}, err
 			}
 			if code == http.StatusOK {
-				shipping.BuyerCostUSD, shipping.SellerNetCostUSD = parseBillingShipping(costs, child)
+				shipping.BuyerCostUSD, shipping.SellerNetCostUSD, shipping.SenderScope = parseBillingShippingEvidence(costs, child)
 			}
 			item.Shipping = shipping
 			report = redactBillingProbe(scope, order.id, packID, order.status, nil, item)

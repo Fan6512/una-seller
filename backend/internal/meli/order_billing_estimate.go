@@ -22,7 +22,8 @@ type BillingEstimatedUSDNet struct {
 // known local sharing. All charges, including shipping, must identify the
 // same order and pack. An empty successful response is not permission denial.
 func billingEstimatedNet(e billingExpectedNetEvidence, shipmentHTTPStatus, localShipmentOrders int) (*BillingEstimatedUSDNet, bool) {
-	if localShipmentOrders != 1 {
+	if localShipmentOrders != 1 || e.Billing.Shipping == nil ||
+		e.Billing.Shipping.SenderScope != billingShippingSingleSender {
 		return nil, false
 	}
 	unknown := (shipmentHTTPStatus == http.StatusUnauthorized || shipmentHTTPStatus == http.StatusForbidden) && e.ShipmentOrders == nil
