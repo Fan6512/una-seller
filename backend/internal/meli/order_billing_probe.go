@@ -115,7 +115,7 @@ func (s *Service) probeBillingByPack(ctx context.Context, owner, store string, s
 	}
 	type scopedOrder struct {
 		id, status, shipment, child, items string
-		localShipmentOrders               int
+		localShipmentOrders                int
 	}
 	lookup := func() (scopedOrder, error) {
 		rows, err := s.db.Query(ctx, `WITH connection AS (`+orderConnection+`)

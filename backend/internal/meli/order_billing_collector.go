@@ -128,6 +128,7 @@ func reusableBillingPreview(t billingCollectionTarget) *BillingOrderPreview {
 }
 
 func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) error {
+	ctx = backgroundOrderRead(ctx)
 	// One active pass even when two API processes overlap. The dedicated
 	// session holds only an advisory lock, not a database transaction.
 	conn, err := s.db.Acquire(ctx)

@@ -83,6 +83,9 @@ func TestBillingCollectorBatchResumeAndProfit(t *testing.T) {
 	if err := s.refreshBillingEstimates(ctx, now); err == nil || billingCalls != 1 || relationCalls != 1 {
 		t.Fatalf("expected one batch then rate limit: %v, %d/%d", err, billingCalls, relationCalls)
 	}
+	// The simulated scheduler advances two hours; the existing HTTP gate
+	// uses wall time, so expire its synthetic five-second cooldown as well.
+	s.orderRetryUntil = time.Time{}
 	if err := s.refreshBillingEstimates(ctx, now.Add(billing.Interval)); err != nil || billingCalls != 1 {
 		t.Fatalf("resume refetched Billing: %v, calls=%d", err, billingCalls)
 	}

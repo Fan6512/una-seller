@@ -28,6 +28,7 @@ const expectedProfitEligible = `COALESCE(o.status='paid'
 	AND o.billing_snapshot->'preview'->>'order_id'=o.order_id
 	AND o.billing_snapshot->'preview'->>'available'='true'
 	AND o.billing_snapshot->'preview'->>'checked_at' IS NOT NULL,false)`
+
 // A known shared local Pack or shipment always blocks the estimate. A local
 // singleton is a veto check only, not affirmative official membership proof.
 const expectedProfitEstimateEligible = `COALESCE(o.status='paid' AND o.site_id IN ('MLB','MLM')
