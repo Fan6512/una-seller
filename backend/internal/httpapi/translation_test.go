@@ -130,6 +130,8 @@ func TestTranslationServiceProviderSelection(t *testing.T) {
 		{"baidu", "mock-azure", "mock-baidu", "mock-value", "baidu"},
 		{"doubao", "mock-doubao", "", "", "doubao"},
 		{"doubao", "", "", "", ""},
+		{"volcengine", "mock-secret", "mock-access-id", "", "volcengine"},
+		{"volcengine", "", "mock-access-id", "", ""},
 		{"", "", "mock-baidu", "mock-value", ""},
 		{"baidu", "mock-azure", "", "mock-value", ""},
 		{"baidu", "mock-azure", "mock-baidu", "", ""},
@@ -396,5 +398,66 @@ func TestDoubaoRejectsFailedBusinessResponse(t *testing.T) {
 			t.Error("invalid response accepted")
 		}
 		server.Close()
+	}
+}
+
+func TestVolcengineTranslateFixedSignature(t *testing.T) {
+	body := []byte(`{"TargetLanguage":"zh","TextList":["Hello world"]}`)
+	req, err := http.NewRequest(http.MethodPost, volcTranslateURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signVolcTranslate(req, body, "mock-access-id", "mock-secret", time.Date(2026, 11, 27, 0, 0, 0, 0, time.UTC))
+	want := "HMAC-SHA256 Credential=mock-access-id/20261127/cn-north-1/translate/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=164286a193e5c959bcc84ad8eeb9eb77c50a47afcba92978cdf8b26d09299162"
+	if req.Header.Get("Authorization") != want || req.Header.Get("X-Date") != "20261127T000000Z" {
+		t.Fatal("fixed signature mismatch")
+	}
+}
+
+func TestVolcengineTranslationBatchAndBusinessError(t *testing.T) {
+	service := NewVolcengineTranslationService("mock-access-id", "mock-secret")
+	p := service.provider.(*volcengineTranslationProvider)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Source string   `json:"SourceLanguage"`
+			Target string   `json:"TargetLanguage"`
+			Texts  []string `json:"TextList"`
+		}
+		if r.Method != http.MethodPost || !strings.HasPrefix(r.Header.Get("Authorization"), "HMAC-SHA256 Credential=mock-access-id/") ||
+			json.NewDecoder(r.Body).Decode(&body) != nil || body.Source != "en" || body.Target != "zh" || len(body.Texts) > 16 {
+			t.Error("invalid Volcengine request")
+		}
+		if calls == 3 {
+			_, _ = io.WriteString(w, `{"ResponseMetadata":{"Error":{"Code":"-429"}},"TranslationList":[{"Translation":"must not accept"}]}`)
+			return
+		}
+		rows := make([]map[string]string, 0, len(body.Texts))
+		for _, text := range body.Texts {
+			rows = append(rows, map[string]string{"Translation": "译：" + text})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ResponseMetadata": map[string]any{"Error": nil}, "TranslationList": rows})
+	}))
+	defer server.Close()
+	p.endpoint = server.URL
+	texts := make([]string, 17)
+	for i := range texts {
+		texts[i] = fmt.Sprintf("label %d", i)
+	}
+	out := service.TranslateCategoryBatch(context.Background(), texts)
+	if len(out) != 17 || calls != 2 || service.CategoryBatchSize() != 16 {
+		t.Fatalf("unexpected result: %d labels, %d requests", len(out), calls)
+	}
+	for _, text := range texts {
+		if out[text] != "译："+text {
+			t.Fatal("translation alignment changed")
+		}
+	}
+	if out := service.TranslateCategoryBatch(context.Background(), []string{"untranslated"}); len(out) != 0 {
+		t.Fatal("business error accepted")
+	}
+	if out := service.TranslateCategoryBatch(context.Background(), []string{"another"}); len(out) != 0 || calls != 3 {
+		t.Fatal("rate-limit cooldown ignored")
 	}
 }

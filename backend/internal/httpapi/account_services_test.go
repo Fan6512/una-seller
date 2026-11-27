@@ -91,6 +91,14 @@ func TestAccountEndpointAndProviderValidation(t *testing.T) {
 	if err := s.validateAccountConfig("translation", baidu); err != nil {
 		t.Fatal(err)
 	}
+	volc := accountServiceConfig{Provider: "volcengine", AppID: "mock-access-id", APIKey: "mock-secret"}
+	if err := s.validateAccountConfig("translation", volc); err != nil {
+		t.Fatal(err)
+	}
+	volc.AppID = ""
+	if err := s.validateAccountConfig("translation", volc); err == nil {
+		t.Fatal("Volcengine accepted missing access key ID")
+	}
 	doubao := accountServiceConfig{Provider: "doubao", APIKey: "mock-doubao"}
 	if err := s.validateAccountConfig("translation", doubao); err != nil {
 		t.Fatal(err)

@@ -57,6 +57,8 @@ func NewTranslationService(provider, apiKey, azureRegion, baiduAppID, baiduSecre
 		return NewAzureTranslationService(apiKey, azureRegion)
 	case "doubao":
 		return NewDoubaoTranslationService(apiKey)
+	case "volcengine":
+		return NewVolcengineTranslationService(baiduAppID, apiKey)
 	case "baidu":
 		appID, secret := strings.TrimSpace(baiduAppID), strings.TrimSpace(baiduSecret)
 		if appID != "" && secret != "" {
@@ -252,7 +254,7 @@ func categoryTranslationSource(categoryID string) string {
 
 // TranslateCategoryBatch is for the offline CBT dictionary updater.
 func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts []string) map[string]string {
-	if s != nil && s.providerName == "doubao" {
+	if s != nil && (s.providerName == "doubao" || s.providerName == "volcengine") {
 		return s.translateWithin(ctx, "en", texts, 30*time.Second)
 	}
 	return s.translate(ctx, "en", texts)
@@ -260,7 +262,7 @@ func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts [
 
 // CategoryBatchSize is the offline updater's maximum number of texts per request.
 func (s *TranslationService) CategoryBatchSize() int {
-	if s != nil && s.providerName == "doubao" {
+	if s != nil && (s.providerName == "doubao" || s.providerName == "volcengine") {
 		return 16
 	}
 	return 120

@@ -165,6 +165,10 @@ func (s *AccountServices) validateAccountConfig(kind string, c accountServiceCon
 			if !accountSimpleID.MatchString(c.AppID) || c.Region != "" {
 				return errors.New("invalid Baidu APP ID")
 			}
+		case "volcengine":
+			if !accountSimpleID.MatchString(c.AppID) || c.Region != "" {
+				return errors.New("invalid Volcengine Access Key ID")
+			}
 		case "doubao":
 			if c.Region != "" || c.AppID != "" {
 				return errors.New("Doubao requires only an API Key")
