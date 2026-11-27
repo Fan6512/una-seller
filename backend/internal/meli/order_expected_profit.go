@@ -9,7 +9,7 @@ import (
 // Center, never a settlement receipt or a number derived from a fee subtotal.
 // Before constructing it, the caller must verify the same full order scope,
 // USD currency, order-level attribution and the applicable fee/refund state.
-// This pure FIN-02A contract is not yet a runtime data source.
+// A source adapter must supply explicit order-level evidence; never a fee subtotal.
 type ConfirmedExpectedUSDNet struct {
 	Amount     string
 	Source     string
