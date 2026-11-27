@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { orderDate, orderMoney, orderUSD, type OrderRecord, type OrderScope } from "./orders";
 import { StoreRequestError, storeRequest } from "./stores";
+import ExpectedProfitPanel from "./ExpectedProfitPanel";
 
 type BillingPreview = {
   items: Array<{
@@ -194,6 +195,7 @@ export default function OrderProfitCard({ order, scope, disabled, rateLimit }: {
       {preview?.checked != null && <><dt>账单最近成功保存</dt><dd title="北京时间">{orderDate(new Date(preview.checked).toISOString())}</dd></>}
       {preview && preview.checked === null && billing?.available && <><dt>账单保存状态</dt><dd>本次预览未保存</dd></>}
     </dl>
+    <ExpectedProfitPanel order={order} scope={scope} disabled={disabled || busy || loadingCache} billingChecked={preview?.checked ?? null}/>
     {billing?.available && <>
       {billing.payments.length > 0 && <p className="orders-muted">
         官方款项状态：{billing.payments.map(payment =>

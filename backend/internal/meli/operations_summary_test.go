@@ -136,6 +136,54 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 	if err != nil || sales.AmountUSD == nil || *sales.AmountUSD != "6.50" || sales.IncludedOrders != 1 || sales.CancelledOrders != 1 {
 		t.Fatalf("daily cached merchandise sales: %+v %v", sales, err)
 	}
+	// Synthetic confirmed net: production never substitutes the fee subtotal.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET billing_snapshot=jsonb_build_object(
+		'shipment_id','','preview',jsonb_build_object('order_id','901','available',true,'checked_at',now()))
+		WHERE store_id=$1 AND order_id='901'`, storeA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_order_purchases
+		(store_id,site_id,logistic_type,seller_id,order_id,purchase_order_id,cost_cny)
+		VALUES($1,'MLB','remote','111','901','12345678',30)`, storeA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO app.daily_usd_cny_rates
+		(accounting_day,observation_day,raw_rate,locked_rate,source)
+		VALUES('2026-11-27','2026-11-26',6.68,6.6,'frankfurter_v2_ecb') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	ps := OrderScope{Site:"MLB",Logistic:"remote"}
+	initial, err := svc.GetExpectedOrderProfit(ctx,ownerA,storeA,ps,"901")
+	if err!=nil || initial.Profit!=nil || !initial.CanConfirm || initial.FX==nil {
+		t.Fatalf("initial expected profit: %+v %v",initial,err)
+	}
+	confirmed, err := svc.ConfirmExpectedOrderProfit(ctx,ownerA,storeA,ps,"901",initial.Revision,"7.90","2",false)
+	if err!=nil || confirmed.Profit==nil || confirmed.Profit.Kind!="expected" {
+		t.Fatalf("confirmed expected profit: %+v %v",confirmed,err)
+	}
+	rollup, err := svc.operationsSales(ctx,ownerA,storeA,"MLB",fixedSummary)
+	if err!=nil || rollup.ProfitOrders!=1 || rollup.ExpectedProfitCNY==nil || *rollup.ExpectedProfitCNY!=confirmed.Profit.ProfitCNY {
+		t.Fatalf("profit rollup: %+v %v",rollup,err)
+	}
+	if _, err := svc.GetExpectedOrderProfit(ctx,ownerB,storeA,ps,"901"); err==nil {
+		t.Fatal("foreign owner read profit")
+	}
+	if _, err := svc.ConfirmExpectedOrderProfit(ctx,ownerB,storeA,ps,"901",confirmed.Revision,"9","0",false); err==nil {
+		t.Fatal("foreign owner wrote confirmation")
+	}
+	if _, err := svc.ConfirmExpectedOrderProfit(ctx,ownerA,storeA,ps,"901",initial.Revision,"9","0",false); err==nil {
+		t.Fatal("stale confirmation revision accepted")
+	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET billing_snapshot=jsonb_set(billing_snapshot,'{preview,charges}','[{"type":"CHARGE","amount":"1"}]') WHERE store_id=$1 AND order_id='901'`,storeA); err!=nil {
+		t.Fatal(err)
+	}
+	stale,err:=svc.GetExpectedOrderProfit(ctx,ownerA,storeA,ps,"901")
+	if err!=nil || stale.Profit!=nil || stale.Reason!="confirmation_stale" {
+		t.Fatalf("changed evidence reused confirmation: %+v %v",stale,err)
+	}
+	if _, err := svc.ConfirmExpectedOrderProfit(ctx,ownerA,storeA,ps,"901",confirmed.Revision,"9","0",false); err==nil {
+		t.Fatal("changed billing evidence accepted old revision")
+	}
 	if len(overview.Activity) != 9 || len(overview.Todos) != 3 {
 		t.Fatalf("filtered activity/todos: %+v", overview)
 	}
