@@ -3,6 +3,7 @@ package cbtcategory
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,37 +41,39 @@ type llmReviewProvider struct {
 // The operator supplied the official Bearer/JSON parameter and response examples.
 // Explicitly select the LLM model. Custom terminology intervention stays off
 // until a service-specific terminology library is configured and verified.
-func (p llmReviewProvider) translate(ctx context.Context, dir, source string) (string, error) {
+func (p llmReviewProvider) translate(ctx context.Context, dir, source string) (string, int, error) {
+	reserved := 0
 	if !safeReviewSource(source) {
-		return "", errors.New("unsafe LLM review source")
+		return "", reserved, errors.New("unsafe LLM review source")
 	}
 	body, err := json.Marshal(llmReviewRequest{
 		AppID: p.appID, From: "en", To: "zh", Query: source,
 		ModelType: "llm", Reference: llmCommerceReference, NeedIntervene: 0,
 	})
 	if err != nil {
-		return "", err
+		return "", reserved, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", errors.New("could not construct LLM request")
+		return "", reserved, errors.New("could not construct LLM request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.key)
 	if err = ReserveLLMReviewChars(dir, p.limit, utf8.RuneCountInString(source)); err != nil {
-		return "", err
+		return "", reserved, err
 	}
+	reserved = utf8.RuneCountInString(source)
 	res, err := p.client.Do(req)
 	if err != nil {
-		return "", errors.New("LLM request failed; reserved quota retained")
+		return "", reserved, errors.New("LLM request failed; reserved quota retained")
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("LLM HTTP status %d", res.StatusCode)
+		return "", reserved, fmt.Errorf("LLM HTTP status %d", res.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 || !utf8.Valid(data) {
-		return "", errors.New("invalid LLM response")
+		return "", reserved, errors.New("invalid LLM response")
 	}
 	var result struct {
 		ErrorCode json.RawMessage `json:"error_code"`
@@ -82,38 +85,50 @@ func (p llmReviewProvider) translate(ctx context.Context, dir, source string) (s
 		} `json:"trans_result"`
 	}
 	if json.Unmarshal(data, &result) != nil {
-		return "", errors.New("invalid LLM response JSON")
+		return "", reserved, errors.New("invalid LLM response JSON")
 	}
 	code := strings.Trim(string(result.ErrorCode), "\"")
 	if code != "" && code != "0" && code != "52000" {
 		// Report only a bounded numeric error code; never log the raw body,
 		// error_msg, credentials, or upstream-controlled arbitrary text.
 		if len(code) <= 10 && strings.Trim(code, "0123456789") == "" {
-			return "", fmt.Errorf("LLM provider business error code=%s", code)
+			return "", reserved, fmt.Errorf("LLM provider business error code=%s", code)
 		}
-		return "", errors.New("LLM provider business error")
+		return "", reserved, errors.New("LLM provider business error")
 	}
 	if result.From != "en" || result.To != "zh" ||
 		len(result.Rows) != 1 || result.Rows[0].Source != source {
-		return "", errors.New("LLM response did not match the requested source")
+		return "", reserved, errors.New("LLM response did not match the requested source")
 	}
 	label := translatedLabel(result.Rows[0].Target, strings.Count(source, " | ")+1)
 	if label == "" {
-		return "", errors.New("LLM result did not preserve the source path separators")
+		return "", reserved, errors.New("LLM result did not preserve the source path separators")
 	}
-	return label, nil
+	return label, reserved, nil
+}
+
+type LLMTrialAttempt struct {
+	ID            string `json:"id"`
+	SourceSHA256  string `json:"source_sha256"`
+	SourceChars   int    `json:"source_chars"`
+	ReservedChars int    `json:"reserved_chars"`
+	Outcome       string `json:"outcome"`
 }
 
 type LLMTrialResult struct {
-	Version   version `json:"version"`
-	Selected  int     `json:"selected"`
-	Completed int     `json:"completed"`
-	Usage     *int    `json:"usage_chars"`
+	Version            version           `json:"version"`
+	Selected           int               `json:"selected"`
+	Completed          int               `json:"completed"`
+	PlannedSourceChars int               `json:"planned_source_chars"`
+	ReservedChars      int               `json:"reserved_chars"`
+	UsageBefore        *int              `json:"usage_before_chars"`
+	Usage              *int              `json:"usage_chars"`
+	Attempts           []LLMTrialAttempt `json:"attempts,omitempty"`
 }
 
 // RunLLMTrial is intentionally capped at 200 rows and 50000 cumulative
 // characters. No retry, fallback, publication, or ordinary provider mutation.
-func RunLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full bool, appID, key string) (LLMTrialResult, error) {
+func RunLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full bool, appID, key string, exclusions ...map[string]bool) (LLMTrialResult, error) {
 	appID, key = strings.TrimSpace(appID), strings.TrimSpace(key)
 	if sample <= 0 || sample > 200 || appID == "" || key == "" || strings.ContainsAny(key, "\r\n") {
 		return LLMTrialResult{}, errors.New("trial requires 1-200 rows and explicit LLM credentials")
@@ -123,10 +138,10 @@ func RunLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 		client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
-	})
+	}, exclusions...)
 }
 
-func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full bool, p llmReviewProvider) (out LLMTrialResult, runErr error) {
+func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full bool, p llmReviewProvider, exclusions ...map[string]bool) (out LLMTrialResult, runErr error) {
 	if strings.TrimSpace(dir) == "" {
 		return LLMTrialResult{}, errors.New("configure a CBT dictionary directory")
 	}
@@ -149,15 +164,16 @@ func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 		return LLMTrialResult{}, err
 	}
 	defer lock.Close()
-	plan, err := PlanReview(dir, scope, seed, sample, full, true)
+	plan, err := PlanReview(dir, scope, seed, sample, full, true, exclusions...)
 	if err != nil {
 		return LLMTrialResult{}, err
 	}
-	out = LLMTrialResult{Version: plan.Version, Selected: plan.Selected}
+	out = LLMTrialResult{Version: plan.Version, Selected: plan.Selected, PlannedSourceChars: plan.SourceChars}
 	state, err := loadLLMUsage(dir)
 	if err != nil {
 		return out, err
 	}
+	out.UsageBefore = &state.Chars
 	if state.Chars >= p.limit {
 		return out, errors.New("LLM cumulative trial budget exhausted")
 	}
@@ -177,14 +193,25 @@ func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		label, err := p.translate(ctx, dir, row.Source)
+		label, reserved, err := p.translate(ctx, dir, row.Source)
+		attempt := LLMTrialAttempt{
+			ID: row.ID, SourceSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(row.Source))),
+			SourceChars: utf8.RuneCountInString(row.Source), ReservedChars: reserved,
+			Outcome: "request_failed",
+		}
+		out.ReservedChars += reserved
 		if err != nil {
+			out.Attempts = append(out.Attempts, attempt)
 			return out, fmt.Errorf("LLM review row %s: %w", row.ID, err)
 		}
 		row.Candidate = label
 		if _, err = storeReview(dir, ReviewSet{Version: plan.Version, Rows: []ReviewRow{row}}); err != nil {
+			attempt.Outcome = "candidate_rejected"
+			out.Attempts = append(out.Attempts, attempt)
 			return out, err
 		}
+		attempt.Outcome = "stored"
+		out.Attempts = append(out.Attempts, attempt)
 		out.Completed++
 	}
 	return out, nil

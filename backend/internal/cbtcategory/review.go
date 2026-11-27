@@ -41,6 +41,7 @@ type ReviewPlan struct {
 	SourceChars      int         `json:"source_chars"`
 	SkippedUnsafe    int         `json:"skipped_unsafe"`
 	GlossaryExcluded int         `json:"glossary_excluded"`
+	PriorExcluded    int         `json:"prior_excluded"`
 	Rows             []ReviewRow `json:"rows,omitempty"`
 }
 
@@ -129,13 +130,43 @@ func validReviewRow(row ReviewRow, item category) bool {
 		slices.Equal(row.Path, item.Path) && row.Original == item.Zh && safeReviewSource(row.Source) &&
 		(row.Source == reviewSource(item.Path, false) || row.Source == reviewSource(item.Path, true)) &&
 		validName(row.Candidate) && !strings.ContainsAny(row.Candidate, "\r\n|｜") &&
-		strings.ContainsFunc(row.Candidate, func(r rune) bool { return unicode.Is(unicode.Han, r) })
+		validReviewLanguage(row.Candidate, item)
+}
+
+// Permit only verified proper-name exceptions, not arbitrary untranslated English.
+func validReviewLanguage(label string, item category) bool {
+	if strings.ContainsFunc(label, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
+		return true
+	}
+	if item.ID == "CBT106855" && item.Name == "PS Vita - PlayStation Vita" {
+		return label == item.Name || label == "PS Vita" || label == "PlayStation Vita"
+	}
+	return false
+}
+
+// ReadReviewExclusions accepts an explicit union of previously inspected IDs.
+func ReadReviewExclusions(path string) (map[string]bool, error) {
+	var ids []string
+	if err := readJSONFile(path, &ids); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 || len(ids) > maxCategories {
+		return nil, errors.New("review exclusion list must contain category IDs")
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !idPattern.MatchString(id) {
+			return nil, errors.New("invalid CBT review exclusion ID")
+		}
+		out[id] = true
+	}
+	return out, nil
 }
 
 // PlanReview uses a stable hash within each root and round-robin across roots
 // for a reproducible stratified sample. Sample zero selects all eligible rows.
 // SourceChars counts one source per row, without batching delimiters or retries.
-func PlanReview(dir, scope, seed string, sample int, full, export bool) (ReviewPlan, error) {
+func PlanReview(dir, scope, seed string, sample int, full, export bool, exclusions ...map[string]bool) (ReviewPlan, error) {
 	if strings.TrimSpace(dir) == "" || sample < 0 || (scope != "all" && scope != "translated" && scope != "missing") {
 		return ReviewPlan{}, errors.New("invalid CBT review plan arguments")
 	}
@@ -168,6 +199,17 @@ func PlanReview(dir, scope, seed string, sample int, full, export bool) (ReviewP
 		}
 		if completed[item.ID].ID != "" {
 			out.Completed++
+			continue
+		}
+		excluded := false
+		for _, ids := range exclusions {
+			if ids[item.ID] {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			out.PriorExcluded++
 			continue
 		}
 		translated := item.Zh != "" && item.Zh != item.Name

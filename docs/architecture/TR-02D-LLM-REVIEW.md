@@ -19,7 +19,7 @@ una-seller-api cbt-categories review -scope missing -sample 200 -seed tr02d-inde
 
 按一级行业轮询分层、固定seed哈希排序；不包含人工覆盖、已匹配固定术语的类目、已有候选；不安全/超长源文在计划阶段排除并报告 skipped_unsafe，固定术语排除报告 glossary_excluded。source_chars 为逐行 q 源文本字符和，不含独立 reference 指令字段及重试；此计费假设必须在首条及小规模真实试译后与控制台核对，不得以此直接推断实际账单。历史200条对照须从原验收清单取精确ID/路径，不能用新随机样本冒充。
 
-导出JSON包含 version/rows，填入每条 candidate（简体中文叶子标签）后，`review -import /绝对路径/review.json` 严格验证版本、完整路径、原译文及人工覆盖，保存到 llm-review-candidates.json。重复同结果幂等，冲突拒绝；导入结果 total_candidates 为合并后总数，不是本次新增数。过期、冲突、空候选及受保护条目保持 fail-closed 并报告 row ID，不静默丢弃已付费候选。修复时先确保没有 review/update 运行，备份 llm-review-candidates.json 到独立文件，将旧候选中与当前 version/path/original 一致且未被人工覆盖的有效行整理为 version/rows JSON，移走旧文件并通过 -import 重新导入；不要删额度文件或改 active/staging/progress。非中文专名暂不接受候选，留待人工复核。不修改 active/staging/progress/overrides；未提供 apply/publish。
+导出JSON包含 version/rows，填入每条 candidate（简体中文叶子标签）后，`review -import /绝对路径/review.json` 严格验证版本、完整路径、原译文及人工覆盖，保存到 llm-review-candidates.json。重复同结果幂等，冲突拒绝；导入结果 total_candidates 为合并后总数，不是本次新增数。过期、冲突、空候选及受保护条目保持 fail-closed 并报告 row ID，不静默丢弃已付费候选。修复时先确保没有 review/update 运行，备份 llm-review-candidates.json 到独立文件，将旧候选中与当前 version/path/original 一致且未被人工覆盖的有效行整理为 version/rows JSON，移走旧文件并通过 -import 重新导入；不要删额度文件或改 active/staging/progress。非中文仅允许按官方 ID、名称和固定候选严格匹配的已核实专名（首例 CBT106855 / PS Vita - PlayStation Vita）；其他未翻译英文仍拒绝。不修改 active/staging/progress/overrides；未提供 apply/publish。
 
 ## 额度
 
@@ -38,3 +38,21 @@ una-seller-api cbt-categories review -scope missing -sample 200 -seed tr02d-inde
 ## 复审取舍
 
 保留逐条落盘与失败立即停止：首轮用于验证官方协议和计费，未验证真实返回前不能在连续异常下继续消耗额度。普通 update 须保持暂停，review 与 update 的单次文件操作共享锁，但整个试译不是全程占用 update.lock；遇锁冲突停止并报告累计扣额。后续扩大规模时再优化批量读取/落盘、可恢复行级错误及全程互斥；不增加通用 saveJSON 的目录 fsync 行为变更。
+
+## 第二轮独立验收（保持5万累计上限）
+
+- 将历史普通200条、五批80条、已知人工纠错、首轮大模型200条、1/5探针及已拒绝/替换行的真实 ID 汇总为 JSON 字符串数组，作为 `-exclude-ids /path/prior-ids.json`。若历史清单不完整，明确披露，不能宣称独立。既有候选、术语、人工覆盖仍自动排除。固定 seed、full-path，先离线导出计划；记录 ID 和 SHA256。使用 scope all 覆盖已有及未译类目（报告分别统计），每次最多200条；同一排除文件、seed、快照和候选状态下执行真实 trial。中断时保存原计划、已尝试 ID 和结果；不得静默替换失败行，验收以冻结的样本集为准。
+- CLI JSON 增加 planned_source_chars、usage_before_chars、reserved_chars、attempts（ID、q SHA256、source_chars、reserved_chars、outcome）。正常退出、普通错误及受控中断保留报告；进程被强杀不能保证输出，须保留实际额度文件及现有候选。导入候选不等于已真实请求，不能凭候选合计推导历史请求。
+- 第二轮前备份，按照首轮CSV中官方 ID 和完整路径在生产快照中核实六条修正，若任一不符暂停；在原64条 overrides 上追加（不得覆盖既有不同值）。六条原始错误仍计入首轮统计，不更改原CSV。生产执行后才登记70条。建议叶子译名见下表。候选原始文件与请求证据归档保留，不发布全量。
+- 真实200条验收：按原门禁准确率≥95%、明显改变商品分类含义错误=0；不将修正过的样本混入独立评估，不自动提高5万上限。只有质量、对账与候选来源可追溯通过后，才另行全量执行器及发布审核。
+
+| ID | 官方完整路径 | 建议人工译名 |
+| --- | --- | --- |
+| CBT10236 | Antiques and Collectibles > Antiques > Seltzer Bottles | 苏打水瓶 |
+| CBT2747 | Other categories > Adults > Sex Toys > Dildos & Vibrators | 假阳具与振动器 |
+| CBT411889 | Tools > Garden Tools > Chainsaws > Combustion Chamber Chainsaws | 内燃式链锯 |
+| CBT412112 | Other categories > Tattoo Supplies > Armrests | 纹身扶手架 |
+| CBT417159 | Art, Craft and School Supplies > Sewing Notions > Sewing & Embroidery > Embroidery Frames | 刺绣绣框 |
+| CBT417203 | Beauty and Personal Care > Hair Salon Listings > Hair Salon Furniture > Hair Steamers | 蒸汽美发机 |
+
+译名仅按现有官方路径及验收报告建议；内燃式链锯避免原文未明确燃料时擅自限定汽油。上表不是已写入生产 overrides 的凭证。
