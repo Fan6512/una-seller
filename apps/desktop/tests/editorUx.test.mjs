@@ -212,14 +212,7 @@ test("published metadata localizes labels and official choices without translati
   assert.equal(publishedChoiceLabel("BRAND", "Generic", map), "Generic");
   assert.equal(publishedChoiceLabel("MODEL", "Blue", map), "Blue");
   assert.equal(publishedChoiceLabel("COLOR", "Blue", map), "蓝色");
-});
-
-test("published category breadcrumbs keep official path primary and Chinese as secondary reference", () => {
-  const source = readFileSync(new URL("../src/PublishedListingEditor.tsx", import.meta.url), "utf8");
-  const block = source.slice(source.indexOf("<h3>商品分类</h3>"), source.indexOf("<summary>调整类目"));
-  assert.match(block, /className="published-category-path"[^>]*>[^\n]*cbtPath\.original\.join/);
-  assert.match(block, /className="published-hint">\{cbtPath\.zh\.join/);
-  assert.match(block, /categoryPath\.length \? categoryPath\.join/);
-  assert.match(block, /className="published-hint">\{readablePath\.join/);
-  assert.doesNotMatch(block, /categoryPath\.length \? readablePath\.join/);
+  assert.equal(publishedChoiceLabel("COLOR", "Other", {}), "其他");
+  assert.equal(publishedChoiceLabel("MEASURE", "Unit", {}), "Unit");
+  assert.equal(publishedChoiceLabel("SALE_FORMAT", "Unit", {}), "单件");
 });

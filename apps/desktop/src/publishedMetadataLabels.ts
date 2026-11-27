@@ -13,6 +13,7 @@ const commonLabels: Record<string, string> = {
   Used: "二手", Usado: "二手", Unit: "单件", Unidad: "单件", Unidade: "单件",
   Exceptuado: "豁免", Isento: "豁免",
 };
+// Keep in sync with identifier exclusions in backend/internal/httpapi/translation.go.
 const identifierFields = /^(BRAND|MODEL|SELLER_SKU|GTIN|EAN|UPC|ISBN|MPN|PART_NUMBER|SERIAL_NUMBER)$/;
 
 export function publishedMetadataLabel(name: string, translations: Record<string, string>): string {
@@ -22,5 +23,10 @@ export function publishedMetadataLabel(name: string, translations: Record<string
 }
 
 export function publishedChoiceLabel(fieldId: string, name: string, translations: Record<string, string>): string {
-  return identifierFields.test(fieldId) ? name : publishedMetadataLabel(name, translations);
+  if (identifierFields.test(fieldId)) return name;
+  const translated = Object.hasOwn(translations, name) ? translations[name]?.trim() : "";
+  if (translated && translated !== name) return translated;
+  if (/^(Other|Others|Otros|Outros)$/.test(name)) return "其他";
+  if (/^(Unit|Unidad|Unidade)$/.test(name) && fieldId !== "SALE_FORMAT") return name;
+  return publishedMetadataLabel(name, translations);
 }

@@ -3,7 +3,8 @@ import { authLifetime } from "./auth";
 import { recordCacheHit } from "./DevelopmentDiagnostics";
 import { cachedListingPage, cachedStores, ensureStoreConnection, invalidateListingPages, listingAccessDenied, listingErrorMessage, listStores, loadListingPage, storeRequest, watchStoreList, readableStoreError, type ListingPage, type Review, type StoreConnection } from "./stores";
 import { runListingBatches, type ListingBatch } from "./listingBatches";
-import PublishedListingView from "./PublishedListingView";
+import PublishedListingView, { type PublishedViewMode } from "./PublishedListingView";
+import { usePublishedDraftGuard } from "./publishedDraftGuard";
 
 const eligibleStores = (items: StoreConnection[]) =>
   items.filter((store) => store.status === "connected" || store.status === "token_expired");
@@ -41,12 +42,7 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
   const storeCacheReported = useRef(false);
   const [storeId, setStoreId] = useState("");
   const [scope, setScope] = useState("");
-  const dirtyDraft = useRef(false);
-  function allowDiscard() {
-    if (dirtyDraft.current && !window.confirm("当前商品草稿有未保存修改，确定放弃修改并离开？")) return false;
-    dirtyDraft.current = false;
-    return true;
-  }
+  const { allowDiscard, onDirtyChange, hasUnsaved } = usePublishedDraftGuard();
   const [error, setError] = useState("");
   useEffect(() => {
     if (!storeCacheReported.current && cachedStores()) {
@@ -101,19 +97,20 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
       {scopeValue
         ? <ListingScope key={store.id + ":" + scopeValue} store={store.id} scope={scopeValue}
             beginSync={beginSync} installingUpdate={installingUpdate} allowDiscard={allowDiscard}
-            onDirtyChange={(dirty) => { dirtyDraft.current = dirty; }} />
+            onDirtyChange={onDirtyChange} hasUnsaved={hasUnsaved} />
         : <p className="published-empty">该店铺尚无已验证的站点，请到店铺管理检查站点关联。</p>}
     </>}
   </div>;
 }
 
-function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard, onDirtyChange }: {
+function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard, onDirtyChange, hasUnsaved }: {
   store: string; scope: string; beginSync: BeginSync; installingUpdate: boolean;
-  allowDiscard: () => boolean; onDirtyChange: (dirty: boolean) => void;
+  allowDiscard: () => boolean; onDirtyChange: (dirty: boolean) => void; hasUnsaved: () => boolean;
 }) {
   const [offset, setOffset] = useState(0);
   const [revision, setRevision] = useState(0);
   const [selectedId, setSelectedId] = useState("");
+  const [mode, setMode] = useState<PublishedViewMode>("family");
   const [progress, setProgress] = useState<Progress>();
   const [notice, setNotice] = useState("");
   const active = useRef<AbortController | null>(null);
@@ -167,6 +164,10 @@ function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard,
     if (remoteOffset == null) return;
     const finishSync = beginSync();
     if (!finishSync) return;
+    if (hasUnsaved()) {
+      if (!allowDiscard()) { finishSync(); return; }
+    }
+    setSelectedId("");
     const controller = new AbortController();
     const lifetime = authLifetime();
     active.current = controller;
@@ -248,12 +249,12 @@ function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard,
     </div>
     {error && <p role="alert">{error}</p>}
     {readError && <p role="alert">{readError} <button type="button" disabled={busy || reading}
-      onClick={() => { setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
+      onClick={() => { if (hasUnsaved()) { if (!allowDiscard()) return; setSelectedId(""); } setReading(true); setRevision((old) => old + 1); }}>刷新同步位置</button></p>}
     {reading && <p role="status">{page ? "正在更新已保存商品…" : "正在读取已保存商品…"}</p>}
     {!reading && page?.items.length === 0 && <p>此范围暂无已保存商品。</p>}
     {!!page?.items.length && <PublishedListingView
-      key={pagePath} items={page.items} selectedId={selectedId} onSelect={setSelectedId} site={site} logistic={logistic} store={store}
-      allowDiscard={allowDiscard} onDirtyChange={onDirtyChange}
+      key={pagePath} items={page.items} selectedId={selectedId} onSelect={setSelectedId} mode={mode} onModeChange={setMode} site={site} logistic={logistic} store={store}
+      allowDiscard={allowDiscard} onDirtyChange={onDirtyChange} selectionDisabled={busy}
     />}
     {(offset > 0 || page?.has_more) && <p className="page-actions">
       <button type="button" disabled={reading || offset === 0} onClick={() => { if (allowDiscard()) { setSelectedId(""); setOffset(offset - pageSize); } }}>上一页</button>

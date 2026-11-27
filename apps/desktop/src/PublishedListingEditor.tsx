@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ensureStoreConnection, storeRequest } from "./stores";
 import type { Listing } from "./PublishedListingView";
 import { publishedMetadataLabel, publishedChoiceLabel } from "./publishedMetadataLabels";
@@ -167,6 +167,14 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   const [descriptionState, setDescriptionState] = useState<"idle" | "loading" | "loaded" | "empty" | "error">("idle");
   const [descriptionError, setDescriptionError] = useState("");
   const descriptionTouched = useRef(false);
+  const dirtyCallback = useRef(onDirtyChange);
+  useLayoutEffect(() => { dirtyCallback.current = onDirtyChange; }, [onDirtyChange]);
+  // Scope changes and involuntary detail removal must not leave a phantom dirty flag.
+  // Never retain a removed/unauthorized listing just to keep an editor mounted.
+  useLayoutEffect(() => {
+    dirtyCallback.current(false);
+    return () => dirtyCallback.current(false);
+  }, [localKey]);
 
   useEffect(() => {
     descriptionTouched.current = false;

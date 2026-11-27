@@ -15,6 +15,8 @@ import ListingFieldsEditor from "/src/ListingFieldsEditor.tsx";
 import { createFeedback } from "/src/operationFeedback.ts";
 import { OperationFeedbackContext } from "/src/operationFeedbackContext.ts";
 import PublishedListingEditor from "/src/PublishedListingEditor.tsx";
+import PublishedListingView from "/src/PublishedListingView.tsx";
+import { usePublishedDraftGuard } from "/src/publishedDraftGuard.ts";
 import { initialListingFields, validateListingFields } from "/src/listingFields.ts";
 import { setSiteTitleMode } from "/src/titleModePreference.ts";
 
@@ -482,6 +484,58 @@ try {
   await loaded(".published-category-path", "Jarras");
   assert(![...document.querySelectorAll(".published-category-path,.published-hint")].some(node => node.textContent.includes("家居") || node.textContent.includes("Home / Other")),
     "site-only listing reused another listing's CBT breadcrumb");
+  // Exercise the production view + editor + navigation guard, not a mocked guard.
+  let replaceItems, rerenderGallery;
+  function GalleryFixture() {
+    const [items, setItems] = useState([
+      { ...published, id: "MLBguardA", title: "Guard A", family_id: 1 },
+      { ...published, id: "MLBguardB", title: "Guard B", family_id: 2 },
+    ]);
+    const [selectedId, onSelect] = useState("");
+    const [mode, onModeChange] = useState("family");
+    const [, setTick] = useState(0);
+    replaceItems = setItems;
+    rerenderGallery = () => setTick(x => x + 1);
+    const guard = usePublishedDraftGuard();
+    return React.createElement(PublishedListingView, {
+      items, selectedId, onSelect, mode, onModeChange, site: "MLB", logistic: "remote",
+      store: "guard-fixture", allowDiscard: guard.allowDiscard, onDirtyChange: guard.onDirtyChange,
+    });
+  }
+  flushSync(() => root.render(React.createElement(GalleryFixture)));
+  assert(!document.querySelector(".published-detail-wrap"), "gallery opened initial detail automatically");
+  await click(".published-expand-family", "1 个规格");
+  const expansion = document.querySelector(".published-family-expansion");
+  assert(expansion && document.querySelector('[aria-expanded="true"]').getAttribute("aria-controls") === expansion.id &&
+    document.activeElement === expansion, "family expansion missing focus or accessible connection");
+  await click(".published-cover-button", "Guard A");
+  await loaded(".published-detail-header h2", "Guard A");
+  const titleField = () => document.querySelector('textarea[placeholder="根据真实商品信息填写标题"]');
+  input(titleField(), "unsaved A");
+  flushSync(() => rerenderGallery());
+  let confirms = 0;
+  window.confirm = message => { assert(message.includes("未保存修改"), "unexpected dialog"); confirms++; return false; };
+  await click(".published-cover-button", "Guard B");
+  assert(confirms === 1 && titleField().value === "unsaved A" && document.querySelector(".published-detail-header h2").textContent === "Guard A",
+    "cancelled card switch lost unsaved editor");
+  await click(".published-detail-toolbar button", "关闭");
+  assert(confirms === 2 && titleField().value === "unsaved A", "cancelled close lost draft");
+  window.confirm = () => { confirms++; return true; };
+  await click(".published-cover-button", "Guard B");
+  assert(confirms === 3 && titleField().value === "Guard B", "confirmed switch did not replace detail");
+  input(titleField(), "unsaved B");
+  // Simulate a background scope/permission update removing the selected listing.
+  flushSync(() => replaceItems([{ ...published, id: "MLBguardA", title: "Guard A", family_id: 1 }]));
+  assert(!document.querySelector(".published-detail-wrap"), "removed listing detail remained visible");
+  await click(".published-cover-button", "Guard A");
+  assert(confirms === 3 && titleField().value === "Guard A", "unmounted editor left stale dirty flag");
+  input(titleField(), "saved A");
+  await click("button", "保存本机草稿");
+  await click(".published-detail-toolbar button", "关闭");
+  assert(confirms === 3 && !document.querySelector(".published-detail-wrap") &&
+    document.querySelector(".published-family-expansion"), "saved draft close prompted or lost expansion");
+  await click(".published-cover-button", "Guard A");
+  assert(titleField().value === "saved A", "saved draft failed to reload");
   document.body.dataset.result = "pass";
 } catch (error) { document.body.dataset.result = "fail"; document.body.append(error.message); }
 `;

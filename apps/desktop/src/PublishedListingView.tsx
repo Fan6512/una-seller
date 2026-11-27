@@ -1,4 +1,4 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { expandedRowEnd, galleryColumns } from "./publishedGalleryLayout";
 import PublishedListingEditor from "./PublishedListingEditor";
 import "./publishedListings.css";
@@ -26,7 +26,8 @@ export type Listing = {
   description?: string;
 };
 type Group = { key: string; familyId?: string; members: Listing[] };
-type Props = { items: Listing[]; selectedId: string; onSelect: (id: string) => void; site: string; logistic: string; store: string; allowDiscard: () => boolean; onDirtyChange: (dirty: boolean) => void };
+export type PublishedViewMode = "family" | "listing";
+type Props = { mode: PublishedViewMode; onModeChange: (mode: PublishedViewMode) => void; selectionDisabled?: boolean; items: Listing[]; selectedId: string; onSelect: (id: string) => void; site: string; logistic: string; store: string; allowDiscard: () => boolean; onDirtyChange: (dirty: boolean) => void };
 type SkuRow = { key: string; sku?: string; name: string; pictures: Picture[]; stock?: number | null; fromItem: Listing };
 
 function getFamily(item: Listing): { key: string; id?: string } {
@@ -148,13 +149,15 @@ function CardImage({ url, className = "" }: { url?: string; className?: string }
   </span>;
 }
 
-export default function PublishedListingView({ items, selectedId, onSelect, site, logistic, store, allowDiscard, onDirtyChange }: Props) {
-  const [mode, setMode] = useState<"family" | "listing">("family");
+export default function PublishedListingView({ items, selectedId, onSelect, mode, onModeChange, selectionDisabled, site, logistic, store, allowDiscard, onDirtyChange }: Props) {
   const [search, setSearch] = useState("");
   const [expandedKey, setExpandedKey] = useState("");
   const [variantKey, setVariantKey] = useState("");
   const gridRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement>(null);
+  const expansionRef = useRef<HTMLElement>(null);
+  const expansionTrigger = useRef<HTMLButtonElement | null>(null);
+  const expansionId = useId();
   const [columns, setColumns] = useState(1);
   const groups = useMemo<Group[]>(() => {
     const map = new Map<string, Group>();
@@ -166,6 +169,7 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
     }
     return Array.from(map.values());
   }, [items, mode]);
+  const rowsByGroup = useMemo(() => new Map(mode === "family" ? groups.map(group => [group.key, skuRows(group.members)] as const) : []), [groups, mode]);
   const visibleGroups = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return groups.filter((group) => !query || group.members.some((item) =>
@@ -181,6 +185,7 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
   useLayoutEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
+    // Measure the inner grid itself; .published-wall padding is outside it.
     const measure = () => setColumns(galleryColumns(grid.clientWidth));
     measure();
     const observer = new ResizeObserver(measure);
@@ -191,7 +196,16 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
     if (detailRef.current) detailRef.current.scrollTop = 0;
   }, [selectedId]);
 
+  useLayoutEffect(() => {
+    if (expandedKey) expansionRef.current?.focus({ preventScroll: true });
+  }, [expandedKey]);
+
+  function collapseFamily() {
+    setExpandedKey("");
+    expansionTrigger.current?.focus({ preventScroll: true });
+  }
   function select(item: Listing, key = item.id) {
+    if (selectionDisabled) return;
     if (item.id !== selectedId && !allowDiscard()) return;
     setVariantKey(key);
     onSelect(item.id);
@@ -201,9 +215,9 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
     onSelect("");
     setVariantKey("");
   }
-  function switchMode(next: "family" | "listing") {
+  function switchMode(next: PublishedViewMode) {
     if (next === mode || !allowDiscard()) return;
-    setMode(next);
+    onModeChange(next);
     setExpandedKey("");
     setVariantKey("");
     onSelect("");
@@ -229,36 +243,36 @@ export default function PublishedListingView({ items, selectedId, onSelect, site
           {visibleGroups.map((group, index) => {
             const item = group.members[0];
             const title = (mode === "family" ? item.family_name : item.title) || item.title || item.id;
-            const rows = mode === "family" ? skuRows(group.members) : [];
+            const rows = rowsByGroup.get(group.key) ?? [];
             const isExpanded = expandedKey === group.key && mode === "family";
             return <Fragment key={group.key}>
               <article className={"published-gallery-card" + (group === active ? " selected" : "") + (isExpanded ? " expanded" : "")}>
-                <button type="button" className="published-cover-button" aria-pressed={group === active} onClick={() => select(item)}>
+                <button type="button" className="published-cover-button" disabled={selectionDisabled} aria-pressed={group === active} onClick={() => select(item)}>
                   <CardImage key={thumb(item)} url={thumb(item)}/>
                   <strong className="published-card-title" title={title}>{title}</strong>
                 </button>
                 {mode === "family" && <>
                   <div className="published-variant-preview">
                     {rows.slice(0, 4).map((row) => <button type="button" key={row.key}
-                      title={row.name} aria-label={"查看 " + row.name} onClick={() => select(row.fromItem, row.key)}>
+                      title={row.name} disabled={selectionDisabled} aria-label={"查看 " + row.name} onClick={() => select(row.fromItem, row.key)}>
                       <CardImage key={row.pictures[0] && pictureURL(row.pictures[0])} url={row.pictures[0] && pictureURL(row.pictures[0])}/>
                     </button>)}
                     {rows.length > 4 && <span>+{rows.length - 4}</span>}
                   </div>
-                  <button type="button" className="published-expand-family" aria-expanded={isExpanded}
-                    onClick={() => setExpandedKey(isExpanded ? "" : group.key)}>
+                  <button type="button" className="published-expand-family" aria-expanded={isExpanded} aria-controls={isExpanded ? expansionId : undefined}
+                    onClick={event => { expansionTrigger.current = event.currentTarget; if (isExpanded) collapseFamily(); else setExpandedKey(group.key); }}>
                     {rows.length} 个规格 · {group.members.length} 条刊登 <span aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
                   </button>
                 </>}
               </article>
-              {index === rowEnd && expanded && <section className="published-family-expansion" aria-label="当前家族规格">
+              {index === rowEnd && expanded && <section className="published-family-expansion" id={expansionId} ref={expansionRef} tabIndex={-1} aria-label="当前家族规格">
                 <header><div><strong>{expanded.members[0].family_name || expanded.members[0].title || expanded.members[0].id}</strong>
-                  <p>{expanded.familyId ? "Family " + expanded.familyId + " · " : ""}当前页 {skuRows(expanded.members).length} 个规格</p></div>
-                  <button type="button" onClick={() => setExpandedKey("")}>收起 ×</button></header>
+                  <p>{expanded.familyId ? "Family " + expanded.familyId + " · " : ""}当前页 {(rowsByGroup.get(expanded.key) ?? []).length} 个规格</p></div>
+                  <button type="button" onClick={collapseFamily}>收起 ×</button></header>
                 <div className="published-variant-grid">
-                  {skuRows(expanded.members).map((row) => <button type="button" key={row.key}
+                  {(rowsByGroup.get(expanded.key) ?? []).map((row) => <button type="button" key={row.key}
                     className={"published-variant-card" + (selectedId === row.fromItem.id && (variantKey === row.key || variantKey === row.fromItem.id && !row.fromItem.variations?.length) ? " selected" : "")}
-                    onClick={() => select(row.fromItem, row.key)} title={row.name}>
+                    disabled={selectionDisabled} onClick={() => select(row.fromItem, row.key)} title={row.name}>
                     <CardImage key={row.pictures[0] && pictureURL(row.pictures[0])} url={row.pictures[0] && pictureURL(row.pictures[0])}/>
                     <strong>{row.name}</strong><small>{row.sku || row.fromItem.id}</small>
                   </button>)}

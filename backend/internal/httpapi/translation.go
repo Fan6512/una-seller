@@ -280,6 +280,7 @@ func categoryAttributeTranslationTexts(result meli.CategoryRules) []string {
 	for _, field := range fields {
 		if isPublishedSite {
 			switch field.ID {
+			// Keep in sync with apps/desktop/src/publishedMetadataLabels.ts.
 			case "BRAND", "MODEL", "SELLER_SKU", "GTIN", "EAN", "UPC", "ISBN", "MPN", "PART_NUMBER", "SERIAL_NUMBER":
 				continue
 			}
