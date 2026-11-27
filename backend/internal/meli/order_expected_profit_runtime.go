@@ -41,7 +41,7 @@ const expectedProfitEstimateEligible = `COALESCE(o.status='paid' AND o.site_id I
 		AND other.shipment_id=o.shipment_id)=1,false)`
 const expectedProfitFields = `o.date_created,` + expectedProfitEligible + `,` + expectedProfitEstimateEligible + `,` +
 	expectedProfitEvidence + `,` + expectedProfitRevision + `,
-	o.expected_profit_confirmation,o.expected_profit_billing_estimate,trim_scale(o.expected_profit_extra_cny)::text,trim_scale(p.cost_cny)::text,
+	o.expected_profit_confirmation,o.expected_profit_billing_estimate,o.expected_profit_billing_attempt,trim_scale(o.expected_profit_extra_cny)::text,trim_scale(p.cost_cny)::text,
 	f.locked_rate::text,f.source,f.observation_day::text`
 const expectedProfitJoins = `LEFT JOIN app.meli_order_purchases p ON
 	(p.store_id,p.site_id,p.logistic_type,p.seller_id,p.order_id)=
@@ -69,37 +69,41 @@ type expectedProfitConfirmation struct {
 
 type storedBillingEstimate struct {
 	BillingEstimatedUSDNet
-	Evidence string `json:"evidence"`
+	Evidence          string                      `json:"evidence"`
+	Calculation       *billingEstimateCalculation `json:"calculation"`
+	CalculationSHA256 string                      `json:"calculation_sha256"`
 }
 
 type OrderExpectedProfit struct {
-	Day             string                  `json:"day"`
-	Revision        string                  `json:"revision"`
-	CanConfirm      bool                    `json:"can_confirm"`
-	HasConfirmation bool                    `json:"has_confirmation"`
-	CanSetExtraCost bool                    `json:"can_set_extra_cost"`
-	NetSource       string                  `json:"net_source,omitempty"`
-	NetRisk         string                  `json:"net_risk,omitempty"`
-	Reason          string                  `json:"reason"`
-	NetUSD          *string                 `json:"net_usd"`
-	ExtraCNY        *string                 `json:"extra_cny"`
-	PurchaseCNY     *string                 `json:"purchase_cny"`
-	FX              *ProfitFXRate           `json:"fx"`
-	Profit          *ExpectedOrderProfitUSD `json:"profit"`
+	Day              string                  `json:"day"`
+	Revision         string                  `json:"revision"`
+	CanConfirm       bool                    `json:"can_confirm"`
+	HasConfirmation  bool                    `json:"has_confirmation"`
+	CanSetExtraCost  bool                    `json:"can_set_extra_cost"`
+	NetSource        string                  `json:"net_source,omitempty"`
+	NetRisk          string                  `json:"net_risk,omitempty"`
+	NetObservedAt    *time.Time              `json:"net_observed_at,omitempty"`
+	CollectionReason string                  `json:"collection_reason,omitempty"`
+	Reason           string                  `json:"reason"`
+	NetUSD           *string                 `json:"net_usd"`
+	ExtraCNY         *string                 `json:"extra_cny"`
+	PurchaseCNY      *string                 `json:"purchase_cny"`
+	FX               *ProfitFXRate           `json:"fx"`
+	Profit           *ExpectedOrderProfitUSD `json:"profit"`
 }
 
 type expectedProfitInput struct {
-	created                       time.Time
-	eligible, estimateEligible    bool
-	evidence, revision            string
-	confirmation, estimate        []byte
-	extra, purchase, rate, source sql.NullString
-	observation                   sql.NullString
+	created                         time.Time
+	eligible, estimateEligible      bool
+	evidence, revision              string
+	confirmation, estimate, attempt []byte
+	extra, purchase, rate, source   sql.NullString
+	observation                     sql.NullString
 }
 
 func (i *expectedProfitInput) scanArgs() []any {
 	return []any{&i.created, &i.eligible, &i.estimateEligible, &i.evidence, &i.revision, &i.confirmation,
-		&i.estimate, &i.extra, &i.purchase, &i.rate, &i.source, &i.observation}
+		&i.estimate, &i.attempt, &i.extra, &i.purchase, &i.rate, &i.source, &i.observation}
 }
 
 func (i expectedProfitInput) result() OrderExpectedProfit {
@@ -128,7 +132,7 @@ func (i expectedProfitInput) result() OrderExpectedProfit {
 		if json.Unmarshal(i.confirmation, &c) == nil && c.Evidence == i.evidence &&
 			c.Source == ExpectedNetSellerCenter && !c.ObservedAt.IsZero() &&
 			moneyUSDPattern.MatchString(c.NetUSD) && purchaseCostPattern.MatchString(c.ExtraCNY) {
-			out.NetUSD, out.NetSource = &c.NetUSD, c.Source
+			out.NetUSD, out.NetSource, out.NetObservedAt = &c.NetUSD, c.Source, &c.ObservedAt
 			if out.ExtraCNY == nil {
 				out.ExtraCNY = &c.ExtraCNY
 			}
@@ -140,13 +144,21 @@ func (i expectedProfitInput) result() OrderExpectedProfit {
 		if json.Unmarshal(i.estimate, &e) == nil && e.Evidence == i.evidence &&
 			e.Source == ExpectedNetBillingEstimate && !e.ObservedAt.IsZero() &&
 			(e.Risk == "" || e.Risk == BillingEstimateShipmentUnknown) &&
-			moneyUSDPattern.MatchString(e.Amount) {
-			out.NetUSD, out.NetSource, out.NetRisk = &e.Amount, e.Source, e.Risk
+			moneyUSDPattern.MatchString(e.Amount) && e.calculationValid() {
+			out.NetUSD, out.NetSource, out.NetRisk, out.NetObservedAt = &e.Amount, e.Source, e.Risk, &e.ObservedAt
 		} else if out.Reason != "confirmation_stale" {
 			out.Reason = "estimate_stale"
 		}
 	}
 	if out.NetUSD == nil {
+		var attempt struct {
+			Evidence string `json:"evidence"`
+			State    string `json:"state"`
+			Reason   string `json:"reason"`
+		}
+		if json.Unmarshal(i.attempt, &attempt) == nil && attempt.Evidence == i.evidence && attempt.State == "review" {
+			out.Reason, out.CollectionReason = "billing_review", attempt.Reason
+		}
 		return out
 	}
 	if out.PurchaseCNY == nil {

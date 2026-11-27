@@ -643,14 +643,34 @@ func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
 		if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET pack_id='20001' WHERE store_id=$1::uuid AND order_id='10001'`, store); err != nil {
 			t.Fatal(err)
 		}
+		e := qualifiedBillingEstimateFixture()
+		e.OrderID, e.PackID, e.ShipmentID = "10001", "20001", "80001"
+		e.PackOrders, e.Billing.OrderID = []string{e.OrderID}, e.OrderID
+		for i := range e.Billing.Charges {
+			e.Billing.Charges[i].PackID = e.PackID
+			e.Billing.Charges[i].SalesRefs[0].OrderID = e.OrderID
+			if e.Billing.Charges[i].Subtype == "CCSI" {
+				e.Billing.Charges[i].ShipmentID = e.ShipmentID
+			}
+		}
+		net, ok := billingEstimatedNet(e, http.StatusUnauthorized, 1)
+		if !ok {
+			t.Fatal("restart estimate fixture rejected")
+		}
+		stored, err := newStoredBillingEstimate(*net, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := json.Marshal(stored)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := db.Exec(ctx, `UPDATE app.meli_orders o SET
-			expected_profit_billing_estimate=jsonb_build_object(
-				'amount_usd','4.50','source','billing_estimate','risk','shipment_membership_unknown',
-				'observed_at',to_jsonb(clock_timestamp()),'evidence',`+expectedProfitEvidence+`),
+			expected_profit_billing_estimate=$2::jsonb || jsonb_build_object('evidence',`+expectedProfitEvidence+`),
 			expected_profit_billing_attempt='{"state":"done","billing_attempts":1,"relation_attempts":1}'::jsonb,
 			expected_profit_extra_cny=2.50
 			FROM app.meli_store_connections c
-			WHERE o.store_id=c.id AND o.store_id=$1::uuid AND o.order_id='10001'`, store); err != nil {
+			WHERE o.store_id=c.id AND o.store_id=$1::uuid AND o.order_id='10001'`, store, string(proof)); err != nil {
 			t.Fatal(err)
 		}
 		if err := migrations.Apply(ctx, db); err != nil {

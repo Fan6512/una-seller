@@ -76,6 +76,17 @@ func TestBillingEstimateRejectsAmbiguousSenderScope(t *testing.T) {
 	}
 }
 
+func qualifiedBillingEstimateFixture() billingExpectedNetEvidence {
+	e := billingCandidateFixture()
+	e.ShipmentOrders = nil
+	e.Billing.Shipping.SenderScope = billingShippingSingleSender
+	for i := range e.Billing.Charges {
+		e.Billing.Charges[i].PackID = e.PackID
+		e.Billing.Charges[i].SalesRefs = []BillingSaleRef{{OrderID: e.OrderID, OperationID: "10001"}}
+	}
+	return e
+}
+
 func TestBillingEstimateProfitSourceAndMissingCost(t *testing.T) {
 	now := time.Date(2026, 11, 27, 0, 0, 0, 0, time.UTC)
 	net := BillingEstimatedUSDNet{Amount: "13.48", ObservedAt: now, Source: ExpectedNetBillingEstimate, Risk: BillingEstimateShipmentUnknown}
@@ -87,14 +98,22 @@ func TestBillingEstimateProfitSourceAndMissingCost(t *testing.T) {
 	if _, err := EstimateProfitFromExpectedNet(ConfirmedExpectedUSDNet{Amount: net.Amount, Source: net.Source, ObservedAt: now}, fx, "55", "5"); err == nil {
 		t.Fatal("estimate accepted by confirmed contract")
 	}
-	raw, err := json.Marshal(storedBillingEstimate{BillingEstimatedUSDNet: net, Evidence: "current"})
+	qualified, ok := billingEstimatedNet(qualifiedBillingEstimateFixture(), http.StatusUnauthorized, 1)
+	if !ok {
+		t.Fatal("qualified fixture rejected")
+	}
+	stored, err := newStoredBillingEstimate(*qualified, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(stored)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ns := func(v string) sql.NullString { return sql.NullString{String: v, Valid: true} }
 	i := expectedProfitInput{
 		created: now, estimateEligible: true, evidence: "current", estimate: raw,
-		purchase: ns("55"), rate: ns("6.6"), source: ns(dailyFXSource), observation: ns("2026-11-26"),
+		purchase: ns("20"), rate: ns("6.6"), source: ns(dailyFXSource), observation: ns("2026-11-26"),
 	}
 	out := i.result()
 	if out.NetUSD == nil || out.NetSource != ExpectedNetBillingEstimate || out.Profit != nil || out.Reason != "extra_missing" {
@@ -102,9 +121,23 @@ func TestBillingEstimateProfitSourceAndMissingCost(t *testing.T) {
 	}
 	i.extra = ns("5")
 	out = i.result()
-	if out.Profit == nil || out.Profit.ProfitCNY != "28.97" || out.Reason != "ready_estimate" {
+	if out.Profit == nil || out.Profit.ProfitCNY != "4.70" || out.Reason != "ready_estimate" {
 		t.Fatalf("estimated runtime: %+v", out)
 	}
+	// JSON roundtrip preserves the digest; changing the used fee does not.
+	var altered storedBillingEstimate
+	if err := json.Unmarshal(raw, &altered); err != nil || !altered.calculationValid() {
+		t.Fatal("calculation digest lost after roundtrip")
+	}
+	altered.Calculation.Billing.Charges[0].Amount = "0.99"
+	i.estimate, err = json.Marshal(altered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := i.result(); out.NetUSD != nil || out.Profit != nil {
+		t.Fatal("changed calculation evidence accepted")
+	}
+	i.estimate = raw
 	i.evidence = "changed"
 	if out := i.result(); out.NetUSD != nil || out.Profit != nil || out.Reason != "estimate_stale" {
 		t.Fatalf("stale estimate used: %+v", out)
@@ -120,7 +153,7 @@ func TestBillingEstimateProfitSourceAndMissingCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = i.result()
-	if out.Profit == nil || out.NetSource != ExpectedNetSellerCenter || out.Profit.Kind != "expected" || out.Profit.ProfitCNY != "32.40" {
+	if out.Profit == nil || out.NetSource != ExpectedNetSellerCenter || out.Profit.Kind != "expected" || out.Profit.ProfitCNY != "67.40" {
 		t.Fatalf("confirmed precedence and explicit cost: %+v", out)
 	}
 }

@@ -5,12 +5,13 @@ import { storeRequest } from "./stores";
 type ExpectedProfit = {
   day: string; revision: string; can_confirm: boolean; has_confirmation: boolean; reason: string;
   net_usd: string | null; purchase_cny: string | null; extra_cny: string | null;
-  net_source?: string; net_risk?: string; can_set_extra_cost?: boolean;
+  net_source?: string; net_risk?: string; net_observed_at?: string; collection_reason?: string; can_set_extra_cost?: boolean;
   fx: { rate: string; source: string; as_of: string } | null;
   profit: { profit_cny: string; profit_usd: string; margin_percent: string | null; kind: "expected" | "billing_estimate" } | null;
 };
 const reasons: Record<string, string> = {
   net_unconfirmed: "预计净回款待核实",
+  billing_review: "自动采集待核实（异常或尝试次数已耗尽）",
   order_or_billing_unavailable: "当前订单或有效账单不可用；退款、取消等订单不自动核算",
   confirmation_stale: "订单或费用证据已变化，请重新核对净额",
   estimate_stale: "账单估算证据已变化，待重新核验",
@@ -33,25 +34,34 @@ export default function ExpectedProfitPanel({order, scope, disabled, billingChec
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [refresh,setRefresh]=useState(0);
+  const [needsRefresh,setNeedsRefresh]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const loadedPath=useRef("");
   const action=useRef<AbortController|null>(null);
   const store=scope?.storeId, site=scope?.site, logistic=scope?.logistic;
   const path=store && site && logistic ? "/api/v1/stores/"+encodeURIComponent(store)+"/orders/"+
     encodeURIComponent(order.order_id)+"/expected-profit?"+new URLSearchParams({site,logistic_type:logistic}) : "";
   useEffect(()=>{
     const controller=new AbortController();
-    action.current?.abort();
-    setBusy(false); setData(null); setEditing(false); setCostOnly(false); setNet(""); setExtra(""); setError("");
-    if (!path) return ()=>controller.abort();
+    const changed=loadedPath.current!==path;
+    if (changed) {
+      loadedPath.current=path;
+      action.current?.abort(); action.current=null;
+      setBusy(false); setData(null); setEditing(false); setCostOnly(false); setNet(""); setExtra(""); setError(""); setNeedsRefresh(false);
+    }
+    if (!path || action.current) {setLoading(false);return ()=>controller.abort();}
+    setLoading(true);
     void storeRequest<ExpectedProfit>(path,"GET",AbortSignal.any([controller.signal,AbortSignal.timeout(10000)]),false,undefined,
       ()=>"预计利润暂不可用（可能尚未完成服务端升级）").then(value=>{
-      if (!controller.signal.aborted) setData(value);
+      if (!controller.signal.aborted) {setData(value);setNeedsRefresh(false);setError("");}
     }).catch(problem=>{
       if (!controller.signal.aborted) setError(problem instanceof Error?problem.message:"读取预计利润失败");
-    });
-    return ()=>{controller.abort(); action.current?.abort();};
+    }).finally(()=>{if (!controller.signal.aborted) setLoading(false);});
+    return ()=>controller.abort();
   },[path,order.status,order.last_updated,order.purchase_cost_cny,billingChecked,refresh]);
+  useEffect(()=>()=>{action.current?.abort();},[path]);
   async function save(clear: boolean) {
-    if (!path || !data || disabled || action.current) return;
+    if (!path || !data || disabled || loading || needsRefresh || action.current) return;
     const onlyCost=costOnly && !clear;
     if (!clear && ((!onlyCost && (!data.can_confirm || !/^-?(0|[1-9][0-9]{0,15})(\.[0-9]{1,8})?$/.test(net))) ||
         (onlyCost && !data.can_set_extra_cost) || !/^(0|[1-9][0-9]{0,11})(\.[0-9]{1,2})?$/.test(extra))) {
@@ -68,7 +78,7 @@ export default function ExpectedProfitPanel({order, scope, disabled, billingChec
         (_code,status)=>status===409?"订单、账单或确认记录已变化，请刷新核对":"预计净额保存未确认，请刷新核对");
       if (!request.signal.aborted) {setData(value);setEditing(false);setCostOnly(false);}
     } catch(problem) {
-      if (!request.signal.aborted) {setError(problem instanceof Error?problem.message:"保存结果未确认，请刷新核对");setData(null);setEditing(false);}
+      if (!request.signal.aborted) {setError(problem instanceof Error?problem.message:"保存结果未确认，请刷新核对");setNeedsRefresh(true);}
     } finally {
       if(action.current===request) {action.current=null;setBusy(false);}
     }
@@ -86,18 +96,19 @@ export default function ExpectedProfitPanel({order, scope, disabled, billingChec
     </dl>
     <p className="orders-muted">{data?reasons[data.reason]??"待核实":"预计利润尚未读取"}；不代表实际到账。</p>
     {isEstimate && <p className="orders-muted">{data?.net_risk==="shipment_membership_unknown"?"官方货件成员关系未完整核验；":""}账单估算仅供经营参考，费用完整性仍待核对。</p>}
-    {error && <p className="orders-alert" role="alert">{error}</p>}
+    {isEstimate && data?.net_observed_at && <p className="orders-muted">账单观察时间：{new Date(data.net_observed_at).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})}（北京时间），非实时数据。</p>}
+    {error && <p className="orders-alert" role="alert">{error}{needsRefresh?"；保留上次读取值和输入，请刷新核对后再保存。":""}</p>}
     <button type="button" className="orders-table-action" disabled={disabled || busy || !path} onClick={()=>setRefresh(n=>n+1)}>刷新预计利润</button>
     {data?.can_confirm && !editing && <button type="button" className="orders-table-action" disabled={disabled || busy}
       onClick={()=>{setCostOnly(false);setNet(isEstimate?"":data.net_usd??"");setExtra(data.extra_cny??"");setEditing(true);}}>核实净额（可选）</button>}
     {data?.can_set_extra_cost && !editing && <button type="button" className="orders-table-action" disabled={disabled || busy}
       onClick={()=>{setCostOnly(true);setNet("");setExtra(data.extra_cny??"");setEditing(true);}}>编辑额外成本</button>}
-    {data?.has_confirmation && !editing && <button type="button" className="orders-table-action" disabled={disabled || busy} onClick={()=>void save(true)}>清除确认</button>}
+    {data?.has_confirmation && !editing && <button type="button" className="orders-table-action" disabled={disabled || busy || loading || needsRefresh} onClick={()=>void save(true)}>清除确认</button>}
     {editing && (costOnly?data?.can_set_extra_cost:data?.can_confirm) && <div>
       <p className="orders-muted">{costOnly?"仅保存实际额外成本，不确认净额。":"仅在已核对卖家中心同一订单净额后使用。未核实无需填写。"}</p>
       {!costOnly && <label>订单预计净回款 USD <input value={net} inputMode="decimal" disabled={busy||disabled} onChange={e=>setNet(e.target.value)}/></label>}
       <label>额外成本 CNY <input value={extra} inputMode="decimal" placeholder="真实为零填写0" disabled={busy||disabled} onChange={e=>setExtra(e.target.value)}/></label>
-      <button type="button" className="orders-table-action" disabled={busy||disabled} onClick={()=>void save(false)}>确认保存</button>
+      <button type="button" className="orders-table-action" disabled={busy||disabled||loading||needsRefresh} onClick={()=>void save(false)}>确认保存</button>
       <button type="button" className="orders-table-action" disabled={busy} onClick={()=>setEditing(false)}>取消</button>
     </div>}
   </div>;
