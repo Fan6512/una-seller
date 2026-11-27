@@ -1,0 +1,72 @@
+[
+  {
+    "id": "CBT10236",
+    "path_names": [
+      "Antiques and Collectibles",
+      "Antiques",
+      "Seltzer Bottles"
+    ],
+    "original_nmt": "苏打水瓶",
+    "original_llm": "矿泉水瓶",
+    "suggested_zh": "苏打水瓶"
+  },
+  {
+    "id": "CBT2747",
+    "path_names": [
+      "Other categories",
+      "Adults",
+      "Sex Toys",
+      "Dildos & Vibrators"
+    ],
+    "original_nmt": "假阳具和振动器",
+    "original_llm": "假阳刚 & 震动器",
+    "suggested_zh": "假阳具与振动器"
+  },
+  {
+    "id": "CBT411889",
+    "path_names": [
+      "Tools",
+      "Garden Tools",
+      "Chainsaws",
+      "Combustion Chamber Chainsaws"
+    ],
+    "original_nmt": "燃烧室链锯",
+    "original_llm": "燃烧室电锯",
+    "suggested_zh": "内燃式链锯"
+  },
+  {
+    "id": "CBT412112",
+    "path_names": [
+      "Other categories",
+      "Tattoo Supplies",
+      "Armrests"
+    ],
+    "original_nmt": "扶手",
+    "original_llm": "臂架",
+    "suggested_zh": "纹身扶手架"
+  },
+  {
+    "id": "CBT417159",
+    "path_names": [
+      "Art, Craft and School Supplies",
+      "Sewing Notions",
+      "Sewing & Embroidery",
+      "Embroidery Frames"
+    ],
+    "original_nmt": "刺绣框架",
+    "original_llm": "绣花机架",
+    "suggested_zh": "刺绣绣框"
+  },
+  {
+    "id": "CBT417203",
+    "path_names": [
+      "Beauty and Personal Care",
+      "Hair Salon Listings",
+      "Hair Salon Furniture",
+      "Hair Steamers"
+    ],
+    "original_nmt": "蒸发器",
+    "original_llm": "蒸汽直发器",
+    "suggested_zh": "蒸汽美发机"
+  }
+]
