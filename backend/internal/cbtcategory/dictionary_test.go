@@ -220,7 +220,7 @@ func TestDictionaryResumeIncrementalUpdatesAndManualPaths(t *testing.T) {
 	tree["CBT102"] = fixtureNode(newPath, nil, "enabled")
 	latest.Store(generatedVersion(t, version2, tree))
 	result = run(context.Background(), func(_ context.Context, texts []string) map[string]string {
-		if !slices.Equal(texts, []string{"Jugs"}) {
+		if !slices.Equal(texts, []string{"Home | Jugs"}) {
 			t.Fatalf("incremental update sent unchanged or retained names: %v", texts)
 		}
 		return nil
@@ -241,10 +241,10 @@ func TestDictionaryResumeIncrementalUpdatesAndManualPaths(t *testing.T) {
 		t.Fatalf("new unprocessed path should preserve original leaf: %v", got)
 	}
 	result = run(context.Background(), func(_ context.Context, texts []string) map[string]string {
-		if !slices.Equal(texts, []string{"Jugs"}) {
+		if !slices.Equal(texts, []string{"Home | Jugs"}) {
 			t.Fatalf("retry failed to isolate remainder: %v", texts)
 		}
-		return map[string]string{"Jugs": "水壶"}
+		return map[string]string{"Home | Jugs": "家居 | 水壶"}
 	}, 1)
 	if result.Translated != 4 || !result.Published || result.Batches != 1 {
 		t.Fatalf("latest version did not finish: %+v", result)
@@ -421,5 +421,26 @@ func TestReaderBackoffAndChangedFileRecovery(t *testing.T) {
 	if reader.Load().PublishedBreadcrumb("CBT101") == nil || reader.activeError != "" ||
 		!reader.activeRetryAt.IsZero() || reader.activeBackoff != 0 {
 		t.Fatal("repaired file was not immediately reloaded")
+	}
+}
+
+func TestCategoryContextGlossaryAndPlan(t *testing.T) {
+	path := []PathNode{{ID: "CBT800", Name: "Home Appliances"}, {ID: "CBT801", Name: "Fans"}}
+	heater := []PathNode{{ID: "CBT800", Name: "Home Appliances"}, {ID: "CBT802", Name: "Space Heaters"}}
+	staged := snapshot{Categories: map[string]category{
+		"CBT801": {ID: "CBT801", Name: "Fans", Path: path, Status: "enabled"},
+		"CBT802": {ID: "CBT802", Name: "Space Heaters", Path: heater, Status: "enabled", Zh: "太空加热器"},
+	}}
+	applyCategoryGlossary(&staged, nil, nil)
+	if staged.Categories["CBT802"].Zh != "取暖器" {
+		t.Fatal("known literal mistranslation not corrected")
+	}
+	batches := makeBatches(staged, nil, nil, 16)
+	if len(batches) != 1 || len(batches[0]) != 1 || batches[0][0].text != "Home Appliances | Fans" {
+		t.Fatalf("unique leaf lost actual parent context: %+v", batches)
+	}
+	plan := summarizePlan(staged, nil, nil, 16)
+	if plan.Inputs != 1 || plan.Batches != 1 || plan.SourceChars != len("Home Appliances | Fans") {
+		t.Fatalf("budget plan differs from batch input: %+v", plan)
 	}
 }

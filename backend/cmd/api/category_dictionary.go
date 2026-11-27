@@ -72,17 +72,26 @@ func configuredTranslator() *httpapi.TranslationService {
 }
 
 func updateCBTCategories(args []string, dir string, translator *httpapi.TranslationService) error {
-	const usage = "usage: api cbt-categories update [-max-batches N]"
+	const usage = "usage: api cbt-categories update [-max-batches N] [-plan]"
 	if len(args) == 0 || args[0] != "update" {
 		return errors.New(usage)
 	}
 	command := flag.NewFlagSet("cbt-categories update", flag.ContinueOnError)
 	limit := command.Int("max-batches", 0, "stop after N provider batches; zero is unlimited")
+	plan := command.Bool("plan", false, "estimate remaining source characters from local dictionary without upstream requests")
 	if err := command.Parse(args[1:]); err != nil {
 		return err
 	}
 	if command.NArg() != 0 || *limit < 0 {
 		return errors.New(usage)
+	}
+
+	if *plan {
+		result, err := cbtcategory.Plan(dir, translator.CategoryBatchSize())
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
