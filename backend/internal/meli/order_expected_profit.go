@@ -22,6 +22,7 @@ type ExpectedOrderProfitUSD struct {
 	EstimatedProfitUSD
 	NetSource     string    `json:"net_source"`
 	NetObservedAt time.Time `json:"net_observed_at"`
+	NetRisk       string    `json:"net_risk,omitempty"`
 	Kind          string    `json:"kind"`
 	ProfitCNY     string    `json:"profit_cny"`
 }
@@ -33,12 +34,26 @@ func EstimateProfitFromExpectedNet(net ConfirmedExpectedUSDNet, fx ProfitFXRate,
 	if net.Source != ExpectedNetSellerCenter || net.ObservedAt.IsZero() {
 		return ExpectedOrderProfitUSD{}, ErrProfitInputsInvalid
 	}
-	profit, err := calculateProfitUSD(net.Amount, fx, purchaseCNY, extraCNY)
+	return estimateProfitWithSource(net.Amount, net.Source, "", net.ObservedAt, "expected", fx, purchaseCNY, extraCNY)
+}
+
+// EstimateProfitFromBillingNet never turns an estimate into a confirmed net.
+// Costs still require actual values, including an explicit zero extra cost.
+func EstimateProfitFromBillingNet(net BillingEstimatedUSDNet, fx ProfitFXRate, purchaseCNY, extraCNY string) (ExpectedOrderProfitUSD, error) {
+	if net.Source != ExpectedNetBillingEstimate || net.ObservedAt.IsZero() ||
+		(net.Risk != "" && net.Risk != BillingEstimateShipmentUnknown) {
+		return ExpectedOrderProfitUSD{}, ErrProfitInputsInvalid
+	}
+	return estimateProfitWithSource(net.Amount, net.Source, net.Risk, net.ObservedAt, "billing_estimate", fx, purchaseCNY, extraCNY)
+}
+
+func estimateProfitWithSource(amount, source, risk string, observedAt time.Time, kind string, fx ProfitFXRate, purchaseCNY, extraCNY string) (ExpectedOrderProfitUSD, error) {
+	profit, err := calculateProfitUSD(amount, fx, purchaseCNY, extraCNY)
 	if err != nil {
 		return ExpectedOrderProfitUSD{}, err
 	}
 	// Calculate directly in CNY before rounding, not from rounded USD profit.
-	usd, _ := ratOf(net.Amount)
+	usd, _ := ratOf(amount)
 	rate, _ := ratOf(fx.CNYPerUSD)
 	purchase, _ := ratOf(purchaseCNY)
 	extra, _ := ratOf(extraCNY)
@@ -46,8 +61,9 @@ func EstimateProfitFromExpectedNet(net ConfirmedExpectedUSDNet, fx ProfitFXRate,
 	return ExpectedOrderProfitUSD{
 		ProfitCNY:          fixedPoint(roundRatio(cny, 100), 2),
 		EstimatedProfitUSD: profit,
-		NetSource:          net.Source,
-		NetObservedAt:      net.ObservedAt,
-		Kind:               "expected",
+		NetSource:          source,
+		NetRisk:            risk,
+		NetObservedAt:      observedAt,
+		Kind:               kind,
 	}, nil
 }
