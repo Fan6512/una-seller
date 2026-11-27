@@ -223,6 +223,14 @@ func main() {
 	if db != nil && os.Getenv("UNA_SELLER_DAILY_FX_ENABLED") == "1" {
 		go meli.RunDailyFX(context.Background(), db, log.Default())
 	}
+	// Billing reconciliation is independent and disabled unless explicitly enabled.
+	if os.Getenv("UNA_SELLER_BILLING_COLLECTOR_ENABLED") == "1" {
+		if meliService != nil {
+			go meliService.RunBillingCollector(context.Background(), log.Default())
+		} else {
+			log.Print("billing collector disabled: Mercado Libre OAuth unavailable")
+		}
+	}
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }
