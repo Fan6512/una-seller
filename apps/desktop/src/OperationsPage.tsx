@@ -23,7 +23,11 @@ const states: Record<string, string> = { paid: "已付款", cancelled: "已取�
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
 const beijingMinute = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
-const beijingDate = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+const beijingDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", calendar: "gregory", numberingSystem: "latn" });
+function beijingDay(now: Date): string {
+  const parts = beijingDate.formatToParts(now);
+  return ["year", "month", "day"].map(type => parts.find(part => part.type === type)?.value ?? "").join("-");
+}
 
 function BeijingClock({ onDay }: { onDay: (day: string) => void }) {
   const [time, setTime] = useState(() => beijingMinute.format(new Date()));
@@ -33,7 +37,7 @@ function BeijingClock({ onDay }: { onDay: (day: string) => void }) {
       clearTimeout(timer);
       const now = new Date();
       setTime(beijingMinute.format(now));
-      onDay(beijingDate.format(now));
+      onDay(beijingDay(now));
       if (!document.hidden) timer = setTimeout(tick, 60000 - (now.getTime() % 60000));
     };
     tick();
@@ -45,7 +49,7 @@ function BeijingClock({ onDay }: { onDay: (day: string) => void }) {
 
 export default function OperationsPage({ onNavigate }: { onNavigate: (target: Target) => void }) {
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [day, setDay] = useState(() => beijingDate.format(new Date()));
+  const [day, setDay] = useState(() => beijingDay(new Date()));
   const [scope, setScope] = useState("");
   const [site, setSite] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
@@ -103,8 +107,8 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
   const sales = currentRows?.sales;
   const isCurrentSales = sales?.day === day;
   const salesNote = !sales ? "待接入订单销售汇总" : !isCurrentSales ? "等待今日缓存销售额更新" : sales.truncated ? "当日缓存超过汇总上限，暂不显示金额" :
-    !sales.scope_available ? "当前店铺或站点授权不可用" :
-      sales.day + " · 缓存已付款商品额 " + sales.included_orders + "/" + sales.paid_orders + " 笔" +
+    !sales.scope_available ? (!scope && currentRows?.truncated ? "店铺汇总范围超过上限，暂不显示金额" : "当前筛选范围暂无可用销售汇总") :
+      sales.day + " · 当日创建、当前已付款商品额 " + sales.included_orders + "/" + sales.paid_orders + " 笔" +
       (sales.refunded_orders ? " · 退款排除 " + sales.refunded_orders + " 笔" : "") +
       (sales.review_orders ? " · 金额待核实 " + sales.review_orders + " 笔" : "") +
       (sales.cancelled_orders ? " · 已取消 " + sales.cancelled_orders + " 笔" : "") +
@@ -142,7 +146,7 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
     <div className="operations-filter-row">
       <div className="operations-filters">
         <label>店铺 <select value={scope} onChange={e => { setScope(e.target.value); setSite(""); }}><option value="">全部店铺</option>{stores.map(s => <option key={s.store_id} value={s.store_id}>{s.nickname || "店铺"}</option>)}</select></label>
-        <label>待办 / 动态站点 <select value={site} onChange={e => setSite(e.target.value)}><option value="">全部站点</option>{sites.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+        <label>销售额 / 待办 / 动态站点 <select value={site} onChange={e => setSite(e.target.value)}><option value="">全部站点</option>{sites.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
       </div>
     </div>
     {error && <p role="alert" className="operations-error">{error}{currentRows ? " 保留上次读取的摘要。" : ""}</p>}

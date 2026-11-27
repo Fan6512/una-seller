@@ -46,11 +46,14 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Fix the order creation time and the sales read clock to the same Beijing day.
+	// The other operations assertions intentionally keep their live timestamps.
+	salesTime := time.Date(2026, 11, 26, 16, 0, 0, 0, time.UTC)
 	// Owner A has one row of each counted state plus rows that must be excluded.
 	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
 		(store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,updated_at)
-		VALUES($1,'MLB','remote','111','901','paid','USD',10,now(),now(),now()),
-		($1,'MLB','remote','111','902','cancelled','USD',10,now(),now(),now())`, storeA); err != nil {
+		VALUES($1,'MLB','remote','111','901','paid','USD',10,$2,now(),now()),
+		($1,'MLB','remote','111','902','cancelled','USD',10,$2,now(),now())`, storeA, salesTime); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO app.meli_customer_notifications
@@ -120,9 +123,18 @@ func TestOperationsSummaryOwnerScopedAndAccuratePostgres(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET order_items='[{"item_id":"MLB1","quantity":2,"unit_price":"3.25","currency_id":"USD"}]'::jsonb WHERE store_id=$1 AND order_id='901'`, storeA); err != nil {
 		t.Fatal(err)
 	}
-	sales, err := svc.OperationsOverview(ctx, ownerA, storeA, "MLB")
-	if err != nil || sales.Sales.AmountUSD == nil || *sales.Sales.AmountUSD != "6.50" || sales.Sales.IncludedOrders != 1 || sales.Sales.CancelledOrders != 1 {
-		t.Fatalf("daily cached merchandise sales: %+v %v", sales.Sales, err)
+	// The public overview still wires sales to its own current read date.
+	day, _, _ := salesDay(overview.CheckedAt)
+	if overview.Sales.Day != day || !overview.Sales.ScopeAvailable {
+		t.Fatalf("overview sales scope or day: %+v", overview.Sales)
+	}
+	// Test the same production sales query at a fixed instant without adding
+	// a production clock override or relying on a test not crossing midnight.
+	fixedSummary := got
+	fixedSummary.CheckedAt = salesTime
+	sales, err := svc.operationsSales(ctx, ownerA, storeA, "MLB", fixedSummary)
+	if err != nil || sales.AmountUSD == nil || *sales.AmountUSD != "6.50" || sales.IncludedOrders != 1 || sales.CancelledOrders != 1 {
+		t.Fatalf("daily cached merchandise sales: %+v %v", sales, err)
 	}
 	if len(overview.Activity) != 9 || len(overview.Todos) != 3 {
 		t.Fatalf("filtered activity/todos: %+v", overview)
