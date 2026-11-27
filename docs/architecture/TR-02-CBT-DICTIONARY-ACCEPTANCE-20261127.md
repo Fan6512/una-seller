@@ -34,6 +34,8 @@
 | API 启动日志 | `state=loaded_untranslated translated=0 version=2026-10-14T21:12:35.000Z` |
 | 定时任务 | 未配置（`una-seller` 与 root crontab、systemd timer 均无 cbt-categories） |
 
+全量规模（按现有 16 条/批与 1001 字符上限计算）：10,953 个唯一输入、492,473 字符、710 批；单轮全量低于月 180 万字符额度。
+
 首次以 `TRANSLATION_PROVIDER=disabled` 拉取并发布官方版本，返回：
 `{"official":11668,"disabled":714,"removed":0,"translated":0,"unprocessed":10954,"published":true,"state":"provider_disabled"}`。
 
@@ -58,7 +60,7 @@ una-seller-api cbt-categories update -max-batches 5
 | 计划批次 / 实际发出 | 5 / 1（首个 Provider 级失败后按设计停止） |
 | Provider 请求总数 | 3（1 个 16 条批次 + 2 个单条诊断请求） |
 | 成功请求 / 成功率 | 0 / **0%** |
-| 翻译字符数 | **0**（失败批次输入 16 条、175 字符，未计费成功） |
+| 翻译字符数 | **0**（失败批次实际输入 16 条、558 字符，未产生成功计费） |
 | 失败类目 | 16 条，含 `Electronics, Audio and Video`、`Lava Lamps`、`TVs`、`VCRs`、`Xbox 360` 等 |
 | 译文样本 | 无（未取得任何译文） |
 | 发布 | 否；`active.json` 未改写，`staging.json` 与 `active.json` 字节一致 |
