@@ -73,13 +73,21 @@ func fixedPoint(whole string, places int) string {
 // EstimateProfitFromVerifiedNet never derives net USD from order total,
 // tax base, sale_fee.net, charge totals, or listing net_proceeds.
 func EstimateProfitFromVerifiedNet(receipt VerifiedUSDNet, fx ProfitFXRate, purchaseCNY, extraCNY string) (EstimatedProfitUSD, error) {
-	if !moneyUSDPattern.MatchString(receipt.Amount) || !fxRatePattern.MatchString(fx.CNYPerUSD) ||
-		strings.TrimSpace(receipt.Source) == "" || receipt.SettledAt.IsZero() ||
+	if strings.TrimSpace(receipt.Source) == "" || receipt.SettledAt.IsZero() {
+		return EstimatedProfitUSD{}, ErrProfitInputsInvalid
+	}
+	return calculateProfitUSD(receipt.Amount, fx, purchaseCNY, extraCNY)
+}
+
+// calculateProfitUSD shares exact arithmetic, not evidence semantics. Callers
+// must validate their own estimated-versus-settled net source before using it.
+func calculateProfitUSD(amount string, fx ProfitFXRate, purchaseCNY, extraCNY string) (EstimatedProfitUSD, error) {
+	if !moneyUSDPattern.MatchString(amount) || !fxRatePattern.MatchString(fx.CNYPerUSD) ||
 		strings.TrimSpace(fx.Source) == "" || fx.AsOf.IsZero() ||
 		!purchaseCostPattern.MatchString(purchaseCNY) || !purchaseCostPattern.MatchString(extraCNY) {
 		return EstimatedProfitUSD{}, ErrProfitInputsInvalid
 	}
-	net, _ := ratOf(receipt.Amount)
+	net, _ := ratOf(amount)
 	rate, _ := ratOf(fx.CNYPerUSD)
 	if rate.Sign() <= 0 {
 		return EstimatedProfitUSD{}, ErrProfitInputsInvalid

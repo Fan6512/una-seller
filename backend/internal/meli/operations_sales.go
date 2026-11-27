@@ -10,16 +10,21 @@ import (
 // OperationsSales is a cached merchandise subtotal, not settlement, paid-at
 // revenue, or a guarantee of complete platform coverage.
 type OperationsSales struct {
-	Day             string  `json:"day"`
-	AmountUSD       *string `json:"amount_usd"`
-	PaidOrders      int     `json:"paid_orders"`
-	IncludedOrders  int     `json:"included_orders"`
-	ReviewOrders    int     `json:"review_orders"`
-	RefundedOrders  int     `json:"refunded_orders"`
-	CancelledOrders int     `json:"cancelled_orders"`
-	OtherOrders     int     `json:"other_orders"`
-	ScopeAvailable  bool    `json:"scope_available"`
-	Truncated       bool    `json:"truncated"`
+	Day                       string  `json:"day"`
+	AmountUSD                 *string `json:"amount_usd"`
+	PaidOrders                int     `json:"paid_orders"`
+	IncludedOrders            int     `json:"included_orders"`
+	ReviewOrders              int     `json:"review_orders"`
+	RefundedOrders            int     `json:"refunded_orders"`
+	CancelledOrders           int     `json:"cancelled_orders"`
+	OtherOrders               int     `json:"other_orders"`
+	ScopeAvailable            bool    `json:"scope_available"`
+	Truncated                 bool    `json:"truncated"`
+	ExpectedProfitCNY         *string `json:"expected_profit_cny"`
+	ProfitOrders              int     `json:"profit_orders"`
+	BillingEstimatedProfitCNY *string `json:"billing_estimated_profit_cny"`
+	BillingEstimatedOrders    int     `json:"billing_estimated_orders"`
+	ProfitRate                *string `json:"profit_rate"`
 }
 
 const operationsSalesLimit = 10000
@@ -91,8 +96,9 @@ func (s *Service) operationsSales(ctx context.Context, owner, store, site string
 	}
 	// EXISTS avoids double-counting duplicate marketplace mappings. Each
 	// cached order is identified by its existing full scoped primary key.
-	rows, err := s.db.Query(ctx, `SELECT o.status,o.order_items
+	rows, err := s.db.Query(ctx, `SELECT o.status,o.order_items,`+expectedProfitFields+`
 	FROM app.meli_orders o JOIN app.meli_store_connections c ON c.id=o.store_id
+	`+expectedProfitJoins+`
 	WHERE c.owner_user_id=$1::uuid AND c.status='connected' AND c.marketplaces_status='verified'
 	  AND ($2='' OR c.id::text=$2) AND ($3='' OR o.site_id=$3)
 	  AND o.date_created >= $4 AND o.date_created < $5
@@ -105,6 +111,8 @@ func (s *Service) operationsSales(ctx context.Context, owner, store, site string
 	}
 	defer rows.Close()
 	total := new(big.Rat)
+	profitTotal := new(big.Rat)
+	estimateTotal := new(big.Rat)
 	count := 0
 	for rows.Next() {
 		count++
@@ -114,10 +122,30 @@ func (s *Service) operationsSales(ctx context.Context, owner, store, site string
 		}
 		var status string
 		var raw []byte
-		if err := rows.Scan(&status, &raw); err != nil {
+		var input expectedProfitInput
+		if err := rows.Scan(append([]any{&status, &raw}, input.scanArgs()...)...); err != nil {
 			return out, err
 		}
 		out.addOrder(status, raw, total)
+		result := input.result()
+		if result.FX != nil {
+			rate := result.FX.CNYPerUSD
+			out.ProfitRate = &rate
+		}
+		if result.Profit != nil {
+			value, err := ratOf(result.Profit.ProfitCNY)
+			if err != nil {
+				return out, err
+			}
+			switch result.Profit.NetSource {
+			case ExpectedNetSellerCenter:
+				out.ProfitOrders++
+				profitTotal.Add(profitTotal, value)
+			case ExpectedNetBillingEstimate:
+				out.BillingEstimatedOrders++
+				estimateTotal.Add(estimateTotal, value)
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return out, err
@@ -125,6 +153,14 @@ func (s *Service) operationsSales(ctx context.Context, owner, store, site string
 	if !out.Truncated && out.IncludedOrders > 0 {
 		amount := fixedPoint(roundRatio(total, 100), 2)
 		out.AmountUSD = &amount
+	}
+	if !out.Truncated && out.ProfitOrders > 0 {
+		amount := fixedPoint(roundRatio(profitTotal, 100), 2)
+		out.ExpectedProfitCNY = &amount
+	}
+	if !out.Truncated && out.BillingEstimatedOrders > 0 {
+		amount := fixedPoint(roundRatio(estimateTotal, 100), 2)
+		out.BillingEstimatedProfitCNY = &amount
 	}
 	return out, nil
 }

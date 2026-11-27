@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -54,8 +55,9 @@ func main() {
 		return
 	}
 	replayCommand := len(os.Args) > 1 && os.Args[1] == "missed-feeds-replay"
-	if len(os.Args) > 1 && !replayCommand {
-		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N] | missed-feeds-replay OWNER_UUID STORE_UUID TOPIC]")
+	billingProbeCommand := len(os.Args) > 1 && os.Args[1] == "billing-probe"
+	if len(os.Args) > 1 && !replayCommand && !billingProbeCommand {
+		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N] | missed-feeds-replay OWNER_UUID STORE_UUID TOPIC | billing-probe OWNER_UUID STORE_UUID SITE LOGISTIC PACK_ID]")
 	}
 	if os.Getenv("UNA_SELLER_CLOUD") == "1" && (dsn == "" || supabaseURL == "" || publishableKey == "") {
 		log.Fatal("cloud API requires DATABASE_URL, SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY")
@@ -92,6 +94,23 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid Mercado Libre OAuth config: %v", err)
 		}
+	}
+	if billingProbeCommand {
+		if len(os.Args) != 7 || store == nil || meliService == nil ||
+			os.Getenv("UNA_SELLER_BILLING_PROBE_ENABLED") != "1" {
+			log.Fatal("billing probe requires explicit operator enablement, configured OAuth and OWNER_UUID STORE_UUID SITE LOGISTIC PACK_ID")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		report, err := meliService.ProbeBillingByPack(ctx, os.Args[2], os.Args[3],
+			meli.OrderScope{Site: os.Args[4], Logistic: os.Args[5]}, os.Args[6])
+		if err != nil {
+			log.Fatal("billing probe failed; review scoped order, authorization, provider and database")
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			log.Fatal("billing probe report unavailable")
+		}
+		return
 	}
 	if replayCommand {
 		if len(os.Args) != 5 || store == nil || meliService == nil ||
@@ -198,6 +217,18 @@ func main() {
 				log.Fatal("order compensation migrations required")
 			}
 			go inbox.RunCompensation(context.Background(), id, log.Default(), meliService.SearchDiscoveryOrders)
+		}
+	}
+	// Independent public reference data; never on the notification ACK path.
+	if db != nil && os.Getenv("UNA_SELLER_DAILY_FX_ENABLED") == "1" {
+		go meli.RunDailyFX(context.Background(), db, log.Default())
+	}
+	// Billing reconciliation is independent and disabled unless explicitly enabled.
+	if os.Getenv("UNA_SELLER_BILLING_COLLECTOR_ENABLED") == "1" {
+		if meliService != nil {
+			go meliService.RunBillingCollector(context.Background(), log.Default())
+		} else {
+			log.Print("billing collector disabled: Mercado Libre OAuth unavailable")
 		}
 	}
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}

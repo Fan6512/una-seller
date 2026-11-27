@@ -20,15 +20,18 @@ import (
 
 func TestBillingPreviewSanitizesAndDoesNotInventNet(t *testing.T) {
 	raw := []byte(`{"results":[{"order_id":123456789,"payer_nickname":"SECRET_BUYER",
-	"payment_info":[{"status":"approved","money_release_status":"released","base_amount_usd":25.19,
+	"payment_info":[{"payment_id":998877,"status":"approved","money_release_status":"released","base_amount_usd":25.19,
 	"payer_id":999,"tax_details":[{"mov_financial_entity":"iva","original_amount_usd":4.03,"refunded_amount_usd":0}]}],
 	"sale_fee":{"net":22},"details":[{"charge_info":{"detail_id":345,"detail_amount":0.53,
 	"detail_type":"CHARGE","detail_sub_type":"CVMPI","debited_from_operation":"YES","transaction_detail":"SECRET_BUYER address"},
-	"currency_info":{"currency_id":"USD"},"sales_info":[{"payer_nickname":"SECRET_BUYER"}]}]}]}`)
+	"currency_info":{"currency_id":"USD"},"shipping_info":{"pack_id":"222333"},"sales_info":[{"order_id":123456789,"operation_id":998877,"transaction_amount_usd":29.19,"payer_nickname":"SECRET_BUYER"},{"order_id":123456788,"operation_id":998878}]}]}]}`)
 	page, err := parseBillingPreview(raw, []string{"123456789", "123456788"})
 	if err != nil || len(page.Items) != 2 || !page.Items[0].Available ||
 		page.Items[0].Payments[0].TaxableBaseUSD != "25.19" ||
-		page.Items[0].Charges[0].Amount != "0.53" ||
+		page.Items[0].Charges[0].Amount != "0.53" || page.Items[0].Payments[0].PaymentID != "998877" ||
+		page.Items[0].Charges[0].PackID != "222333" || len(page.Items[0].Charges[0].SalesRefs) != 2 ||
+		page.Items[0].Charges[0].SalesRefs[0] != (BillingSaleRef{OrderID: "123456789", OperationID: "998877", TransactionUSD: "29.19"}) ||
+		page.Items[0].Charges[0].SalesRefs[1].OrderID != "123456788" ||
 		page.Items[1].Available || page.NetIncomeUSD != nil {
 		t.Fatalf("unexpected sanitized billing page %+v %v", page, err)
 	}
@@ -635,6 +638,44 @@ func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
 		if err != nil || saved.CheckedAt == nil {
 			t.Fatalf("restart fixture not saved: %+v %v", saved, err)
 		}
+		// Keep the restart harness small: verify the new finance columns on the
+		// same private order and rerun all idempotent migrations before restart.
+		if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET pack_id='20001' WHERE store_id=$1::uuid AND order_id='10001'`, store); err != nil {
+			t.Fatal(err)
+		}
+		e := qualifiedBillingEstimateFixture()
+		e.OrderID, e.PackID, e.ShipmentID = "10001", "20001", "80001"
+		e.PackOrders, e.Billing.OrderID = []string{e.OrderID}, e.OrderID
+		for i := range e.Billing.Charges {
+			e.Billing.Charges[i].PackID = e.PackID
+			e.Billing.Charges[i].SalesRefs[0].OrderID = e.OrderID
+			if e.Billing.Charges[i].Subtype == "CCSI" {
+				e.Billing.Charges[i].ShipmentID = e.ShipmentID
+			}
+		}
+		net, ok := billingEstimatedNet(e, http.StatusUnauthorized, 1)
+		if !ok {
+			t.Fatal("restart estimate fixture rejected")
+		}
+		stored, err := newStoredBillingEstimate(*net, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := json.Marshal(stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `UPDATE app.meli_orders o SET
+			expected_profit_billing_estimate=$2::jsonb || jsonb_build_object('evidence',`+expectedProfitEvidence+`),
+			expected_profit_billing_attempt='{"state":"done","billing_attempts":1,"relation_attempts":1}'::jsonb,
+			expected_profit_extra_cny=2.50
+			FROM app.meli_store_connections c
+			WHERE o.store_id=c.id AND o.store_id=$1::uuid AND o.order_id='10001'`, store, string(proof)); err != nil {
+			t.Fatal(err)
+		}
+		if err := migrations.Apply(ctx, db); err != nil {
+			t.Fatal(err)
+		}
 		t.Logf("billing snapshot persisted before restart: checked_at=%s", saved.CheckedAt.Format(time.RFC3339Nano))
 		return
 	}
@@ -649,6 +690,32 @@ func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
 		cached.Items[0].Shipping == nil || cached.Items[0].Shipping.SellerNetCostUSD != "3.38" {
 		t.Fatalf("snapshot missing after restart: %+v %v", cached, err)
 	}
+	if err := migrations.Apply(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var attemptOK, extraOK, rlsOK bool
+	if err := db.QueryRow(ctx, `SELECT expected_profit_billing_attempt='{"state":"done","billing_attempts":1,"relation_attempts":1}'::jsonb,
+		expected_profit_extra_cny=2.50,
+		(SELECT relrowsecurity FROM pg_class WHERE oid='app.meli_orders'::regclass)
+		FROM app.meli_orders WHERE store_id=$1::uuid AND order_id='10001'`, store).Scan(&attemptOK, &extraOK, &rlsOK); err != nil || !attemptOK || !extraOK || !rlsOK {
+		t.Fatalf("billing estimate state/cost/RLS lost: %v", err)
+	}
+	out, err := service.GetExpectedOrderProfit(ctx, owner, store, OrderScope{Site: "MLB", Logistic: "remote"}, "10001")
+	if err != nil || out.NetUSD == nil || *out.NetUSD != "4.50" || out.NetSource != ExpectedNetBillingEstimate ||
+		out.NetRisk != BillingEstimateShipmentUnknown || out.ExtraCNY == nil || *out.ExtraCNY != "2.5" || out.HasConfirmation {
+		t.Fatalf("estimated net/cost lost after restart: %+v %v", out, err)
+	}
+	for _, invalid := range []string{
+		"expected_profit_billing_estimate='[]'::jsonb",
+		"expected_profit_billing_attempt='[]'::jsonb",
+		"expected_profit_extra_cny=-1",
+		"expected_profit_extra_cny=1.001",
+	} {
+		if _, err := db.Exec(ctx, "UPDATE app.meli_orders SET "+invalid+" WHERE store_id=$1::uuid AND order_id='10001'", store); err == nil {
+			t.Fatalf("0025 accepted invalid value: %s", invalid)
+		}
+	}
+	t.Log("billing estimate, collection state and extra cost survived migration reruns and PostgreSQL restart; constraints and RLS checked")
 	if _, err := db.Exec(ctx, `DELETE FROM app.meli_store_connections WHERE id=$1::uuid`, store); err != nil {
 		t.Fatal(err)
 	}
@@ -656,4 +723,11 @@ func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("billing snapshot survived PostgreSQL restart: checked_at=%s", cached.Items[0].CheckedAt.Format(time.RFC3339Nano))
+}
+
+// Shipment cost is scoped to a seller within the Shipment. Its net cost is
+// already reported by the platform. Billing's original debit is a separate fact.
+func parseBillingShipping(raw []byte, child string) (buyer, sellerNet string) {
+	buyer, sellerNet, _ = parseBillingShippingEvidence(raw, child)
+	return buyer, sellerNet
 }
