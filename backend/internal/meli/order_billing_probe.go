@@ -4,24 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 // BillingProbeReport is an operator-only, redacted diagnostic. It is not a
 // confirmed expected-net source, and a local singleton pack is not proof of
 // the official pack or shipment membership.
 type BillingProbeReport struct {
-	Site               string                `json:"site"`
-	Logistic           string                `json:"logistic"`
-	OrderStatus        string                `json:"order_status"`
-	MerchandiseUSD     string                `json:"merchandise_usd,omitempty"`
-	Available          bool                  `json:"billing_available"`
-	Payments           []billingProbePayment `json:"payments"`
-	Charges            []billingProbeCharge  `json:"charges"`
-	Taxes              []BillingTax          `json:"taxes"`
-	Shipping           *billingProbeShipping `json:"shipping,omitempty"`
-	OfficialMembership string                `json:"official_membership"`
-	PackMembership     billingProbeMembers   `json:"pack_membership"`
-	ShipmentMembership billingProbeMembers   `json:"shipment_membership"`
+	Site               string                  `json:"site"`
+	Logistic           string                  `json:"logistic"`
+	OrderStatus        string                  `json:"order_status"`
+	MerchandiseUSD     string                  `json:"merchandise_usd,omitempty"`
+	Available          bool                    `json:"billing_available"`
+	Payments           []billingProbePayment   `json:"payments"`
+	Charges            []billingProbeCharge    `json:"charges"`
+	Taxes              []BillingTax            `json:"taxes"`
+	Shipping           *billingProbeShipping   `json:"shipping,omitempty"`
+	OfficialMembership string                  `json:"official_membership"`
+	PackMembership     billingProbeMembers     `json:"pack_membership"`
+	ShipmentMembership billingProbeMembers     `json:"shipment_membership"`
+	BillingEstimate    *BillingEstimatedUSDNet `json:"billing_estimate,omitempty"`
 }
 
 type billingProbeMembers struct {
@@ -106,10 +108,15 @@ func (s *Service) ProbeBillingByPack(ctx context.Context, owner, store string, s
 	if !validUUID(owner) || !validUUID(store) || !orderScopeValid(scope) || !billingIDsValid([]string{packID}) {
 		return BillingProbeReport{}, ErrOrderBillingInvalid
 	}
-	type scopedOrder struct{ id, status, shipment, child, items string }
+	type scopedOrder struct {
+		id, status, shipment, child, items string
+		localShipmentOrders               int
+	}
 	lookup := func() (scopedOrder, error) {
 		rows, err := s.db.Query(ctx, `WITH connection AS (`+orderConnection+`)
-SELECT o.order_id, o.status, COALESCE(o.shipment_id,''), o.seller_id, o.order_items::text
+SELECT o.order_id, o.status, COALESCE(o.shipment_id,''), o.seller_id, o.order_items::text,
+ (SELECT count(*) FROM app.meli_orders other WHERE other.store_id=o.store_id
+ AND other.shipment_id=o.shipment_id)
 FROM app.meli_orders o
 JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
 WHERE c.status='connected' AND o.site_id=$3 AND o.logistic_type=$4 AND o.pack_id=$5
@@ -122,7 +129,7 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 		count := 0
 		for rows.Next() {
 			count++
-			if err := rows.Scan(&order.id, &order.status, &order.shipment, &order.child, &order.items); err != nil {
+			if err := rows.Scan(&order.id, &order.status, &order.shipment, &order.child, &order.items, &order.localShipmentOrders); err != nil {
 				return scopedOrder{}, err
 			}
 		}
@@ -142,6 +149,7 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 	if err != nil {
 		return BillingProbeReport{}, err
 	}
+	observedAt := time.Now().UTC()
 	if len(page.Items) != 1 || page.Items[0].OrderID != order.id {
 		return BillingProbeReport{}, ErrOrderInvalidResponse
 	}
@@ -209,5 +217,18 @@ LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 		return BillingProbeReport{}, ErrOrderInvalidResponse
 	}
 	report.MerchandiseUSD = orderSalesAmountUSD(lines)
+	if report.PackMembership.Matches {
+		var shipmentOrders []string
+		if report.ShipmentMembership.HTTPStatus == http.StatusOK && report.ShipmentMembership.Matches {
+			shipmentOrders = []string{order.id}
+		}
+		item := page.Items[0]
+		item.CheckedAt = &observedAt
+		report.BillingEstimate, _ = billingEstimatedNet(billingExpectedNetEvidence{
+			Scope: scope, OrderID: order.id, PackID: packID, ShipmentID: order.shipment,
+			Status: order.status, Lines: lines, PackOrders: []string{order.id}, ShipmentOrders: shipmentOrders,
+			Billing: item,
+		}, report.ShipmentMembership.HTTPStatus, order.localShipmentOrders)
+	}
 	return report, nil
 }
