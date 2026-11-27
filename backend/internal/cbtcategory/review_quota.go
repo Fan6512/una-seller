@@ -36,6 +36,11 @@ func ReconcileLLMUsage(dir string, observed int) (LLMReviewUsage, error) {
 	if strings.TrimSpace(dir) == "" || observed < 0 {
 		return LLMReviewUsage{}, errors.New("invalid LLM usage reconciliation")
 	}
+	runLock, err := LockFile(filepath.Join(dir, "llm-review-run.lock"))
+	if err != nil {
+		return LLMReviewUsage{}, err
+	}
+	defer runLock.Close()
 	lock, err := LockFile(filepath.Join(dir, llmUsageFile+".lock"))
 	if err != nil {
 		return LLMReviewUsage{}, err

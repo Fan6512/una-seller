@@ -164,6 +164,13 @@ func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 		return LLMTrialResult{}, err
 	}
 	defer lock.Close()
+	pending, err := buildPending(dir)
+	if err != nil {
+		return out, err
+	}
+	if pending {
+		return out, errors.New("unresolved LLM build pending attempt; reconcile before trial")
+	}
 	plan, err := PlanReview(dir, scope, seed, sample, full, true, exclusions...)
 	if err != nil {
 		return LLMTrialResult{}, err
