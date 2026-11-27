@@ -22,15 +22,25 @@ const expectedProfitEvidence = `encode(sha256(convert_to(jsonb_build_array(
 	o.billing_snapshot->'shipment_id',(o.billing_snapshot->'preview')-'checked_at'
 	)::text,'UTF8')),'hex')`
 const expectedProfitRevision = `encode(sha256(convert_to(jsonb_build_array(
-	` + expectedProfitEvidence + `,o.expected_profit_confirmation)::text,'UTF8')),'hex')`
+	` + expectedProfitEvidence + `,o.expected_profit_confirmation,o.expected_profit_billing_estimate,o.expected_profit_extra_cny)::text,'UTF8')),'hex')`
 const expectedProfitEligible = `COALESCE(o.status='paid'
 	AND o.billing_snapshot->>'shipment_id'=COALESCE(o.shipment_id,'')
 	AND o.billing_snapshot->'preview'->>'order_id'=o.order_id
 	AND o.billing_snapshot->'preview'->>'available'='true'
 	AND o.billing_snapshot->'preview'->>'checked_at' IS NOT NULL,false)`
-const expectedProfitFields = `o.date_created,` + expectedProfitEligible + `,` +
+// A known shared local Pack or shipment always blocks the estimate. A local
+// singleton is a veto check only, not affirmative official membership proof.
+const expectedProfitEstimateEligible = `COALESCE(o.status='paid' AND o.site_id IN ('MLB','MLM')
+	AND o.logistic_type='remote' AND COALESCE(o.pack_id,'')<>'' AND COALESCE(o.shipment_id,'')<>''
+	AND (SELECT count(DISTINCT m.value->>'user_id') FROM jsonb_array_elements(c.marketplaces) m(value)
+		WHERE m.value->>'site_id'=o.site_id AND m.value->>'logistic_type'=o.logistic_type)=1
+	AND (SELECT count(*) FROM app.meli_orders other WHERE other.store_id=o.store_id
+		AND other.pack_id=o.pack_id)=1
+	AND (SELECT count(*) FROM app.meli_orders other WHERE other.store_id=o.store_id
+		AND other.shipment_id=o.shipment_id)=1,false)`
+const expectedProfitFields = `o.date_created,` + expectedProfitEligible + `,` + expectedProfitEstimateEligible + `,` +
 	expectedProfitEvidence + `,` + expectedProfitRevision + `,
-	o.expected_profit_confirmation,trim_scale(p.cost_cny)::text,
+	o.expected_profit_confirmation,o.expected_profit_billing_estimate,trim_scale(o.expected_profit_extra_cny)::text,trim_scale(p.cost_cny)::text,
 	f.locked_rate::text,f.source,f.observation_day::text`
 const expectedProfitJoins = `LEFT JOIN app.meli_order_purchases p ON
 	(p.store_id,p.site_id,p.logistic_type,p.seller_id,p.order_id)=
@@ -38,14 +48,15 @@ const expectedProfitJoins = `LEFT JOIN app.meli_order_purchases p ON
 	LEFT JOIN app.daily_usd_cny_rates f ON f.accounting_day=(o.date_created AT TIME ZONE 'Asia/Shanghai')::date`
 
 // Require exactly one current child identity for single-order operations.
-const expectedProfitScope = `c.id=$1::uuid AND c.owner_user_id=$2::uuid
+const expectedProfitOwnerScope = `c.id=$1::uuid AND c.owner_user_id=$2::uuid
 	AND c.status='connected' AND c.marketplaces_status='verified'
 	AND (SELECT count(DISTINCT m.value->>'user_id') FROM jsonb_array_elements(c.marketplaces) m(value)
 		WHERE m.value->>'site_id'=$3 AND m.value->>'logistic_type'=$4)=1
 	AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.marketplaces) m(value)
 		WHERE m.value->>'site_id'=o.site_id AND m.value->>'logistic_type'=o.logistic_type
 		AND m.value->>'user_id'=o.seller_id)
-	AND o.site_id=$3 AND o.logistic_type=$4 AND o.order_id=$5`
+	AND o.site_id=$3 AND o.logistic_type=$4`
+const expectedProfitScope = expectedProfitOwnerScope + ` AND o.order_id=$5`
 
 type expectedProfitConfirmation struct {
 	NetUSD     string    `json:"net_usd"`
@@ -55,11 +66,19 @@ type expectedProfitConfirmation struct {
 	Evidence   string    `json:"evidence"`
 }
 
+type storedBillingEstimate struct {
+	BillingEstimatedUSDNet
+	Evidence string `json:"evidence"`
+}
+
 type OrderExpectedProfit struct {
 	Day             string                  `json:"day"`
 	Revision        string                  `json:"revision"`
 	CanConfirm      bool                    `json:"can_confirm"`
 	HasConfirmation bool                    `json:"has_confirmation"`
+	CanSetExtraCost bool                    `json:"can_set_extra_cost"`
+	NetSource       string                  `json:"net_source,omitempty"`
+	NetRisk         string                  `json:"net_risk,omitempty"`
 	Reason          string                  `json:"reason"`
 	NetUSD          *string                 `json:"net_usd"`
 	ExtraCNY        *string                 `json:"extra_cny"`
@@ -69,23 +88,26 @@ type OrderExpectedProfit struct {
 }
 
 type expectedProfitInput struct {
-	created                time.Time
-	eligible               bool
-	evidence, revision     string
-	confirmation           []byte
-	purchase, rate, source sql.NullString
-	observation            sql.NullString
+	created                       time.Time
+	eligible, estimateEligible    bool
+	evidence, revision            string
+	confirmation, estimate        []byte
+	extra, purchase, rate, source sql.NullString
+	observation                   sql.NullString
 }
 
 func (i *expectedProfitInput) scanArgs() []any {
-	return []any{&i.created, &i.eligible, &i.evidence, &i.revision, &i.confirmation,
-		&i.purchase, &i.rate, &i.source, &i.observation}
+	return []any{&i.created, &i.eligible, &i.estimateEligible, &i.evidence, &i.revision, &i.confirmation,
+		&i.estimate, &i.extra, &i.purchase, &i.rate, &i.source, &i.observation}
 }
 
 func (i expectedProfitInput) result() OrderExpectedProfit {
 	day, _, _ := salesDay(i.created)
 	out := OrderExpectedProfit{Day: day, Revision: i.revision, CanConfirm: i.eligible,
-		HasConfirmation: len(i.confirmation) > 0, Reason: "net_unconfirmed"}
+		HasConfirmation: len(i.confirmation) > 0, CanSetExtraCost: i.eligible || i.estimateEligible, Reason: "net_unconfirmed"}
+	if i.extra.Valid && purchaseCostPattern.MatchString(i.extra.String) {
+		out.ExtraCNY = &i.extra.String
+	}
 	if i.purchase.Valid && purchaseCostPattern.MatchString(i.purchase.String) {
 		out.PurchaseCNY = &i.purchase.String
 	}
@@ -95,21 +117,37 @@ func (i expectedProfitInput) result() OrderExpectedProfit {
 			out.FX = &ProfitFXRate{CNYPerUSD: i.rate.String, Source: i.source.String, AsOf: observed}
 		}
 	}
-	if !i.eligible {
+	if !i.eligible && !i.estimateEligible {
 		out.Reason = "order_or_billing_unavailable"
 		return out
 	}
 	var c expectedProfitConfirmation
-	if len(i.confirmation) == 0 {
+	var e storedBillingEstimate
+	if i.eligible && len(i.confirmation) > 0 {
+		if json.Unmarshal(i.confirmation, &c) == nil && c.Evidence == i.evidence &&
+			c.Source == ExpectedNetSellerCenter && !c.ObservedAt.IsZero() &&
+			moneyUSDPattern.MatchString(c.NetUSD) && purchaseCostPattern.MatchString(c.ExtraCNY) {
+			out.NetUSD, out.NetSource = &c.NetUSD, c.Source
+			if out.ExtraCNY == nil {
+				out.ExtraCNY = &c.ExtraCNY
+			}
+		} else {
+			out.Reason = "confirmation_stale"
+		}
+	}
+	if out.NetUSD == nil && i.estimateEligible && len(i.estimate) > 0 {
+		if json.Unmarshal(i.estimate, &e) == nil && e.Evidence == i.evidence &&
+			e.Source == ExpectedNetBillingEstimate && !e.ObservedAt.IsZero() &&
+			(e.Risk == "" || e.Risk == BillingEstimateShipmentUnknown) &&
+			moneyUSDPattern.MatchString(e.Amount) {
+			out.NetUSD, out.NetSource, out.NetRisk = &e.Amount, e.Source, e.Risk
+		} else if out.Reason != "confirmation_stale" {
+			out.Reason = "estimate_stale"
+		}
+	}
+	if out.NetUSD == nil {
 		return out
 	}
-	if json.Unmarshal(i.confirmation, &c) != nil || c.Evidence != i.evidence ||
-		c.Source != ExpectedNetSellerCenter || c.ObservedAt.IsZero() ||
-		!moneyUSDPattern.MatchString(c.NetUSD) || !purchaseCostPattern.MatchString(c.ExtraCNY) {
-		out.Reason = "confirmation_stale"
-		return out
-	}
-	out.NetUSD, out.ExtraCNY = &c.NetUSD, &c.ExtraCNY
 	if out.PurchaseCNY == nil {
 		out.Reason = "purchase_missing"
 		return out
@@ -118,13 +156,26 @@ func (i expectedProfitInput) result() OrderExpectedProfit {
 		out.Reason = "fx_missing"
 		return out
 	}
-	value, err := EstimateProfitFromExpectedNet(ConfirmedExpectedUSDNet{Amount: c.NetUSD, Source: c.Source, ObservedAt: c.ObservedAt},
-		*out.FX, *out.PurchaseCNY, c.ExtraCNY)
+	if out.ExtraCNY == nil {
+		out.Reason = "extra_missing"
+		return out
+	}
+	var value ExpectedOrderProfitUSD
+	var err error
+	if out.NetSource == ExpectedNetBillingEstimate {
+		value, err = EstimateProfitFromBillingNet(e.BillingEstimatedUSDNet, *out.FX, *out.PurchaseCNY, *out.ExtraCNY)
+	} else {
+		value, err = EstimateProfitFromExpectedNet(ConfirmedExpectedUSDNet{Amount: c.NetUSD, Source: c.Source, ObservedAt: c.ObservedAt},
+			*out.FX, *out.PurchaseCNY, *out.ExtraCNY)
+	}
 	if err != nil {
 		out.Reason = "inputs_invalid"
 		return out
 	}
 	out.Profit, out.Reason = &value, "ready"
+	if out.NetSource == ExpectedNetBillingEstimate {
+		out.Reason = "ready_estimate"
+	}
 	return out
 }
 
@@ -167,10 +218,36 @@ func (s *Service) ConfirmExpectedOrderProfit(ctx context.Context, owner, store s
 	)
 	UPDATE app.meli_orders o SET expected_profit_confirmation=CASE WHEN $9::boolean THEN NULL ELSE
 		jsonb_build_object('net_usd',$7::text,'extra_cny',$8::text,'source',$10::text,
-		'observed_at',to_jsonb(clock_timestamp()),'evidence',`+expectedProfitEvidence+`) END
+		'observed_at',to_jsonb(clock_timestamp()),'evidence',`+expectedProfitEvidence+`) END,
+		expected_profit_extra_cny=CASE WHEN $9::boolean THEN o.expected_profit_extra_cny ELSE NULLIF($8,'')::numeric END
 	FROM authorized c WHERE o.store_id=c.id AND `+expectedProfitScope+`
 	AND `+expectedProfitRevision+`=$6 AND ($9::boolean OR `+expectedProfitEligible+`)
 	RETURNING o.order_id`, store, owner, scope.Site, scope.Logistic, orderID, revision, netUSD, extraCNY, clear, ExpectedNetSellerCenter).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrderExpectedProfit{}, ErrOrderAuthorizationChanged
+	}
+	if err != nil {
+		return OrderExpectedProfit{}, err
+	}
+	return s.GetExpectedOrderProfit(ctx, owner, store, scope, orderID)
+}
+
+// SetExpectedProfitExtraCost records an explicit order cost without asserting
+// a platform net. It uses the same owner scope and CAS as confirmation.
+func (s *Service) SetExpectedProfitExtraCost(ctx context.Context, owner, store string, scope OrderScope, orderID, revision, extraCNY string) (OrderExpectedProfit, error) {
+	if !validExpectedProfitScope(owner, store, scope, orderID) || !profitRevisionPattern.MatchString(revision) ||
+		!purchaseCostPattern.MatchString(extraCNY) {
+		return OrderExpectedProfit{}, ErrOrderBillingInvalid
+	}
+	var id string
+	err := s.db.QueryRow(ctx, `WITH authorized AS (
+		SELECT c.* FROM app.meli_store_connections c
+		WHERE c.id=$1::uuid AND c.owner_user_id=$2::uuid FOR SHARE
+	)
+	UPDATE app.meli_orders o SET expected_profit_extra_cny=$7::numeric
+	FROM authorized c WHERE o.store_id=c.id AND `+expectedProfitScope+`
+	AND `+expectedProfitRevision+`=$6 AND (`+expectedProfitEligible+` OR `+expectedProfitEstimateEligible+`)
+	RETURNING o.order_id`, store, owner, scope.Site, scope.Logistic, orderID, revision, extraCNY).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrderExpectedProfit{}, ErrOrderAuthorizationChanged
 	}
