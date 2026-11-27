@@ -72,7 +72,10 @@ func configuredTranslator() *httpapi.TranslationService {
 }
 
 func updateCBTCategories(args []string, dir string, translator *httpapi.TranslationService) error {
-	const usage = "usage: api cbt-categories update [-max-batches N] [-plan [-plan-batch-size N]]"
+	if len(args) > 0 && args[0] == "review" {
+		return reviewCBTCategories(args[1:], dir)
+	}
+	const usage = "usage: api cbt-categories update [-max-batches N] [-plan [-plan-batch-size N]] or review"
 	if len(args) == 0 || args[0] != "update" {
 		return errors.New(usage)
 	}
@@ -110,4 +113,40 @@ func updateCBTCategories(args []string, dir string, translator *httpapi.Translat
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func reviewCBTCategories(args []string, dir string) error {
+	command := flag.NewFlagSet("cbt-categories review", flag.ContinueOnError)
+	scope := command.String("scope", "all", "all, translated, or missing")
+	seed := command.String("seed", "tr02d-v1", "deterministic sample seed")
+	sample := command.Int("sample", 0, "sample size; zero selects all")
+	full := command.Bool("full-path", false, "use complete official path instead of immediate parent")
+	export := command.Bool("export", false, "include source and current leaf translations in JSON")
+	input := command.String("import", "", "import validated candidate JSON into separate review file")
+	reconcile := command.Int("reconcile-usage", -1, "explicit console usage; initializes or raises cumulative counter")
+	if err := command.Parse(args); err != nil {
+		return err
+	}
+	if command.NArg() != 0 || *reconcile < -1 || (*input != "" && *reconcile >= 0) {
+		return errors.New("invalid review arguments")
+	}
+	if *reconcile >= 0 {
+		state, err := cbtcategory.ReconcileLLMUsage(dir, *reconcile)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(state)
+	}
+	if *input != "" {
+		count, err := cbtcategory.ImportReview(dir, *input)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]int{"candidates": count})
+	}
+	plan, err := cbtcategory.PlanReview(dir, *scope, *seed, *sample, *full, *export)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(plan)
 }
