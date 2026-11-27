@@ -31,11 +31,12 @@ func (a storeAPI) orderExpectedProfit(w http.ResponseWriter, r *http.Request, st
 		out, err = a.service.GetExpectedOrderProfit(r.Context(), owner, store, scope, orderID)
 	} else {
 		var input struct {
-			Revision  string `json:"revision"`
-			NetUSD    string `json:"net_usd"`
-			ExtraCNY  string `json:"extra_cny"`
-			Clear     bool   `json:"clear"`
-			Confirmed bool   `json:"confirmed"`
+			Revision      string `json:"revision"`
+			NetUSD        string `json:"net_usd"`
+			ExtraCNY      string `json:"extra_cny"`
+			Clear         bool   `json:"clear"`
+			Confirmed     bool   `json:"confirmed"`
+			ExtraCostOnly bool   `json:"extra_cost_only"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
 		decoder.DisallowUnknownFields()
@@ -43,7 +44,15 @@ func (a storeAPI) orderExpectedProfit(w http.ResponseWriter, r *http.Request, st
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_billing_invalid"})
 			return
 		}
-		out, err = a.service.ConfirmExpectedOrderProfit(r.Context(), owner, store, scope, orderID, input.Revision, input.NetUSD, input.ExtraCNY, input.Clear)
+		if input.ExtraCostOnly {
+			if input.Clear || input.NetUSD != "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_billing_invalid"})
+				return
+			}
+			out, err = a.service.SetExpectedProfitExtraCost(r.Context(), owner, store, scope, orderID, input.Revision, input.ExtraCNY)
+		} else {
+			out, err = a.service.ConfirmExpectedOrderProfit(r.Context(), owner, store, scope, orderID, input.Revision, input.NetUSD, input.ExtraCNY, input.Clear)
+		}
 	}
 	if err != nil {
 		writeOrderBillingError(w, err)
