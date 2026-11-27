@@ -6,7 +6,7 @@ import (
 )
 
 // billingExpectedNetEvidence describes the inputs of a narrow, diagnostic
-// MLB remote rule. PackOrders and ShipmentOrders must be complete lists from
+// MLB/MLM remote rule. PackOrders and ShipmentOrders must be complete lists from
 // the authorized official relationship reads, never inferred from local counts.
 type billingExpectedNetEvidence struct {
 	Scope          OrderScope
@@ -29,7 +29,7 @@ func billingExpectedNetCandidate(e billingExpectedNetEvidence) (string, bool) {
 	oneOrder := func(ids []string) bool {
 		return len(ids) == 1 && ids[0] == e.OrderID
 	}
-	if e.Scope.Site != "MLB" || e.Scope.Logistic != "remote" ||
+	if (e.Scope.Site != "MLB" && e.Scope.Site != "MLM") || e.Scope.Logistic != "remote" ||
 		e.Status != "paid" || !billingIDsValid([]string{e.OrderID}) ||
 		!billingIDsValid([]string{e.PackID}) || !orderSLAShipmentID.MatchString(e.ShipmentID) ||
 		!oneOrder(e.PackOrders) || !oneOrder(e.ShipmentOrders) ||
@@ -95,7 +95,11 @@ func billingExpectedNetCandidate(e billingExpectedNetEvidence) (string, bool) {
 				return "", false
 			}
 			shippingCount++
-		case "CVMPI", "CVMPCB", "CVMLCB":
+		case "CVMPI", "CVMPCB", "CVMLCB", "CV":
+			if (e.Scope.Site == "MLB" && charge.Subtype == "CV") ||
+				(e.Scope.Site == "MLM" && (charge.Subtype == "CVMPCB" || charge.Subtype == "CVMLCB" || charge.DebitedFromOperation != "YES")) {
+				return "", false
+			}
 			// Require explicit order attribution. NO is not zero; the observed
 			// Seller Center commission includes both YES and NO charges.
 			if len(charge.SalesRefs) == 0 {

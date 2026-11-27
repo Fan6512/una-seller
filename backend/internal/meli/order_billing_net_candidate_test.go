@@ -42,7 +42,7 @@ func TestBillingExpectedNetCandidate(t *testing.T) {
 		name   string
 		mutate func(*billingExpectedNetEvidence)
 	}{
-		{"unsupported site", func(e *billingExpectedNetEvidence) { e.Scope.Site = "MLM" }},
+		{"unsupported site", func(e *billingExpectedNetEvidence) { e.Scope.Site = "MLC" }},
 		{"unknown official pack", func(e *billingExpectedNetEvidence) { e.PackOrders = nil }},
 		{"shared shipment", func(e *billingExpectedNetEvidence) { e.ShipmentOrders = append(e.ShipmentOrders, "2000000000000003") }},
 		{"refund", func(e *billingExpectedNetEvidence) { e.Status = "partially_refunded" }},
@@ -65,5 +65,37 @@ func TestBillingExpectedNetCandidate(t *testing.T) {
 				t.Fatalf("unexpected candidate %q, %v", got, ok)
 			}
 		})
+	}
+}
+
+func TestBillingExpectedNetCandidateMLM(t *testing.T) {
+	// Observed amounts and fee codes; all identities and complete membership
+	// are synthetic. The real shipment membership returned 401, so it is unknown.
+	e := billingCandidateFixture()
+	e.Scope.Site = "MLM"
+	e.Lines = []OrderLine{{Quantity: 2, UnitPrice: "11.89", CurrencyID: "USD"}}
+	e.Billing.Payments[0].MoneyReleaseStatus = "pending"
+	e.Billing.Shipping = &BillingShipping{BuyerCostUSD: "0", SellerChargeUSD: "5.54", SellerNetCostUSD: "5.54", SellerChargeDetailID: "104"}
+	e.Billing.Charges = []BillingCharge{
+		{DetailID: "101", Type: "CHARGE", Subtype: "CVMPI", Amount: "0.42", Currency: "USD", DebitedFromOperation: "YES", SalesRefs: []BillingSaleRef{{OrderID: e.OrderID}}},
+		{DetailID: "102", Type: "CHARGE", Subtype: "CV", Amount: "4.34", Currency: "USD", DebitedFromOperation: "YES", SalesRefs: []BillingSaleRef{{OrderID: e.OrderID}}},
+		{DetailID: "104", Type: "CHARGE", Subtype: "CCSI", Amount: "5.54", Currency: "USD", DebitedFromOperation: "YES", ShipmentID: e.ShipmentID},
+	}
+	if got, ok := billingExpectedNetCandidate(e); !ok || got != "13.48" {
+		t.Fatalf("MLM candidate = %q, %v", got, ok)
+	}
+	e.ShipmentOrders = nil
+	if got, ok := billingExpectedNetCandidate(e); ok || got != "" {
+		t.Fatal("unknown official shipment membership produced a candidate")
+	}
+	e.ShipmentOrders = []string{e.OrderID}
+	e.Billing.Charges[1].DebitedFromOperation = "NO"
+	if _, ok := billingExpectedNetCandidate(e); ok {
+		t.Fatal("unobserved MLM fee mode accepted")
+	}
+	e.Billing.Charges[1].DebitedFromOperation = "YES"
+	e.Scope.Site = "MLB"
+	if _, ok := billingExpectedNetCandidate(e); ok {
+		t.Fatal("MLM fee code accepted as MLB")
 	}
 }

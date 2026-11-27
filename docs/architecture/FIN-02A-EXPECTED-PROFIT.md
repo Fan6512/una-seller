@@ -128,3 +128,34 @@
 - 本轮 main 新增的四次提交仅修改功能台账；Draft 自身的台账修改撤回至共同祖先，以便合并时保留 main 原有全部记录及后续变更。最新专项进度在本文件和 PR 正文记录；合流后再按正常台账维护流程更新 main。
 - CI 45941646276：Desktop 与 Changed Files PASS，Go 在 candidate test gofmt 门禁失败，已修正对应字段对齐。新探针与脱敏测试以及当前 HEAD 完整 CI 待实际运行确认，不将旧 CI 或静态阅读当成通过。
 - 后续顺序：先用探针取得 MLM/MLB 新 Billing 脱敏证据，再通过已授权官方关系接口核验完整性和直接净额来源；不能确定时继续人工兜底，暂不启用自动 collector.meli.billing 或将候选写入预计利润接口。不修改生产，不部署。
+
+## 2026-11-27 指定两笔 Pack 的真实探针与隔离验证
+
+本轮从负责人指定的 `2f11d9ea98258faff240d5f73ecc09e5a00c3c40` 继续，仅使用既有 #118 分支。CI 45941875124 在 Go formatting 门禁失败，未执行 Go 测试；Desktop / Changed Files 通过。用主机上的 Go 1.26 标准 gofmt 修正候选测试后，提交 `b86386805855cdc710f948637d119ba3d4e4f328` 的 [CI 45942567609](https://github.com/Fan6512/una-seller/actions/runs/45942567609) 全部通过。本次后续修改仍需以对应新 HEAD 的 CI 为准。
+
+执行前确认 SSH 主机 `152.136.41.105`、hostname `VM-0-13-ubuntu`、登录用户 `ubuntu`，现行服务为 `una-seller-api`，ExecStart 为 `/opt/una-seller/una-seller-api`、PID 1280054。在 `/tmp/una-fin118-20261127/backend/temporary-api` 使用该主机既有 golang:1.26 容器构建临时二进制，未替换生产程序。配置只在主机内读取，不输出凭据；复用现有 OAuth，允许正常续期。只读查询确认两笔 Pack 各对应一个当前 connected、marketplaces verified、子卖家匹配的 owner/store/site/remote 订单。真实身份和 Pack 参数仅留主机受限目录，不提交仓库。
+
+两笔分别执行 `UNA_SELLER_BILLING_PROBE_ENABLED=1 temporary-api billing-probe OWNER_UUID STORE_UUID SITE remote PACK_ID`。现有授权 Billing / shipment costs 均读取成功，结果如下：
+
+| 样本 | 明确 USD 商品行 | 官方佣金明细 USD | 官方 CCSI / 买家运费 / 净运费 USD | 对照页面净额 USD |
+| --- | ---: | --- | --- | ---: |
+| MLB C | 8.74 | CVMPCB 0.15 NO；CVMPI 0.16 YES；CVMLCB 0.78 NO | 10.78 / 7.63 / 3.15 | 4.50 |
+| MLM D | 2×11.89 = 23.78 | CVMPI 0.42 YES；CV 4.34 YES | 5.54 / 0 / 5.54 | 13.48 |
+
+每条费用均有唯一 detail ID、一条 sales_info，order_id 匹配当前订单、shipping_info.pack_id 匹配目标 Pack，存在 operation_id；没有观察到冲正或税项。MLB approved/released；MLM approved/pending。`8.74−1.09−3.15=4.50` 与 `23.78−4.76−5.54=13.48` 均吻合页面。前后两笔 billing_snapshot 的数据库摘要完全相同；尤其 MLM 仍没有账单缓存。未保存真实确认、未写入财务账单缓存。付款释放状态不证明实际到账，费用引用匹配也不单独证明所有应计费用已完整。
+
+### 官方关系和直接来源的边界
+
+- 复用同一 Service 授权，按照[官方 Pack 文档](https://global-selling.mercadolibre.com/devsite/manage-sales-global-selling/packs)请求 `/marketplace/orders/pack/{pack}`：两笔均 HTTP 200，Pack ID、shipment.id 均匹配，各只有一个目标 order_id。这是官方 Pack 单订单证据，取代此前的本地单行推测。
+- 按[官方 Shipment 关联文档](https://global-selling.mercadolibre.com/devsite/api-docs/manage-shipments)请求 `/shipments/{shipment}/orders`，使用既有传输层的 `X-New-Domain: true`：两笔均 HTTP 401。未尝试其它身份、替代私有接口或绕过授权。**官方 Shipment 成员完整性仍未知**，不能把 Pack 单订单推成 Shipment 单订单。
+- `/marketplace/orders/{order}` 两笔均 HTTP 200；临时只读诊断在响应结构中检查 `net_received_amount`、`net_amount`、`net_amount_usd`、`net_income_usd`，未出现这些字段。没有保存或输出原始响应、买家数据或订单标识。这只说明检查的字段/资源未找到直接来源，不证明所有公开 API 或正常 Seller Center 页面响应均无直接净额。未取得新的 Seller Center 网络响应或资金报告。
+- [Billing 官方使用边界](https://global-selling.mercadolibre.com/devsite/en_us/deals-gs/billing-reports-by-orders-and-packs)要求财务核对、按子卖家合批最多60单、避免重取已处理订单。不能为实时预计利润逐单轮询 Billing；本次是负责人明确指定的两笔一次性核验，后续代码验证使用合成服务，不重复下载真实账单。
+
+### 本次开发、验证及继续条件
+
+- 探针增加脱敏 Pack / Shipment HTTP 状态、成员行数和匹配标志；仅两者都成功且明确归属单订单时，关系字段才为 `single_order_verified`。401/403/404 保留未知，429/网络/解析错误返回失败，关系读取不自动重试。读取结束复核父授权、子卖家、Pack 映射、货件、状态和商品行。该关系标志不确认费用完整，更不是已确认净额。
+- 受限候选增加本次真实观察到的 MLM remote CVMPI + CV 代码及 YES 模式，不向 MLB 放开 CV；继续要求官方 Pack 和 Shipment 完整单订单证据。测试的标识及完整成员输入为合成，两笔真实 Shipment 401 均不能通过候选门禁。未调用确认入口，没有把候选写入利润查询或首页。
+- 隔离 PostgreSQL 17.11 位于本机回环端口55438、独立容器 `una-fin118-pg-20261127`；不使用生产数据库。专项测试覆盖两站点候选、未知/共享成员拒绝、探针脱敏、异主拒绝、200/401/429、无账单缓存写入、日汇率首次锁定、预计利润精确算术，以及已有确认权限/CAS/失效/首页汇总。
+- 在隔离库创建合成日汇率、订单、账单和确认哨兵，再完整执行两次迁移、重启 PostgreSQL 后读回：日汇率6.6及原始6.6899、账单和确认均保留；两张表 RLS 启用，FX 对 anon/authenticated/service_role 无数据权限；错误的四舍五入汇率和非对象确认均触发约束拒绝。未新增迁移、未在生产执行0023/0024。回退运行代码可保留新增表列，未演练删除真实财务数据。
+
+当前状态：**真实取证及受限候选推进；自动采集与自动预计利润来源接线尚未完成**。阻塞项是 Shipment 成员接口401，以及尚无已验证的直接净额/完整费用来源合同。现有人工确认和财务算术继续是唯一运行路径。独立 `collector.meli.billing` 的自动批处理、存储和利润来源身份仍须等证据门禁满足后再实现；本轮不新增空壳插件、调度器或未经证实的自动来源。下一步只需解决既有授权下官方 Shipment 关系的可读性，或取得正常已授权页面的明确订单级 USD 净额来源；之后在同一 Draft PR 接入独立已验证来源，并复用现有利润计算、日汇率和范围/CAS门禁。保持 Draft，不合并、不部署、不启用生产自动采集。

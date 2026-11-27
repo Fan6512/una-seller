@@ -3,6 +3,7 @@ package meli
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 )
 
 // BillingProbeReport is an operator-only, redacted diagnostic. It is not a
@@ -19,6 +20,14 @@ type BillingProbeReport struct {
 	Taxes              []BillingTax          `json:"taxes"`
 	Shipping           *billingProbeShipping `json:"shipping,omitempty"`
 	OfficialMembership string                `json:"official_membership"`
+	PackMembership     billingProbeMembers   `json:"pack_membership"`
+	ShipmentMembership billingProbeMembers   `json:"shipment_membership"`
+}
+
+type billingProbeMembers struct {
+	HTTPStatus int  `json:"http_status"`
+	Rows       int  `json:"rows"`
+	Matches    bool `json:"single_order_matches"`
 }
 
 type billingProbePayment struct {
@@ -97,52 +106,108 @@ func (s *Service) ProbeBillingByPack(ctx context.Context, owner, store string, s
 	if !validUUID(owner) || !validUUID(store) || !orderScopeValid(scope) || !billingIDsValid([]string{packID}) {
 		return BillingProbeReport{}, ErrOrderBillingInvalid
 	}
-	lookup := func() (string, string, []byte, error) {
+	type scopedOrder struct{ id, status, shipment, child, items string }
+	lookup := func() (scopedOrder, error) {
 		rows, err := s.db.Query(ctx, `WITH connection AS (`+orderConnection+`)
-SELECT o.order_id, o.status, o.order_items
+SELECT o.order_id, o.status, COALESCE(o.shipment_id,''), o.seller_id, o.order_items::text
 FROM app.meli_orders o
 JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
 WHERE c.status='connected' AND o.site_id=$3 AND o.logistic_type=$4 AND o.pack_id=$5
 LIMIT 2`, store, owner, scope.Site, scope.Logistic, packID)
 		if err != nil {
-			return "", "", nil, err
+			return scopedOrder{}, err
 		}
 		defer rows.Close()
-		var id, status string
-		var items []byte
+		var order scopedOrder
 		count := 0
 		for rows.Next() {
 			count++
-			if err := rows.Scan(&id, &status, &items); err != nil {
-				return "", "", nil, err
+			if err := rows.Scan(&order.id, &order.status, &order.shipment, &order.child, &order.items); err != nil {
+				return scopedOrder{}, err
 			}
 		}
 		if err := rows.Err(); err != nil {
-			return "", "", nil, err
+			return scopedOrder{}, err
 		}
-		if count != 1 || !billingIDsValid([]string{id}) {
-			return "", "", nil, ErrOrderNotFound
+		if count != 1 || !billingIDsValid([]string{order.id}) {
+			return scopedOrder{}, ErrOrderNotFound
 		}
-		return id, status, items, nil
+		return order, nil
 	}
-	id, status, raw, err := lookup()
+	order, err := lookup()
 	if err != nil {
 		return BillingProbeReport{}, err
 	}
-	page, err := s.readOrderBilling(ctx, owner, store, scope, []string{id}, false)
+	page, err := s.readOrderBilling(ctx, owner, store, scope, []string{order.id}, false)
 	if err != nil {
 		return BillingProbeReport{}, err
 	}
-	currentID, currentStatus, currentRaw, err := lookup()
+	if len(page.Items) != 1 || page.Items[0].OrderID != order.id {
+		return BillingProbeReport{}, ErrOrderInvalidResponse
+	}
+	report := redactBillingProbe(scope, order.id, packID, order.status, nil, page.Items[0])
+	if orderSLAShipmentID.MatchString(order.shipment) {
+		auth, child, err := s.RequireSiteConnection(ctx, owner, store, scope.Site, scope.Logistic)
+		if err != nil {
+			return BillingProbeReport{}, err
+		}
+		if child != order.child {
+			return BillingProbeReport{}, ErrOrderAuthorizationChanged
+		}
+		// Official documented relationship endpoints only. A non-200 stops
+		// relationship reads; 401/403 remains unknown, never a local fallback.
+		var pack struct {
+			ID       json.Number `json:"id"`
+			Shipment struct {
+				ID json.Number `json:"id"`
+			} `json:"shipment"`
+			Orders []struct {
+				ID json.Number `json:"id"`
+			} `json:"orders"`
+		}
+		code, err := s.orderGET(ctx, auth.AccessToken, "/marketplace/orders/pack/"+packID, &pack)
+		if err != nil && code != http.StatusUnauthorized && code != http.StatusForbidden && code != http.StatusNotFound {
+			return BillingProbeReport{}, err
+		}
+		report.PackMembership = billingProbeMembers{HTTPStatus: code, Rows: len(pack.Orders), Matches: code == http.StatusOK && pack.ID.String() == packID && pack.Shipment.ID.String() == order.shipment && len(pack.Orders) == 1 && pack.Orders[0].ID.String() == order.id}
+		if code == http.StatusOK {
+			var members []struct {
+				Order  json.Number `json:"order_id"`
+				Pack   json.Number `json:"pack_id"`
+				Seller json.Number `json:"seller_id"`
+			}
+			code, err = s.orderGET(ctx, auth.AccessToken, "/shipments/"+order.shipment+"/orders", &members)
+			if err != nil && code != http.StatusUnauthorized && code != http.StatusForbidden && code != http.StatusNotFound {
+				return BillingProbeReport{}, err
+			}
+			matches := code == http.StatusOK && len(members) > 0
+			for _, m := range members {
+				matches = matches && m.Order.String() == order.id && m.Pack.String() == packID && m.Seller.String() == child
+			}
+			report.ShipmentMembership = billingProbeMembers{HTTPStatus: code, Rows: len(members), Matches: matches}
+			if report.PackMembership.Matches && matches {
+				report.OfficialMembership = "single_order_verified"
+			}
+		}
+		current, currentChild, err := s.RequireSiteConnection(ctx, owner, store, scope.Site, scope.Logistic)
+		if err != nil {
+			return BillingProbeReport{}, err
+		}
+		if current.SellerID != auth.SellerID || currentChild != child {
+			return BillingProbeReport{}, ErrOrderAuthorizationChanged
+		}
+	}
+	currentOrder, err := lookup()
 	if err != nil {
 		return BillingProbeReport{}, err
 	}
-	if id != currentID || status != currentStatus || string(raw) != string(currentRaw) {
+	if order != currentOrder {
 		return BillingProbeReport{}, ErrOrderAuthorizationChanged
 	}
 	var lines []OrderLine
-	if json.Unmarshal(raw, &lines) != nil || len(page.Items) != 1 || page.Items[0].OrderID != id {
+	if json.Unmarshal([]byte(order.items), &lines) != nil {
 		return BillingProbeReport{}, ErrOrderInvalidResponse
 	}
-	return redactBillingProbe(scope, id, packID, status, lines, page.Items[0]), nil
+	report.MerchandiseUSD = orderSalesAmountUSD(lines)
+	return report, nil
 }
