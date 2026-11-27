@@ -19,6 +19,9 @@ func loadLLMUsage(dir string) (LLMReviewUsage, error) {
 		Chars *int `json:"chars"`
 	}
 	if err := readJSONFile(filepath.Join(dir, llmUsageFile), &value); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return LLMReviewUsage{}, errors.Join(err, errors.New("initialize LLM usage from the console with review -reconcile-usage N"))
+		}
 		return LLMReviewUsage{}, err
 	}
 	if value.Chars == nil || *value.Chars < 0 {

@@ -143,7 +143,7 @@ func reviewCBTCategories(args []string, dir string) error {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]int{"candidates": count})
+		return json.NewEncoder(os.Stdout).Encode(map[string]int{"total_candidates": count})
 	}
 	if *trial {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

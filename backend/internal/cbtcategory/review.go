@@ -30,16 +30,18 @@ type ReviewSet struct {
 }
 
 type ReviewPlan struct {
-	Version     version     `json:"version"`
-	Snapshot    string      `json:"snapshot_source"`
-	Scope       string      `json:"scope"`
-	FullPath    bool        `json:"full_path"`
-	Eligible    int         `json:"eligible"`
-	Manual      int         `json:"manual_excluded"`
-	Completed   int         `json:"candidate_completed"`
-	Selected    int         `json:"selected"`
-	SourceChars int         `json:"source_chars"`
-	Rows        []ReviewRow `json:"rows,omitempty"`
+	Version          version     `json:"version"`
+	Snapshot         string      `json:"snapshot_source"`
+	Scope            string      `json:"scope"`
+	FullPath         bool        `json:"full_path"`
+	Eligible         int         `json:"eligible"`
+	Manual           int         `json:"manual_excluded"`
+	Completed        int         `json:"candidate_completed"`
+	Selected         int         `json:"selected"`
+	SourceChars      int         `json:"source_chars"`
+	SkippedUnsafe    int         `json:"skipped_unsafe"`
+	GlossaryExcluded int         `json:"glossary_excluded"`
+	Rows             []ReviewRow `json:"rows,omitempty"`
 }
 
 // reviewSnapshot never downloads, publishes, or modifies the ordinary journal.
@@ -70,6 +72,7 @@ func reviewSnapshot(dir string) (snapshot, string, map[string]string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return snapshot{}, "", nil, err
 	}
+	applyCategoryGlossary(&s, manual, make(map[string]bool))
 	return s, source, manual, nil
 }
 
@@ -82,6 +85,16 @@ func reviewSource(path []PathNode, full bool) string {
 		parts[i] = node.Name
 	}
 	return strings.Join(parts, " | ")
+}
+
+func safeReviewSource(source string) bool {
+	return strings.TrimSpace(source) != "" && utf8.ValidString(source) &&
+		utf8.RuneCountInString(source) <= llmReviewSourceLimit && !strings.ContainsAny(source, "\r\n")
+}
+
+func reviewGlossaryProtected(item category) bool {
+	term, ok := categoryTerms[item.Name]
+	return ok && item.Zh == term.label
 }
 
 func reviewRow(item category, full bool) ReviewRow {
@@ -104,7 +117,7 @@ func loadReview(dir string, s snapshot) (map[string]ReviewRow, error) {
 	for _, row := range set.Rows {
 		item, ok := s.Categories[row.ID]
 		if !ok || !validReviewRow(row, item) || out[row.ID].ID != "" {
-			return nil, errors.New("invalid or stale review candidate")
+			return nil, fmt.Errorf("invalid, duplicate or stale review candidate row ID %q; archive and reimport valid rows", row.ID)
 		}
 		out[row.ID] = row
 	}
@@ -113,7 +126,7 @@ func loadReview(dir string, s snapshot) (map[string]ReviewRow, error) {
 
 func validReviewRow(row ReviewRow, item category) bool {
 	return row.ID == item.ID && item.Status == "enabled" &&
-		slices.Equal(row.Path, item.Path) && row.Original == item.Zh &&
+		slices.Equal(row.Path, item.Path) && row.Original == item.Zh && safeReviewSource(row.Source) &&
 		(row.Source == reviewSource(item.Path, false) || row.Source == reviewSource(item.Path, true)) &&
 		validName(row.Candidate) && !strings.ContainsAny(row.Candidate, "\r\n|｜") &&
 		strings.ContainsFunc(row.Candidate, func(r rune) bool { return unicode.Is(unicode.Han, r) })
@@ -149,6 +162,10 @@ func PlanReview(dir, scope, seed string, sample int, full, export bool) (ReviewP
 			out.Manual++
 			continue
 		}
+		if reviewGlossaryProtected(item) {
+			out.GlossaryExcluded++
+			continue
+		}
 		if completed[item.ID].ID != "" {
 			out.Completed++
 			continue
@@ -157,8 +174,13 @@ func PlanReview(dir, scope, seed string, sample int, full, export bool) (ReviewP
 		if scope == "translated" && !translated || scope == "missing" && translated {
 			continue
 		}
+		row := reviewRow(item, full)
+		if !safeReviewSource(row.Source) {
+			out.SkippedUnsafe++
+			continue
+		}
 		root := item.Path[0].ID
-		groups[root] = append(groups[root], reviewRow(item, full))
+		groups[root] = append(groups[root], row)
 		out.Eligible++
 	}
 	roots := make([]string, 0, len(groups))
@@ -219,11 +241,11 @@ func storeReview(dir string, incoming ReviewSet) (int, error) {
 	}
 	for _, row := range incoming.Rows {
 		item, ok := s.Categories[row.ID]
-		if !ok || !validReviewRow(row, item) || manual[pathKey(item.Path)] != "" {
-			return 0, errors.New("invalid review candidate or protected manual override")
+		if !ok || !validReviewRow(row, item) || manual[pathKey(item.Path)] != "" || reviewGlossaryProtected(item) {
+			return 0, fmt.Errorf("invalid review candidate or protected manual/glossary override, row ID %q", row.ID)
 		}
 		if old, ok := existing[row.ID]; ok && old.Candidate != row.Candidate {
-			return 0, errors.New("conflicting candidate; archive previous review before replacing")
+			return 0, fmt.Errorf("conflicting candidate row ID %q; archive previous review before replacing", row.ID)
 		}
 		existing[row.ID] = row
 	}

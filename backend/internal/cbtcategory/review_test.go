@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -58,12 +59,20 @@ func TestLLMReviewOfflineCandidates(t *testing.T) {
 	if err := saveJSON(dir, "input.json", ReviewSet{Version: s.Version, Rows: []ReviewRow{bad}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ImportReview(dir, filepath.Join(dir, "input.json")); err == nil {
-		t.Fatal("manual override accepted")
+	if _, err := ImportReview(dir, filepath.Join(dir, "input.json")); err == nil || !strings.Contains(err.Error(), bad.ID) {
+		t.Fatalf("manual override accepted or row ID missing: %v", err)
 	}
 	after, err := os.ReadFile(filepath.Join(dir, activeFile))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("candidate work changed active dictionary")
+	}
+	item.Zh = "新的普通译文"
+	s.Categories[item.ID] = item
+	if err := saveJSON(dir, stagingFile, s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanReview(dir, "all", "fixed", 0, true, false); err == nil || !strings.Contains(err.Error(), item.ID) {
+		t.Fatalf("stale candidate not identified: %v", err)
 	}
 }
 

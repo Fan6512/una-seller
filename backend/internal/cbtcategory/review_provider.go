@@ -34,14 +34,14 @@ type llmReviewRequest struct {
 type llmReviewProvider struct {
 	appID, key, endpoint string
 	client               *http.Client
+	limit                int
 }
 
 // The operator supplied the official Bearer/JSON parameter and response examples.
 // Explicitly select the LLM model. Custom terminology intervention stays off
 // until a service-specific terminology library is configured and verified.
 func (p llmReviewProvider) translate(ctx context.Context, dir, source string) (string, error) {
-	if strings.TrimSpace(source) == "" || !utf8.ValidString(source) || utf8.RuneCountInString(source) > llmReviewSourceLimit ||
-		strings.ContainsAny(source, "\r\n") {
+	if !safeReviewSource(source) {
 		return "", errors.New("unsafe LLM review source")
 	}
 	body, err := json.Marshal(llmReviewRequest{
@@ -57,7 +57,7 @@ func (p llmReviewProvider) translate(ctx context.Context, dir, source string) (s
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.key)
-	if err = ReserveLLMReviewChars(dir, LLMTrialLimit, utf8.RuneCountInString(source)); err != nil {
+	if err = ReserveLLMReviewChars(dir, p.limit, utf8.RuneCountInString(source)); err != nil {
 		return "", err
 	}
 	res, err := p.client.Do(req)
@@ -108,7 +108,7 @@ type LLMTrialResult struct {
 	Version   version `json:"version"`
 	Selected  int     `json:"selected"`
 	Completed int     `json:"completed"`
-	Usage     int     `json:"usage_chars"`
+	Usage     *int    `json:"usage_chars"`
 }
 
 // RunLLMTrial is intentionally capped at 200 rows and 50000 cumulative
@@ -119,16 +119,29 @@ func RunLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 		return LLMTrialResult{}, errors.New("trial requires 1-200 rows and explicit LLM credentials")
 	}
 	return runLLMTrial(ctx, dir, scope, seed, sample, full, llmReviewProvider{
-		appID: appID, key: key, endpoint: baiduLLMEndpoint,
+		appID: appID, key: key, endpoint: baiduLLMEndpoint, limit: LLMTrialLimit,
 		client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
 	})
 }
 
-func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full bool, p llmReviewProvider) (LLMTrialResult, error) {
+func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full bool, p llmReviewProvider) (out LLMTrialResult, runErr error) {
 	if strings.TrimSpace(dir) == "" {
 		return LLMTrialResult{}, errors.New("configure a CBT dictionary directory")
+	}
+	// Read the persisted cumulative count even on errors and interruption.
+	// A nil count means unavailable, not zero. No reservation is refunded.
+	defer func() {
+		state, err := loadLLMUsage(dir)
+		if err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("LLM usage report unavailable: %w", err))
+			return
+		}
+		out.Usage = &state.Chars
+	}()
+	if p.limit <= 0 || p.limit > LLMTrialLimit {
+		return out, errors.New("invalid trial budget")
 	}
 	// Prevent concurrent trials from choosing the same candidate rows.
 	lock, err := LockFile(filepath.Join(dir, "llm-review-run.lock"))
@@ -140,12 +153,15 @@ func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 	if err != nil {
 		return LLMTrialResult{}, err
 	}
-	out := LLMTrialResult{Version: plan.Version, Selected: plan.Selected}
+	out = LLMTrialResult{Version: plan.Version, Selected: plan.Selected}
 	state, err := loadLLMUsage(dir)
 	if err != nil {
 		return out, err
 	}
-	if state.Chars > LLMTrialLimit || plan.SourceChars > LLMTrialLimit-state.Chars {
+	if state.Chars >= p.limit {
+		return out, errors.New("LLM cumulative trial budget exhausted")
+	}
+	if plan.SourceChars > p.limit-state.Chars {
 		return out, errors.New("LLM trial estimate exceeds remaining cumulative trial budget")
 	}
 	for i, row := range plan.Rows {
@@ -163,7 +179,7 @@ func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 		}
 		label, err := p.translate(ctx, dir, row.Source)
 		if err != nil {
-			return out, err
+			return out, fmt.Errorf("LLM review row %s: %w", row.ID, err)
 		}
 		row.Candidate = label
 		if _, err = storeReview(dir, ReviewSet{Version: plan.Version, Rows: []ReviewRow{row}}); err != nil {
@@ -171,7 +187,5 @@ func runLLMTrial(ctx context.Context, dir, scope, seed string, sample int, full 
 		}
 		out.Completed++
 	}
-	state, err = loadLLMUsage(dir)
-	out.Usage = state.Chars
-	return out, err
+	return out, nil
 }
