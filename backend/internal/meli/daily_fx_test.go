@@ -2,7 +2,10 @@ package meli
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,5 +69,58 @@ func TestDailyFXFirstAcceptedPostgres(t *testing.T) {
 	fx, err := lookupDailyFX(ctx, db, time.Date(1999, 2, 2, 16, 0, 0, 0, time.UTC))
 	if err != nil || fx.CNYPerUSD != "6.6" || fx.Source != dailyFXSource || fx.AsOf.Format(dailyFXDateFormat) != "1999-02-02" {
 		t.Fatalf("locked daily rate: %+v %v", fx, err)
+	}
+}
+
+type dailyFXTestTransport func(*http.Request) (*http.Response, error)
+
+func (f dailyFXTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestDailyFXBackfillSkipsUnavailableDay(t *testing.T) {
+	_, db, _, store := setupRefreshTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := db.Exec(ctx, `INSERT INTO app.meli_orders
+		(store_id,site_id,logistic_type,seller_id,order_id,status,currency_id,total_amount,date_created,last_updated,order_items)
+		VALUES($1,'MLB','remote','987654','10001','paid','USD',10,'1999-01-05T12:00:00Z','1999-01-05T12:00:00Z','[]'),
+		($1,'MLB','remote','987654','10002','paid','USD',10,'1999-01-06T12:00:00Z','1999-01-06T12:00:00Z','[]')`, store); err != nil {
+		t.Fatal(err)
+	}
+	for _, day := range []string{"1999-01-05", "1999-01-06", "1999-01-09"} {
+		if _, err := db.Exec(ctx, `DELETE FROM app.daily_usd_cny_rates WHERE accounting_day=$1::date`, day); err != nil {
+			t.Fatal(err)
+		}
+		defer db.Exec(context.Background(), `DELETE FROM app.daily_usd_cny_rates WHERE accounting_day=$1::date`, day)
+	}
+	var requests []string
+	client := &http.Client{Transport: dailyFXTestTransport(func(r *http.Request) (*http.Response, error) {
+		day := r.URL.Query().Get("date")
+		requests = append(requests, day)
+		status, body := http.StatusServiceUnavailable, ""
+		if day == "1999-01-05" {
+			status, body = http.StatusOK, `{"date":"1999-01-05","base":"USD","quote":"CNY","rate":6.6899}`
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	now := time.Date(1999, 1, 9, 12, 0, 0, 0, time.UTC)
+	cursor := ""
+	if err := refreshDailyFX(ctx, db, client, now, &cursor); err == nil || cursor != "1999-01-05" {
+		t.Fatalf("first pass: %s %v", cursor, err)
+	}
+	if err := refreshDailyFX(ctx, db, client, now, &cursor); err == nil || cursor != "1999-01-06" {
+		t.Fatalf("second pass: %s %v", cursor, err)
+	}
+	if got := strings.Join(requests, ","); got != "1999-01-08,1999-01-04,1999-01-08,1999-01-05" {
+		t.Fatalf("unexpected request order: %s", got)
+	}
+	rate, err := lookupDailyFX(ctx, db, time.Date(1999, 1, 6, 12, 0, 0, 0, time.UTC))
+	if err != nil || rate.CNYPerUSD != "6.6" {
+		t.Fatalf("later history not backfilled: %+v %v", rate, err)
+	}
+	var failedRows int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM app.daily_usd_cny_rates WHERE accounting_day IN ('1999-01-05','1999-01-09')`).Scan(&failedRows); err != nil || failedRows != 0 {
+		t.Fatalf("invalid rate saved: %d %v", failedRows, err)
 	}
 }

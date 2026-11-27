@@ -80,13 +80,15 @@ func TestBillingCollectorBatchResumeAndProfit(t *testing.T) {
 	}))
 	defer server.Close()
 	s.apiURL = server.URL
-	if err := s.refreshBillingEstimates(ctx, now); err == nil || billingCalls != 1 || relationCalls != 1 {
+	firstPass := billingPassStats{}
+	if err := s.refreshBillingEstimatesPass(ctx, now, &firstPass); err == nil || billingCalls != 1 || relationCalls != 1 || firstPass.targets != 2 || firstPass.done != 0 || firstPass.review != 0 {
 		t.Fatalf("expected one batch then rate limit: %v, %d/%d", err, billingCalls, relationCalls)
 	}
 	// The simulated scheduler advances two hours; the existing HTTP gate
 	// uses wall time, so expire its synthetic five-second cooldown as well.
 	s.orderRetryUntil = time.Time{}
-	if err := s.refreshBillingEstimates(ctx, now.Add(billing.Interval)); err != nil || billingCalls != 1 {
+	secondPass := billingPassStats{}
+	if err := s.refreshBillingEstimatesPass(ctx, now.Add(billing.Interval), &secondPass); err != nil || billingCalls != 1 || secondPass.targets != 2 || secondPass.done != 2 || secondPass.review != 0 {
 		t.Fatalf("resume refetched Billing: %v, calls=%d", err, billingCalls)
 	}
 	after := relationCalls
@@ -149,7 +151,8 @@ func TestBillingCollectorBatchResumeAndProfit(t *testing.T) {
 		AND o.order_id IN ('10001','10002')`, store); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.refreshBillingEstimates(ctx, now.Add(3*billing.Interval)); err != nil || billingCalls != 1 || relationCalls != after {
+	exhaustedPass := billingPassStats{}
+	if err := s.refreshBillingEstimatesPass(ctx, now.Add(3*billing.Interval), &exhaustedPass); err != nil || billingCalls != 1 || relationCalls != after || exhaustedPass.targets != 2 || exhaustedPass.done != 0 || exhaustedPass.review != 2 {
 		t.Fatalf("exhausted attempts made a request: %v", err)
 	}
 	for _, id := range []string{"10001", "10002"} {

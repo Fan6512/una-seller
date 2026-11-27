@@ -133,7 +133,7 @@
 
 本轮从负责人指定的 `2f11d9ea98258faff240d5f73ecc09e5a00c3c40` 继续，仅使用既有 #118 分支。CI 45941875124 在 Go formatting 门禁失败，未执行 Go 测试；Desktop / Changed Files 通过。用主机上的 Go 1.26 标准 gofmt 修正候选测试后，提交 `b86386805855cdc710f948637d119ba3d4e4f328` 的 [CI 45942567609](https://github.com/Fan6512/una-seller/actions/runs/45942567609) 全部通过。本次后续修改仍需以对应新 HEAD 的 CI 为准。
 
-执行前确认 SSH 主机 `152.136.41.105`、hostname `VM-0-13-ubuntu`、登录用户 `ubuntu`，现行服务为 `una-seller-api`，ExecStart 为 `/opt/una-seller/una-seller-api`、PID 1280054。在 `/tmp/una-fin118-20261127/backend/temporary-api` 使用该主机既有 golang:1.26 容器构建临时二进制，未替换生产程序。配置只在主机内读取，不输出凭据；复用现有 OAuth，允许正常续期。只读查询确认两笔 Pack 各对应一个当前 connected、marketplaces verified、子卖家匹配的 owner/store/site/remote 订单。真实身份和 Pack 参数仅留主机受限目录，不提交仓库。
+执行前确认 SSH 主机 `[production-host-redacted]`、hostname `[hostname-redacted]`、登录用户 `ubuntu`，现行服务为 `una-seller-api`，ExecStart 为 `/opt/una-seller/una-seller-api`、PID [redacted]。在 `/tmp/una-fin118-20261127/backend/temporary-api` 使用该主机既有 golang:1.26 容器构建临时二进制，未替换生产程序。配置只在主机内读取，不输出凭据；复用现有 OAuth，允许正常续期。只读查询确认两笔 Pack 各对应一个当前 connected、marketplaces verified、子卖家匹配的 owner/store/site/remote 订单。真实身份和 Pack 参数仅留主机受限目录，不提交仓库。
 
 两笔分别执行 `UNA_SELLER_BILLING_PROBE_ENABLED=1 temporary-api billing-probe OWNER_UUID STORE_UUID SITE remote PACK_ID`。现有授权 Billing / shipment costs 均读取成功，结果如下：
 
@@ -175,7 +175,7 @@
 
 ### 环境及执行边界
 
-- 再次确认 UNA Seller 主机 `152.136.41.105` / `VM-0-13-ubuntu`，生产服务 PID `1280054`、二进制 SHA256 `e524d7c9737258c15f05ee9f1eb71b3dfb56148e13c44fbfaa27547eb1cfcf80`。临时源码、API 和核验脚本位于 `/tmp/una-fin118-final-6f7cca79`，使用主机已有 golang:1.26 构建。
+- 再次确认 UNA Seller 主机 `[production-host-redacted]` / `[hostname-redacted]`，生产服务 PID [redacted]、二进制 SHA256 `e524d7c9737258c15f05ee9f1eb71b3dfb56148e13c44fbfaa27547eb1cfcf80`。临时源码、API 和核验脚本位于 `/tmp/una-fin118-final-6f7cca79`，使用主机已有 golang:1.26 构建。
 - 独立 Docker 网络 `una-fin118-final`、PostgreSQL 17.11 容器 `una-fin118-final-pg`、独立数据库 `una_fin118_final`，仅回环端口55439。临时 API 使用自身容器内的8787，不发布端口、不占用生产8787。仅在临时 API 中启用 Billing/FX，关闭通知与补偿任务；生产配置未修改。
 - 生产库只读复制两笔必要订单财务字段及其唯一已连接/已验证授权范围。订单从隔离库空 Billing 缓存开始；不复制买家数据或全店账单。复用当时有效期超过15分钟的既有授权，在主机内部处理加密凭据和配置，不输出、不提交凭据；未触发克隆授权续期。
 - 为统计官方请求，只在临时源码的既有 HTTP GET 入口添加一行资源类别日志，不记录 URL、ID、请求头或响应体；算法、授权和调度逻辑保持基线。原始基线临时 API 亦已构建。补充断言沿用既有 Go 测试机制，临时文件只在主机验收目录，不加入仓库测试框架。
