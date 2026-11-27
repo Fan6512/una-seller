@@ -85,7 +85,7 @@ func (i *expectedProfitInput) scanArgs() []any {
 func (i expectedProfitInput) result() OrderExpectedProfit {
 	day, _, _ := salesDay(i.created)
 	out := OrderExpectedProfit{Day: day, Revision: i.revision, CanConfirm: i.eligible,
-		HasConfirmation: len(i.confirmation)>0, Reason: "net_unconfirmed"}
+		HasConfirmation: len(i.confirmation) > 0, Reason: "net_unconfirmed"}
 	if i.purchase.Valid && purchaseCostPattern.MatchString(i.purchase.String) {
 		out.PurchaseCNY = &i.purchase.String
 	}
