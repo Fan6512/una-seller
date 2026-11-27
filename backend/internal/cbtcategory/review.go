@@ -30,16 +30,16 @@ type ReviewSet struct {
 }
 
 type ReviewPlan struct {
-	Version       version     `json:"version"`
-	Snapshot      string      `json:"snapshot_source"`
-	Scope         string      `json:"scope"`
-	FullPath      bool        `json:"full_path"`
-	Eligible      int         `json:"eligible"`
-	Manual        int         `json:"manual_excluded"`
-	Completed     int         `json:"candidate_completed"`
-	Selected      int         `json:"selected"`
-	SourceChars   int         `json:"source_chars"`
-	Rows          []ReviewRow `json:"rows,omitempty"`
+	Version     version     `json:"version"`
+	Snapshot    string      `json:"snapshot_source"`
+	Scope       string      `json:"scope"`
+	FullPath    bool        `json:"full_path"`
+	Eligible    int         `json:"eligible"`
+	Manual      int         `json:"manual_excluded"`
+	Completed   int         `json:"candidate_completed"`
+	Selected    int         `json:"selected"`
+	SourceChars int         `json:"source_chars"`
+	Rows        []ReviewRow `json:"rows,omitempty"`
 }
 
 // reviewSnapshot never downloads, publishes, or modifies the ordinary journal.
@@ -193,6 +193,14 @@ func ImportReview(dir, input string) (int, error) {
 	if strings.TrimSpace(dir) == "" || strings.TrimSpace(input) == "" {
 		return 0, errors.New("configure review directory and candidate input")
 	}
+	var incoming ReviewSet
+	if err := readJSONFile(input, &incoming); err != nil {
+		return 0, err
+	}
+	return storeReview(dir, incoming)
+}
+
+func storeReview(dir string, incoming ReviewSet) (int, error) {
 	lock, err := lockUpdate(filepath.Join(dir, "update.lock"))
 	if err != nil {
 		return 0, fmt.Errorf("could not acquire CBT dictionary writer lock: %w", err)
@@ -204,10 +212,6 @@ func ImportReview(dir, input string) (int, error) {
 	}
 	existing, err := loadReview(dir, s)
 	if err != nil {
-		return 0, err
-	}
-	var incoming ReviewSet
-	if err = readJSONFile(input, &incoming); err != nil {
 		return 0, err
 	}
 	if incoming.Version != s.Version || len(incoming.Rows) == 0 {

@@ -123,11 +123,12 @@ func reviewCBTCategories(args []string, dir string) error {
 	full := command.Bool("full-path", false, "use complete official path instead of immediate parent")
 	export := command.Bool("export", false, "include source and current leaf translations in JSON")
 	input := command.String("import", "", "import validated candidate JSON into separate review file")
+	trial := command.Bool("trial", false, "explicitly run a capped LLM trial; requires separate LLM API key")
 	reconcile := command.Int("reconcile-usage", -1, "explicit console usage; initializes or raises cumulative counter")
 	if err := command.Parse(args); err != nil {
 		return err
 	}
-	if command.NArg() != 0 || *reconcile < -1 || (*input != "" && *reconcile >= 0) {
+	if command.NArg() != 0 || *reconcile < -1 || (*input != "" && *reconcile >= 0) || (*trial && (*input != "" || *reconcile >= 0 || *export)) {
 		return errors.New("invalid review arguments")
 	}
 	if *reconcile >= 0 {
@@ -143,6 +144,16 @@ func reviewCBTCategories(args []string, dir string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(map[string]int{"candidates": count})
+	}
+	if *trial {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		result, err := cbtcategory.RunLLMTrial(ctx, dir, *scope, *seed, *sample, *full,
+			firstEnv("BAIDU_LLM_APP_ID", "BAIDU_TRANSLATION_APP_ID"), os.Getenv("BAIDU_LLM_API_KEY"))
+		if outputErr := json.NewEncoder(os.Stdout).Encode(result); outputErr != nil {
+			return outputErr
+		}
+		return err
 	}
 	plan, err := cbtcategory.PlanReview(dir, *scope, *seed, *sample, *full, *export)
 	if err != nil {
