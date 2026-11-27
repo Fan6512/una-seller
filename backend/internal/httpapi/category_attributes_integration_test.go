@@ -96,7 +96,7 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 		case "/categories/CBT773/attributes":
 			body = `{"not":"an attribute array"}`
 		case "/categories/MLB9891/attributes":
-			body = `[{"id":"BRAND","name":"Marca","value_type":"string","tags":{"required":true}},
+			body = `[{"id":"BRAND","name":"Marca","value_type":"string","attribute_group_name":"Outros","tags":{"required":true},"values":[{"id":"3","name":"ExampleBrand"}]},
 				{"id":"COLOR","name":"Color","value_type":"list","tags":{"conditional_required":true},
 				 "values":[{"id":"1","name":"Rosa"},{"id":"2","name":"Azul"}]}]`
 		case "/categories/MLB9891":
@@ -197,13 +197,15 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 		if r.URL.Query().Get("to") != "zh-Hans" || r.Header.Get("Authorization") != "" || source != "en" && source != "pt" {
 			t.Fatal("invalid translation request")
 		}
-		labels := map[string]string{"Brand": "品牌", "Glass": "玻璃", "Style": "风格", "Marca": "品牌"}
+		labels := map[string]string{"Brand": "品牌", "Glass": "玻璃", "Style": "风格", "Marca": "品牌", "Acessórios": "配件", "Filtros": "滤芯", "Outros": "其他属性", "Rosa": "粉色"}
 		results := make([]map[string][]map[string]string, 0, len(texts))
 		for _, item := range texts {
 			switch item.Text {
-			case "Home", "Jugs", "Acessórios", "Filtros":
-				t.Fatal("category path reached the live translation provider")
-			case "Marca":
+			case "Home", "Jugs":
+				t.Fatal("offline CBT category path reached the live translation provider")
+			case "ExampleBrand":
+				t.Fatal("identifier choice reached the live translation provider")
+			case "Marca", "Acessórios", "Filtros", "Outros", "Rosa":
 				if source != "pt" {
 					t.Fatal("attribute reached wrong language bucket")
 				}
@@ -230,8 +232,9 @@ func TestCategoryAttributesEndpointAccessAndRules(t *testing.T) {
 	}
 	published := check("GET", path+scope, "session", 200, "")
 	publishedLabels, ok := published["translations_zh"].(map[string]any)
-	if !ok || publishedLabels["Marca"] != "品牌" || published["path_zh"] != nil {
-		t.Fatalf("site-only category should retain its official path and localize attributes: %#v", published)
+	if !ok || publishedLabels["Marca"] != "品牌" || publishedLabels["Acessórios"] != "配件" ||
+		publishedLabels["Filtros"] != "滤芯" || publishedLabels["Outros"] != "其他属性" || publishedLabels["Rosa"] != "粉色" || published["path_zh"] != nil {
+		t.Fatalf("site-only category should retain its official path and localize metadata: %#v", published)
 	}
 	if names, ok := localized["technical_requirement_names"].(map[string]any); !ok || names["STYLE"] != "Style" {
 		t.Fatalf("missing official technical requirement name: %#v", localized)

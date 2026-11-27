@@ -15,6 +15,8 @@ import ListingFieldsEditor from "/src/ListingFieldsEditor.tsx";
 import { createFeedback } from "/src/operationFeedback.ts";
 import { OperationFeedbackContext } from "/src/operationFeedbackContext.ts";
 import PublishedListingEditor from "/src/PublishedListingEditor.tsx";
+import PublishedListingView from "/src/PublishedListingView.tsx";
+import { usePublishedDraftGuard } from "/src/publishedDraftGuard.ts";
 import { initialListingFields, validateListingFields } from "/src/listingFields.ts";
 import { setSiteTitleMode } from "/src/titleModePreference.ts";
 
@@ -60,7 +62,14 @@ window.fetch = (path, options) => {
   if (id === "CBT4") return Promise.resolve(Response.json({ error: "upstream failed" }, { status: 502 }));
   if (!options.headers.Authorization) throw Error("missing bearer");
   if (id === "MLB771") {
-    return Promise.resolve(Response.json({ category_id: id, attributes: [], path: [{ id, name: "Jarras" }] }));
+    return Promise.resolve(Response.json({ category_id: id, path: [{ id, name: "Jarras" }],
+      attributes: [
+        { id: "BRAND", name: "Marca", value_type: "string", attribute_group_name: "Outros", tags: { required: true } },
+        { id: "ITEM_CONDITION", name: "Condição do item", value_type: "list", attribute_group_name: "Outros",
+          tags: { required: true }, values: [{ id: "1", name: "Novo" }, { id: "2", name: "Usado" }] },
+      ],
+      translations_zh: { Jarras: "水壶", Marca: "品牌", Outros: "其他属性", Novo: "全新", Usado: "二手", Generic: "通用" },
+    }));
   }
   return Promise.resolve(Response.json({
     category_id: id, technical_specs_verified: true,
@@ -451,18 +460,82 @@ try {
   input(document.querySelector('input[aria-label="追加变体图片 URL"]'),img("overflow"));
   assert((await loaded("button","添加链接")).disabled,"variant image picker permits the 31st image");
   const published = { id: "MLB1", category_id: "MLB771", description: "Fixture details",
+    attributes: [{ id: "BRAND", value_name: "Generic" }, { id: "ITEM_CONDITION", value_name: "Novo" }],
     cbt_category_path: { original: ["Home", "Other"], zh: ["家居", "其他"] } };
   const showPublished = listing => flushSync(() => root.render(React.createElement(PublishedListingEditor, {
-    key: listing.id, listing, site: "MLB", logistic: "remote", store: "fixture", members: [listing],
+    key: listing.id, listing, site: "MLB", logistic: "remote", store: "fixture", members: [listing], onDirtyChange: () => {},
   })));
   showPublished(published);
-  await loaded(".published-category-path", "家居 / 其他");
-  await loaded(".published-hint", "Home / Other");
+  await loaded(".published-category-path", "Home / Other");
+  await loaded(".published-hint", "家居 / 其他");
   await loaded(".published-category-path", "Jarras");
+  await loaded(".published-hint", "水壶");
+  const brandInput = (await loaded(".published-edit-field", "品牌")).querySelector("input");
+  const conditionInput = (await loaded(".published-edit-field", "商品成色")).querySelector("select");
+  assert(brandInput.value === "Generic", "free-text brand was translated");
+  assert(conditionInput.value === "Novo" && conditionInput.selectedOptions[0].textContent === "全新",
+    "official choice did not retain the original submitted value");
+  input(conditionInput, "Usado");
+  await click("button", "保存本机草稿");
+  const publishedDraft = JSON.parse(localStorage.getItem("una-seller:published-draft:v1:fixture:MLB:remote:MLB1"));
+  assert(publishedDraft.attributes.BRAND === "Generic" && publishedDraft.attributes.ITEM_CONDITION === "Usado",
+    "Chinese presentation changed the saved draft values");
   showPublished({ ...published, id: "MLB2", cbt_category_path: undefined });
   await loaded(".published-category-path", "Jarras");
-  assert(![...document.querySelectorAll(".published-category-path")].some(node => node.textContent.includes("家居")),
+  assert(![...document.querySelectorAll(".published-category-path,.published-hint")].some(node => node.textContent.includes("家居") || node.textContent.includes("Home / Other")),
     "site-only listing reused another listing's CBT breadcrumb");
+  // Exercise the production view + editor + navigation guard, not a mocked guard.
+  let replaceItems, rerenderGallery;
+  function GalleryFixture() {
+    const [items, setItems] = useState([
+      { ...published, id: "MLBguardA", title: "Guard A", family_id: 1 },
+      { ...published, id: "MLBguardB", title: "Guard B", family_id: 2 },
+    ]);
+    const [selectedId, onSelect] = useState("");
+    const [mode, onModeChange] = useState("family");
+    const [, setTick] = useState(0);
+    replaceItems = setItems;
+    rerenderGallery = () => setTick(x => x + 1);
+    const guard = usePublishedDraftGuard();
+    return React.createElement(PublishedListingView, {
+      items, selectedId, onSelect, mode, onModeChange, site: "MLB", logistic: "remote",
+      store: "guard-fixture", allowDiscard: guard.allowDiscard, onDirtyChange: guard.onDirtyChange,
+    });
+  }
+  flushSync(() => root.render(React.createElement(GalleryFixture)));
+  assert(!document.querySelector(".published-detail-wrap"), "gallery opened initial detail automatically");
+  await click(".published-expand-family", "1 个规格");
+  const expansion = document.querySelector(".published-family-expansion");
+  assert(expansion && document.querySelector('[aria-expanded="true"]').getAttribute("aria-controls") === expansion.id &&
+    document.activeElement === expansion, "family expansion missing focus or accessible connection");
+  await click(".published-cover-button", "Guard A");
+  await loaded(".published-detail-header h2", "Guard A");
+  const titleField = () => document.querySelector('textarea[placeholder="根据真实商品信息填写标题"]');
+  input(titleField(), "unsaved A");
+  flushSync(() => rerenderGallery());
+  let confirms = 0;
+  window.confirm = message => { assert(message.includes("未保存修改"), "unexpected dialog"); confirms++; return false; };
+  await click(".published-cover-button", "Guard B");
+  assert(confirms === 1 && titleField().value === "unsaved A" && document.querySelector(".published-detail-header h2").textContent === "Guard A",
+    "cancelled card switch lost unsaved editor");
+  await click(".published-detail-toolbar button", "关闭");
+  assert(confirms === 2 && titleField().value === "unsaved A", "cancelled close lost draft");
+  window.confirm = () => { confirms++; return true; };
+  await click(".published-cover-button", "Guard B");
+  assert(confirms === 3 && titleField().value === "Guard B", "confirmed switch did not replace detail");
+  input(titleField(), "unsaved B");
+  // Simulate a background scope/permission update removing the selected listing.
+  flushSync(() => replaceItems([{ ...published, id: "MLBguardA", title: "Guard A", family_id: 1 }]));
+  assert(!document.querySelector(".published-detail-wrap"), "removed listing detail remained visible");
+  await click(".published-cover-button", "Guard A");
+  assert(confirms === 3 && titleField().value === "Guard A", "unmounted editor left stale dirty flag");
+  input(titleField(), "saved A");
+  await click("button", "保存本机草稿");
+  await click(".published-detail-toolbar button", "关闭");
+  assert(confirms === 3 && !document.querySelector(".published-detail-wrap") &&
+    document.querySelector(".published-family-expansion"), "saved draft close prompted or lost expansion");
+  await click(".published-cover-button", "Guard A");
+  assert(titleField().value === "saved A", "saved draft failed to reload");
   document.body.dataset.result = "pass";
 } catch (error) { document.body.dataset.result = "fail"; document.body.append(error.message); }
 `;
