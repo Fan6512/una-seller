@@ -118,3 +118,13 @@
 新增 `billingExpectedNetCandidate`：仅 MLB remote 正常 paid 订单；必须由上游提供官方完整 Pack/Shipment 单订单关联，不接受本地计数替代；仅识别已观察到的佣金代码及唯一 CCSI，佣金显式订单归属，拒绝重复/冲正/税项/未知费用/币种不符/运费不一致，使用 USD 商品行合计和精确分值。测试复现 4.50 的真实金额但关联标识与完整性输入为合成，不代表生产自动核验通过。未接 API/UI/确认接口，不改权限、数据库、自动采集频率，不把候选升级为已确认净额。MLM 规则待实际 Billing 样本；现有旧 MLB 缓存无 sales_refs，也不会通过新候选门禁。
 
 测试及本轮 HEAD CI 以 Actions 实际结果为准；开发时未在完整仓库运行 Go 测试。仍待使用既有授权 API 取得 MLM 缓存并验证官方 Pack/Shipment 关系及费用完整性，再决定自动源接线。无运输中订单不阻断此隔离开发，不代表新单验收通过。
+
+
+## 2026-11-27 开发收口：指定 Pack 账单核验入口
+
+- `billing-probe` 是仅供受控本地运营/开发核验的单次 CLI，不是 HTTP 新接口，不启动服务、不执行迁移、不启用自动采集。现有 `PreviewOrderBilling` 保持原缓存写入行为，新增内部 `readOrderBilling(..., persist=false)` 供探针复用现有授权、费用读取、范围复查与 parser，探针不保存 Billing 快照；正常 OAuth 续期可能仍按既有机制更新令牌。
+- 在已明确为 UNA Seller 的运行环境、原配置及受控权限下构建临时二进制，不替换生产程序。使用 `UNA_SELLER_BILLING_PROBE_ENABLED=1 /path/to/temporary-api billing-probe OWNER_UUID STORE_UUID SITE LOGISTIC PACK_ID`，每次只核验一笔指定 Pack，先 MLB C（页面净额4.50），后 MLM D（13.48）。真实作用域/Pack 标识仅在本地使用，不提交仓库；核验前确认主机、授权及是否允许既有 OAuth 续期，遇错误或限流停止。
+- 仅从本地当前 owner/store/site/logistic/child 范围定位唯一订单，调用现有授权路径，读取前后检查 Pack 对应订单及商品行；多行拒绝。输出脱敏商品 USD、付款状态、费用及归属匹配标志、税项和运费；不输出真实交易、付款、订单、费用、Pack ID 或凭据。官方 Pack/Shipment 成员完整性仍为 not_verified，不能从本地唯一映射替代。探针未执行真实生产请求。
+- 本轮 main 新增的四次提交仅修改功能台账；Draft 自身的台账修改撤回至共同祖先，以便合并时保留 main 原有全部记录及后续变更。最新专项进度在本文件和 PR 正文记录；合流后再按正常台账维护流程更新 main。
+- CI 45941646276：Desktop 与 Changed Files PASS，Go 在 candidate test gofmt 门禁失败，已修正对应字段对齐。新探针与脱敏测试以及当前 HEAD 完整 CI 待实际运行确认，不将旧 CI 或静态阅读当成通过。
+- 后续顺序：先用探针取得 MLM/MLB 新 Billing 脱敏证据，再通过已授权官方关系接口核验完整性和直接净额来源；不能确定时继续人工兜底，暂不启用自动 collector.meli.billing 或将候选写入预计利润接口。不修改生产，不部署。
