@@ -251,21 +251,39 @@ func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts [
 
 func categoryAttributeTranslationTexts(result meli.CategoryRules) []string {
 	var fields []struct {
-		Name   string `json:"name"`
-		Values []struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		GroupName string `json:"attribute_group_name"`
+		Values    []struct {
 			Name string `json:"name"`
 		} `json:"values"`
 	}
 	_ = json.Unmarshal(result.Attributes, &fields)
 	var texts []string
-
+	// CBT paths remain in the offline dictionary. Published site categories
+	// have independent labels; only official metadata is eligible for translation.
+	isPublishedSite := !strings.HasPrefix(result.CategoryID, "CBT")
+	if isPublishedSite {
+		for _, node := range result.Path {
+			texts = append(texts, node.Name)
+		}
+	}
 	for _, field := range fields {
 		texts = append(texts, field.Name)
+		if isPublishedSite {
+			texts = append(texts, field.GroupName)
+		}
 	}
 	for _, id := range result.TechnicalRequirements {
 		texts = append(texts, result.TechnicalRequirementNames[id])
 	}
 	for _, field := range fields {
+		if isPublishedSite {
+			switch field.ID {
+			case "BRAND", "MODEL", "SELLER_SKU", "GTIN", "EAN", "UPC", "ISBN", "MPN", "PART_NUMBER", "SERIAL_NUMBER":
+				continue
+			}
+		}
 		for _, value := range field.Values {
 			texts = append(texts, value.Name)
 		}

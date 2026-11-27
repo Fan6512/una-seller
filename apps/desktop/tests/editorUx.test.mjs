@@ -200,3 +200,16 @@ test("published gallery inserts only the selected family after its entire curren
   assert.equal(expandedRowEnd(-1, 6, 12), -1);
   assert.equal(expandedRowEnd(12, 6, 12), -1);
 });
+
+test("published metadata localizes labels and official choices without translating identifiers", async () => {
+  const { publishedMetadataLabel, publishedChoiceLabel } = await import("../src/publishedMetadataLabels.ts");
+  const map = { Marca: "品牌", Filtros: "滤芯", Generic: "通用", Blue: "蓝色", Otros: "其他属性" };
+  assert.equal(publishedMetadataLabel("Marca", map), "品牌");
+  assert.equal(publishedMetadataLabel("Filtros", map), "滤芯");
+  assert.equal(publishedMetadataLabel("Otros", map), "其他属性");
+  assert.equal(publishedMetadataLabel("Modelo", {}), "型号");
+  assert.equal(publishedMetadataLabel("unknown label", {}), "unknown label");
+  assert.equal(publishedChoiceLabel("BRAND", "Generic", map), "Generic");
+  assert.equal(publishedChoiceLabel("MODEL", "Blue", map), "Blue");
+  assert.equal(publishedChoiceLabel("COLOR", "Blue", map), "蓝色");
+});
