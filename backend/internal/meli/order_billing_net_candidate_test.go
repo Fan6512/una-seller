@@ -21,7 +21,7 @@ func billingCandidateFixture() billingExpectedNetEvidence {
 			Payments: []BillingPayment{{Status: "approved", MoneyReleaseStatus: "released"}},
 			Taxes:    []BillingTax{},
 			Shipping: &BillingShipping{BuyerCostUSD: "7.63", SellerChargeUSD: "10.78", SellerNetCostUSD: "3.15", SellerChargeDetailID: "104"},
-			Charges: []BillingCharge{
+			Charges:  []BillingCharge{
 				{DetailID: "101", Type: "CHARGE", Subtype: "CVMPI", Amount: "0.16", Currency: "USD", DebitedFromOperation: "YES", SalesRefs: []BillingSaleRef{{OrderID: order}}},
 				{DetailID: "102", Type: "CHARGE", Subtype: "CVMPCB", Amount: "0.15", Currency: "USD", DebitedFromOperation: "NO", SalesRefs: []BillingSaleRef{{OrderID: order}}},
 				{DetailID: "103", Type: "CHARGE", Subtype: "CVMLCB", Amount: "0.78", Currency: "USD", DebitedFromOperation: "NO", SalesRefs: []BillingSaleRef{{OrderID: order}}},
