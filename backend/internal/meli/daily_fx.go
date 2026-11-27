@@ -4,18 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"math/big"
 	"net/http"
 	"regexp"
 	"time"
 
+	"github.com/Fan6512/una-seller/backend/internal/collectors/fx"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const dailyFXSource = "frankfurter_v2_ecb"
-const dailyFXEndpoint = "https://api.frankfurter.dev/v2/rate/USD/CNY"
 const dailyFXDateFormat = "2006-01-02"
 
 var dailyFXPattern = regexp.MustCompile(`^[0-9]{1,2}(\.[0-9]{1,12})?$`)
@@ -60,28 +59,15 @@ func parseDailyFX(day string, raw []byte) (DailyFXRate, error) {
 	}, nil
 }
 
-// Fixed previous-calendar-day query: a deterministic opening reference for
-// today's orders and late historical backfill. Never send order/account data.
+// The collector owns external transport; finance owns the accepted date and truncation.
 func fetchDailyFX(ctx context.Context, client *http.Client, day string) (DailyFXRate, error) {
 	target, err := time.Parse(dailyFXDateFormat, day)
 	if err != nil {
 		return DailyFXRate{}, errDailyFXInvalid
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dailyFXEndpoint+"?providers=ECB&date="+target.AddDate(0, 0, -1).Format(dailyFXDateFormat), nil)
-	if err != nil {
-		return DailyFXRate{}, errDailyFXInvalid
-	}
-	resp, err := client.Do(req)
+	raw, err := fx.Fetch(ctx, client, target.AddDate(0, 0, -1))
 	if err != nil {
 		return DailyFXRate{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return DailyFXRate{}, errDailyFXInvalid
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4097))
-	if err != nil || len(raw) > 4096 {
-		return DailyFXRate{}, errDailyFXInvalid
 	}
 	return parseDailyFX(day, raw)
 }
@@ -157,25 +143,7 @@ func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, 
 // RunDailyFX is opt-in until the migration and real provider connectivity are
 // verified. It never gates startup, order ingestion or notification ACK.
 func RunDailyFX(ctx context.Context, db *pgxpool.Pool, logger *log.Logger) {
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	ticker := time.NewTicker(30 * time.Minute)
-	defer ticker.Stop()
-	for {
-		pass, cancel := context.WithTimeout(ctx, 25*time.Second)
-		err := refreshDailyFX(pass, db, client, time.Now())
-		cancel()
-		if err != nil && ctx.Err() == nil {
-			logger.Print("daily FX refresh unavailable; retry next interval")
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	fx.Run(ctx, logger, func(pass context.Context, client *http.Client, now time.Time) error {
+		return refreshDailyFX(pass, db, client, now)
+	})
 }
