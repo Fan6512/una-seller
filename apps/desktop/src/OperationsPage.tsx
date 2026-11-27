@@ -8,7 +8,8 @@ type StoreSummary = {
   open_claims: number | null; paused_items: number | null; pending_jobs: number; dead_jobs: number;
 };
 type WorkRow = { store_id: string; site: string; kind: string; resource_id: string; status: string; observed_at: string; due_at?: string };
-type Summary = { stores: StoreSummary[]; checked_at: string; truncated: boolean; cache_only: boolean; activity: WorkRow[]; todos: WorkRow[] };
+type Sales = { day: string; amount_usd: string | null; paid_orders: number; included_orders: number; review_orders: number; refunded_orders: number; cancelled_orders: number; other_orders: number; scope_available: boolean; truncated: boolean };
+type Summary = { sales?: Sales; stores: StoreSummary[]; checked_at: string; truncated: boolean; cache_only: boolean; activity: WorkRow[]; todos: WorkRow[] };
 type Target = "orders" | "published";
 const metrics = [
   ["paid_orders", "缓存已付款订单"], ["cached_unanswered", "缓存未回答问答"],
@@ -22,7 +23,13 @@ const states: Record<string, string> = { paid: "已付款", cancelled: "已取�
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
 const beijingMinute = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
-function BeijingClock() {
+const beijingDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", calendar: "gregory", numberingSystem: "latn" });
+function beijingDay(now: Date): string {
+  const parts = beijingDate.formatToParts(now);
+  return ["year", "month", "day"].map(type => parts.find(part => part.type === type)?.value ?? "").join("-");
+}
+
+function BeijingClock({ onDay }: { onDay: (day: string) => void }) {
   const [time, setTime] = useState(() => beijingMinute.format(new Date()));
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -30,17 +37,19 @@ function BeijingClock() {
       clearTimeout(timer);
       const now = new Date();
       setTime(beijingMinute.format(now));
+      onDay(beijingDay(now));
       if (!document.hidden) timer = setTimeout(tick, 60000 - (now.getTime() % 60000));
     };
     tick();
     document.addEventListener("visibilitychange", tick);
     return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", tick); };
-  }, []);
+  }, [onDay]);
   return <span className="operations-note operations-clock">今日 · 北京时间 {time}</span>;
 }
 
 export default function OperationsPage({ onNavigate }: { onNavigate: (target: Target) => void }) {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [day, setDay] = useState(() => beijingDay(new Date()));
   const [scope, setScope] = useState("");
   const [site, setSite] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
@@ -95,6 +104,15 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
   const selected = stores.filter(s => !scope || s.store_id === scope);
   const sites = [...new Set(selected.flatMap(s => s.sites ?? []))].sort();
   const currentRows = loadedScope === scopeKey ? summary : null;
+  const sales = currentRows?.sales;
+  const isCurrentSales = sales?.day === day;
+  const salesNote = !sales ? "待接入订单销售汇总" : !isCurrentSales ? "等待今日缓存销售额更新" : sales.truncated ? "当日缓存超过汇总上限，暂不显示金额" :
+    !sales.scope_available ? (!scope && currentRows?.truncated ? "店铺汇总范围超过上限，暂不显示金额" : "当前筛选范围暂无可用销售汇总") :
+      sales.day + " · 当日创建、当前已付款商品额 " + sales.included_orders + "/" + sales.paid_orders + " 笔" +
+      (sales.refunded_orders ? " · 退款排除 " + sales.refunded_orders + " 笔" : "") +
+      (sales.review_orders ? " · 金额待核实 " + sales.review_orders + " 笔" : "") +
+      (sales.cancelled_orders ? " · 已取消 " + sales.cancelled_orders + " 笔" : "") +
+      " · 非实收，平台覆盖未确认";
   // These existing counts are store-wide, not site-wide. Unknown or partial
   // coverage must never be silently summed into a seemingly complete total.
   const total = (key: (typeof metrics)[number][0]) => {
@@ -128,7 +146,7 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
     <div className="operations-filter-row">
       <div className="operations-filters">
         <label>店铺 <select value={scope} onChange={e => { setScope(e.target.value); setSite(""); }}><option value="">全部店铺</option>{stores.map(s => <option key={s.store_id} value={s.store_id}>{s.nickname || "店铺"}</option>)}</select></label>
-        <label>待办 / 动态站点 <select value={site} onChange={e => setSite(e.target.value)}><option value="">全部站点</option>{sites.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+        <label>销售额 / 待办 / 动态站点 <select value={site} onChange={e => setSite(e.target.value)}><option value="">全部站点</option>{sites.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
       </div>
     </div>
     {error && <p role="alert" className="operations-error">{error}{currentRows ? " 保留上次读取的摘要。" : ""}</p>}
@@ -136,9 +154,9 @@ export default function OperationsPage({ onNavigate }: { onNavigate: (target: Ta
     {summary && stores.length === 0 && <p className="operations-note">尚未绑定店铺。</p>}
 
     <section className="operations-section" aria-label="经营总览">
-      <div className="operations-section-heading"><h2>经营总览</h2><BeijingClock /></div>
+      <div className="operations-section-heading"><h2>经营总览</h2><BeijingClock onDay={setDay} /></div>
       <div className="operations-overview-cards">
-        <article className="operations-kpi operations-financial"><span>今日销售额</span><strong>—</strong><small>待接入订单销售汇总</small></article>
+        <article className="operations-kpi operations-financial"><span>今日销售额（缓存）</span><strong>{isCurrentSales && sales?.amount_usd != null ? "USD " + sales.amount_usd : "—"}</strong><small>{salesNote}</small></article>
         <article className="operations-kpi operations-financial"><span>今日利润</span><strong>—</strong><small>待真实回款与成本核算</small></article>
       </div>
       <div className="operations-section-heading operations-subheading"><h3>运营指标</h3><span className="operations-note">店铺整体缓存 · 不随站点筛选</span></div>

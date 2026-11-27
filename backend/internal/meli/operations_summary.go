@@ -133,6 +133,7 @@ type OperationsRow struct {
 
 type OperationsOverview struct {
 	OperationsSummary
+	Sales    OperationsSales `json:"sales"`
 	Activity []OperationsRow `json:"activity"`
 	Todos    []OperationsRow `json:"todos"`
 }
@@ -231,5 +232,10 @@ func (s *Service) OperationsOverview(ctx context.Context, owner, store, site str
 			out.Activity = append(out.Activity, row)
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	rows.Close()
+	out.Sales, err = s.operationsSales(ctx, owner, store, site, out.OperationsSummary)
+	return out, err
 }
