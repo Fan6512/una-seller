@@ -54,7 +54,7 @@ func Run(ctx context.Context, logger *log.Logger, refresh func(context.Context, 
 		err := refresh(pass, client, time.Now())
 		cancel()
 		if err != nil && ctx.Err() == nil {
-			logger.Printf("%s refresh unavailable; retry next interval", ID)
+			logger.Printf("%s refresh has unresolved work; retry next interval", ID)
 		}
 		select {
 		case <-ctx.Done():

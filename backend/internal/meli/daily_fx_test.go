@@ -106,10 +106,14 @@ func TestDailyFXBackfillSkipsUnavailableDay(t *testing.T) {
 	})}
 	now := time.Date(1999, 1, 9, 12, 0, 0, 0, time.UTC)
 	cursor := ""
-	if err := refreshDailyFX(ctx, db, client, now, &cursor); err == nil || cursor != "1999-01-05" {
+	first := dailyFXPassStats{}
+	if err := refreshDailyFX(ctx, db, client, now, &cursor, &first); err == nil || cursor != "1999-01-05" ||
+		first.targets != 2 || first.saved != 0 || first.failed != 2 {
 		t.Fatalf("first pass: %s %v", cursor, err)
 	}
-	if err := refreshDailyFX(ctx, db, client, now, &cursor); err == nil || cursor != "1999-01-06" {
+	second := dailyFXPassStats{}
+	if err := refreshDailyFX(ctx, db, client, now, &cursor, &second); err == nil || cursor != "1999-01-06" ||
+		second.targets != 2 || second.saved != 1 || second.failed != 1 {
 		t.Fatalf("second pass: %s %v", cursor, err)
 	}
 	if got := strings.Join(requests, ","); got != "1999-01-08,1999-01-04,1999-01-08,1999-01-05" {
@@ -123,4 +127,20 @@ func TestDailyFXBackfillSkipsUnavailableDay(t *testing.T) {
 	if err := db.QueryRow(ctx, `SELECT count(*) FROM app.daily_usd_cny_rates WHERE accounting_day IN ('1999-01-05','1999-01-09')`).Scan(&failedRows); err != nil || failedRows != 0 {
 		t.Fatalf("invalid rate saved: %d %v", failedRows, err)
 	}
+}
+
+// lookupDailyFX performs only a cached read, not a provider call. Missing rows
+// must remain unavailable; never substitute the latest rate for an old order.
+func lookupDailyFX(ctx context.Context, db *pgxpool.Pool, orderCreatedAt time.Time) (ProfitFXRate, error) {
+	day, _, _ := salesDay(orderCreatedAt)
+	var fx ProfitFXRate
+	var observed string
+	err := db.QueryRow(ctx, `SELECT locked_rate::text,source,observation_day::text
+		FROM app.daily_usd_cny_rates WHERE accounting_day=$1::date`, day).
+		Scan(&fx.CNYPerUSD, &fx.Source, &observed)
+	if err != nil {
+		return ProfitFXRate{}, err
+	}
+	fx.AsOf, err = time.Parse(dailyFXDateFormat, observed)
+	return fx, err
 }

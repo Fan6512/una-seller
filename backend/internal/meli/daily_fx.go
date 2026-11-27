@@ -81,23 +81,11 @@ func saveDailyFX(ctx context.Context, db *pgxpool.Pool, rate DailyFXRate) error 
 	return err
 }
 
-// lookupDailyFX performs only a cached read, not a provider call. Missing rows
-// must remain unavailable; never substitute the latest rate for an old order.
-func lookupDailyFX(ctx context.Context, db *pgxpool.Pool, orderCreatedAt time.Time) (ProfitFXRate, error) {
-	day, _, _ := salesDay(orderCreatedAt)
-	var fx ProfitFXRate
-	var observed string
-	err := db.QueryRow(ctx, `SELECT locked_rate::text,source,observation_day::text
-		FROM app.daily_usd_cny_rates WHERE accounting_day=$1::date`, day).
-		Scan(&fx.CNYPerUSD, &fx.Source, &observed)
-	if err != nil {
-		return ProfitFXRate{}, err
-	}
-	fx.AsOf, err = time.Parse(dailyFXDateFormat, observed)
-	return fx, err
+type dailyFXPassStats struct {
+	targets, saved, failed int
 }
 
-func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, now time.Time, historyAfter *string) error {
+func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, now time.Time, historyAfter *string, stats *dailyFXPassStats) error {
 	today, _, _ := salesDay(now)
 	// Only public dates leave the server. Bound each pass to today's missing
 	// reference and rotating missing cached-order days, not one call per order.
@@ -130,6 +118,7 @@ func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, 
 	if err != nil {
 		return err
 	}
+	stats.targets = len(days)
 	var failed error
 	for _, day := range days {
 		if ctx.Err() != nil {
@@ -143,7 +132,10 @@ func refreshDailyFX(ctx context.Context, db *pgxpool.Pool, client *http.Client, 
 			err = saveDailyFX(ctx, db, rate)
 		}
 		if err != nil {
+			stats.failed++
 			failed = errors.Join(failed, err)
+		} else {
+			stats.saved++
 		}
 	}
 	return failed
@@ -155,6 +147,20 @@ func RunDailyFX(ctx context.Context, db *pgxpool.Pool, logger *log.Logger) {
 	// The cursor is bounded process-local state, reset on restart.
 	historyAfter := ""
 	fx.Run(ctx, logger, func(pass context.Context, client *http.Client, now time.Time) error {
-		return refreshDailyFX(pass, db, client, now, &historyAfter)
+		stats := dailyFXPassStats{}
+		err := refreshDailyFX(pass, db, client, now, &historyAfter, &stats)
+		if stats.targets > 0 || err != nil {
+			result := "ok"
+			if err != nil {
+				result = "unavailable"
+				if stats.saved > 0 {
+					result = "partial"
+				}
+			}
+			// Counts only; never log a provider response or database error.
+			logger.Printf("%s pass result=%s targets=%d saved=%d failed=%d deferred=%d",
+				fx.ID, result, stats.targets, stats.saved, stats.failed, stats.targets-stats.saved-stats.failed)
+		}
+		return err
 	})
 }

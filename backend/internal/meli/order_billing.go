@@ -280,13 +280,6 @@ func groupBillingCharges(charges []BillingCharge) []BillingChargeGroup {
 	return entries
 }
 
-// Shipment cost is scoped to a seller within the Shipment. Its net cost is
-// already reported by the platform. Billing's original debit is a separate fact.
-func parseBillingShipping(raw []byte, child string) (buyer, sellerNet string) {
-	buyer, sellerNet, _ = parseBillingShippingEvidence(raw, child)
-	return buyer, sellerNet
-}
-
 // Preserve the manual seller-scoped amounts while retaining only a redacted
 // sender-scope classification. A single observed sender is not proof of
 // complete official shipment membership.

@@ -724,3 +724,10 @@ func TestBillingSnapshotPostgresRestartPersistence(t *testing.T) {
 	}
 	t.Logf("billing snapshot survived PostgreSQL restart: checked_at=%s", cached.Items[0].CheckedAt.Format(time.RFC3339Nano))
 }
+
+// Shipment cost is scoped to a seller within the Shipment. Its net cost is
+// already reported by the platform. Billing's original debit is a separate fact.
+func parseBillingShipping(raw []byte, child string) (buyer, sellerNet string) {
+	buyer, sellerNet, _ = parseBillingShippingEvidence(raw, child)
+	return buyer, sellerNet
+}

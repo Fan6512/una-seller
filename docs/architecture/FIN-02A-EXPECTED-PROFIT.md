@@ -175,7 +175,7 @@
 
 ### 环境及执行边界
 
-- 再次确认 UNA Seller 主机 `[production-host-redacted]` / `[hostname-redacted]`，生产服务 PID [redacted]、二进制 SHA256 `e524d7c9737258c15f05ee9f1eb71b3dfb56148e13c44fbfaa27547eb1cfcf80`。临时源码、API 和核验脚本位于 `/tmp/una-fin118-final-6f7cca79`，使用主机已有 golang:1.26 构建。
+- 再次确认 UNA Seller 主机 `[production-host-redacted]` / `[hostname-redacted]`，生产服务 PID [redacted]、二进制 SHA256 `[production-binary-digest-redacted]`。临时源码、API 和核验脚本位于 `/tmp/una-fin118-final-6f7cca79`，使用主机已有 golang:1.26 构建。
 - 独立 Docker 网络 `una-fin118-final`、PostgreSQL 17.11 容器 `una-fin118-final-pg`、独立数据库 `una_fin118_final`，仅回环端口55439。临时 API 使用自身容器内的8787，不发布端口、不占用生产8787。仅在临时 API 中启用 Billing/FX，关闭通知与补偿任务；生产配置未修改。
 - 生产库只读复制两笔必要订单财务字段及其唯一已连接/已验证授权范围。订单从隔离库空 Billing 缓存开始；不复制买家数据或全店账单。复用当时有效期超过15分钟的既有授权，在主机内部处理加密凭据和配置，不输出、不提交凭据；未触发克隆授权续期。
 - 为统计官方请求，只在临时源码的既有 HTTP GET 入口添加一行资源类别日志，不记录 URL、ID、请求头或响应体；算法、授权和调度逻辑保持基线。原始基线临时 API 亦已构建。补充断言沿用既有 Go 测试机制，临时文件只在主机验收目录，不加入仓库测试框架。
@@ -243,4 +243,8 @@
 
 ### Ready 前最后两项运行健壮性修订
 
-基线 00b7938 CI PASS。FX 回填每轮仍最多2日，今日优先；历史日以进程内游标轮转，失败继续处理其他日期、末尾汇总错误，游标重启可重置，不写假汇率。Billing 每轮记录固定状态和 targets/done/review/deferred 脱敏计数（done/review 仅计成功持久化的终态，deferred 包括冲突、待重试及未处理目标），并区分锁繁忙/读取失败；不输出订单、卖家标识或原始错误。首页覆盖数文案改为已核算，部署顺序写入 CLOUD_GO_API_DEPLOY.md。吞吐/聚合内存优化留待实际单量测量，不修改估算合同或迁移。未执行生产操作，最终 CI 待核验。
+基线 00b7938 CI PASS。FX 回填每轮仍最多2日，今日优先；历史日以进程内游标轮转，失败继续处理其他日期、末尾汇总错误，游标重启可重置，不写假汇率。Billing 每轮记录固定状态和 targets/done/review/deferred 脱敏计数（done/review 仅计成功持久化的终态，deferred 包括冲突、待重试及未处理目标），并区分锁繁忙/读取失败；不输出订单、卖家标识或原始错误。首页覆盖数文案改为已核算，部署顺序写入 CLOUD_GO_API_DEPLOY.md。吞吐/聚合内存优化留待实际单量测量，不修改估算合同或迁移。未执行生产操作，基线 [20857b23 CI 45954377989](https://github.com/Fan6512/una-seller/actions/runs/45954377989) 四项通过。
+
+### Ready 前非阻塞收尾
+
+20857b23 的 Go Backend / Desktop Frontend / Browser Extension MV3 / Changed Files CI 均通过，增量复审确认前两项 P1 已解决。仅测试使用的 lookupDailyFX、parseBillingShipping 包装函数移入测试文件；生产实现及汇率锁定、估算口径不变。FX 每轮有工作时输出 result=ok/partial/unavailable 和 targets/saved/failed/deferred 计数，部分成功与全部失败分开；saved 表示成功执行幂等保存，不保证新增行数。历史失败日仍按既定轮转重试，不新增永久失败分类或持久化调度；保留 30 分钟周期及每轮最多2日。Billing done 状态已清空 Reason，无需改动。0023 权限意图补入部署说明，不修改已核验迁移 SQL。生产二进制摘要从当前专项文档移除，未改写历史。聚合内存、采集吞吐、额外成本清空留待后续，不阻塞合并。此收尾提交的 CI 需独立确认；未执行生产操作，Windows GUI 待 V0.5 验收。
