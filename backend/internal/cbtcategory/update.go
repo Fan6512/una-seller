@@ -84,6 +84,16 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 	}
 	activeSummary := summarize(active, overrides, nil)
 	if active.Version == latest && activeSummary.Unprocessed == 0 && activeSummary.Skipped == 0 {
+		// A new deterministic correction can update an already complete
+		// snapshot without calling the provider or waiting for a new dump.
+		if applyCategoryGlossary(&active, overrides, nil) {
+			if err = saveJSON(dir, activeFile, active); err != nil {
+				return activeSummary, err
+			}
+			activeSummary = summarize(active, overrides, nil)
+			activeSummary.State, activeSummary.Published = "published", true
+			return activeSummary, nil
+		}
 		activeSummary.State = "unchanged"
 		return activeSummary, nil
 	}
@@ -125,6 +135,7 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 		staged, failed = next, make(map[string]bool)
 	}
 	resp.Body.Close()
+	applyCategoryGlossary(&staged, overrides, failed)
 	summary := summarize(staged, overrides, failed)
 	if summary.Failed+summary.Unprocessed > 0 && translate == nil {
 		if active.Version != latest {
@@ -265,17 +276,10 @@ func openProgress(path string, staged *snapshot) (*os.File, map[string]bool, err
 	}
 	// Sync follows complete newline-delimited records. A crashed writer can leave a torn tail.
 	end := bytes.LastIndexByte(data, '\n') + 1
-	failed := make(map[string]bool)
-	for line := range bytes.SplitSeq(data[:end], []byte{'\n'}) {
-		if len(line) == 0 {
-			continue
-		}
-		var record progressRecord
-		if json.Unmarshal(line, &record) != nil || !record.Version.valid() {
-			file.Close()
-			return nil, nil, errors.New("invalid CBT dictionary progress record")
-		}
-		applyProgress(staged, failed, record)
+	failed, err := replayProgress(data[:end], staged)
+	if err != nil {
+		file.Close()
+		return nil, nil, err
 	}
 	if end != len(data) {
 		if err = file.Truncate(int64(end)); err != nil {
@@ -288,6 +292,21 @@ func openProgress(path string, staged *snapshot) (*os.File, map[string]bool, err
 		return nil, nil, err
 	}
 	return file, failed, nil
+}
+
+func replayProgress(data []byte, staged *snapshot) (map[string]bool, error) {
+	failed := make(map[string]bool)
+	for line := range bytes.SplitSeq(data, []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		var record progressRecord
+		if json.Unmarshal(line, &record) != nil || !record.Version.valid() {
+			return nil, errors.New("invalid CBT dictionary progress record")
+		}
+		applyProgress(staged, failed, record)
+	}
+	return failed, nil
 }
 
 func applyProgress(staged *snapshot, failed map[string]bool, record progressRecord) {
@@ -354,14 +373,18 @@ func makeBatches(current snapshot, overrides map[string]string, failed map[strin
 	for _, id := range ids {
 		item := current.Categories[id]
 		text, segments := item.Name, 1
-		if names[item.Name] > 1 && len(item.Path) > 1 {
+		if len(item.Path) > 1 {
 			parts := make([]string, len(item.Path))
 			for i, node := range item.Path {
 				parts[i] = node.Name
 			}
-			// Try the complete path, then progressively remove oldest ancestors.
+			// Use the actual parent for unique names and the full path for duplicates.
 			// Fall back to the leaf without reusing a different path's context.
-			for start := 0; start < len(parts)-1; start++ {
+			first := len(parts) - 2
+			if names[item.Name] > 1 {
+				first = 0
+			}
+			for start := first; start < len(parts)-1; start++ {
 				candidate := strings.Join(parts[start:], " | ")
 				if strings.Count(candidate, "|") == len(parts)-start-1 &&
 					!strings.ContainsRune(candidate, '｜') && utf8.RuneCountInString(candidate) <= 500 {

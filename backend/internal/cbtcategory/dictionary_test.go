@@ -220,7 +220,7 @@ func TestDictionaryResumeIncrementalUpdatesAndManualPaths(t *testing.T) {
 	tree["CBT102"] = fixtureNode(newPath, nil, "enabled")
 	latest.Store(generatedVersion(t, version2, tree))
 	result = run(context.Background(), func(_ context.Context, texts []string) map[string]string {
-		if !slices.Equal(texts, []string{"Jugs"}) {
+		if !slices.Equal(texts, []string{"Home | Jugs"}) {
 			t.Fatalf("incremental update sent unchanged or retained names: %v", texts)
 		}
 		return nil
@@ -241,10 +241,10 @@ func TestDictionaryResumeIncrementalUpdatesAndManualPaths(t *testing.T) {
 		t.Fatalf("new unprocessed path should preserve original leaf: %v", got)
 	}
 	result = run(context.Background(), func(_ context.Context, texts []string) map[string]string {
-		if !slices.Equal(texts, []string{"Jugs"}) {
+		if !slices.Equal(texts, []string{"Home | Jugs"}) {
 			t.Fatalf("retry failed to isolate remainder: %v", texts)
 		}
-		return map[string]string{"Jugs": "水壶"}
+		return map[string]string{"Home | Jugs": "家居 | 水壶"}
 	}, 1)
 	if result.Translated != 4 || !result.Published || result.Batches != 1 {
 		t.Fatalf("latest version did not finish: %+v", result)
@@ -421,5 +421,62 @@ func TestReaderBackoffAndChangedFileRecovery(t *testing.T) {
 	if reader.Load().PublishedBreadcrumb("CBT101") == nil || reader.activeError != "" ||
 		!reader.activeRetryAt.IsZero() || reader.activeBackoff != 0 {
 		t.Fatal("repaired file was not immediately reloaded")
+	}
+}
+
+func TestCategoryContextGlossaryAndPlan(t *testing.T) {
+	path := []PathNode{{ID: "CBT800", Name: "Home Appliances"}, {ID: "CBT801", Name: "Fans"}}
+	heater := []PathNode{{ID: "CBT800", Name: "Home Appliances"}, {ID: "CBT802", Name: "Space Heaters"}}
+	staged := snapshot{Categories: map[string]category{
+		"CBT801": {ID: "CBT801", Name: "Fans", Path: path, Status: "enabled"},
+		"CBT802": {ID: "CBT802", Name: "Space Heaters", Path: heater, Status: "enabled", Zh: "太空加热器"},
+	}}
+	applyCategoryGlossary(&staged, nil, nil)
+	if staged.Categories["CBT802"].Zh != "取暖器" {
+		t.Fatal("known literal mistranslation not corrected")
+	}
+	batches := makeBatches(staged, nil, nil, 16)
+	if len(batches) != 1 || len(batches[0]) != 1 || batches[0][0].text != "Home Appliances | Fans" {
+		t.Fatalf("unique leaf lost actual parent context: %+v", batches)
+	}
+	plan := summarizePlan(staged, nil, nil, 16)
+	if plan.Inputs != 1 || plan.Batches != 1 || plan.SourceChars != len("Home Appliances | Fans") {
+		t.Fatalf("budget plan differs from batch input: %+v", plan)
+	}
+}
+
+func TestCompletedDictionaryAppliesGlossaryWithoutProvider(t *testing.T) {
+	server, latest := fixtureServer(t)
+	dir := t.TempDir()
+	path := []PathNode{{ID: "CBT800", Name: "Space Heaters"}}
+	tree := map[string]dumpNode{"CBT800": fixtureNode(path, nil, "enabled")}
+	current := generatedVersion(t, version1, tree)
+	latest.Store(current)
+	active, err := readDump(bytes.NewReader(current.body), current.version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := active.Categories["CBT800"]
+	item.Zh = "太空加热器"
+	active.Categories[item.ID] = item
+	if err := saveJSON(dir, activeFile, active); err != nil {
+		t.Fatal(err)
+	}
+	never := func(context.Context, []string) map[string]string {
+		t.Fatal("complete dictionary correction must not call provider")
+		return nil
+	}
+	for _, wantPublished := range []bool{true, false} {
+		result, err := update(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all", never, 0)
+		if err != nil || result.Published != wantPublished {
+			t.Fatalf("unexpected correction result: %+v err=%v", result, err)
+		}
+	}
+	if got := NewReader(dir).Load().Localize(path); !slices.Equal(got, []string{"取暖器"}) {
+		t.Fatalf("corrected active dictionary not visible: %v", got)
+	}
+	plan, err := Plan(dir, 16)
+	if err != nil || plan.MaxTextsPerBatch != 16 || plan.SnapshotSource != activeFile || plan.Version != current.version || plan.SourceChars != 0 {
+		t.Fatalf("unexpected plan metadata: %+v err=%v", plan, err)
 	}
 }

@@ -72,17 +72,31 @@ func configuredTranslator() *httpapi.TranslationService {
 }
 
 func updateCBTCategories(args []string, dir string, translator *httpapi.TranslationService) error {
-	const usage = "usage: api cbt-categories update [-max-batches N]"
+	const usage = "usage: api cbt-categories update [-max-batches N] [-plan [-plan-batch-size N]]"
 	if len(args) == 0 || args[0] != "update" {
 		return errors.New(usage)
 	}
 	command := flag.NewFlagSet("cbt-categories update", flag.ContinueOnError)
 	limit := command.Int("max-batches", 0, "stop after N provider batches; zero is unlimited")
+	plan := command.Bool("plan", false, "estimate remaining source characters from local snapshot without upstream requests")
+	planBatchSize := command.Int("plan-batch-size", 0, "optional plan batch size (1-120; zero uses configured provider)")
 	if err := command.Parse(args[1:]); err != nil {
 		return err
 	}
-	if command.NArg() != 0 || *limit < 0 {
+	if command.NArg() != 0 || *limit < 0 || *planBatchSize < 0 || *planBatchSize > 120 || (!*plan && *planBatchSize != 0) {
 		return errors.New(usage)
+	}
+
+	if *plan {
+		batchSize := translator.CategoryBatchSize()
+		if *planBatchSize > 0 {
+			batchSize = *planBatchSize
+		}
+		result, err := cbtcategory.Plan(dir, batchSize)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
