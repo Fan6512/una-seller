@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
@@ -14,6 +15,9 @@ import (
 )
 
 func configuredTranslator() *httpapi.TranslationService {
+	if strings.TrimSpace(os.Getenv("TRANSLATION_PROVIDER")) == "doubao" {
+		return httpapi.NewDoubaoTranslationService(os.Getenv("DOUBAO_TRANSLATE_API_KEY"))
+	}
 	return httpapi.NewTranslationService(os.Getenv("TRANSLATION_PROVIDER"),
 		os.Getenv("AZURE_TRANSLATOR_KEY"), os.Getenv("AZURE_TRANSLATOR_REGION"),
 		os.Getenv("BAIDU_TRANSLATE_APP_ID"), os.Getenv("BAIDU_TRANSLATE_SECRET"))
@@ -39,7 +43,7 @@ func updateCBTCategories(args []string, dir string, translator *httpapi.Translat
 	if translator != nil {
 		translate = translator.TranslateCategoryBatch
 	}
-	result, err := cbtcategory.Update(ctx, dir, translate, *limit)
+	result, err := cbtcategory.Update(ctx, dir, translate, *limit, translator.CategoryBatchSize())
 	if err != nil {
 		return err
 	}

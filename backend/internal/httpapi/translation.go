@@ -51,10 +51,12 @@ type TranslationService struct {
 	pending map[translationCacheKey]*translationFlight
 }
 
-func NewTranslationService(provider, azureKey, azureRegion, baiduAppID, baiduSecret string) *TranslationService {
+func NewTranslationService(provider, apiKey, azureRegion, baiduAppID, baiduSecret string) *TranslationService {
 	switch strings.TrimSpace(provider) {
 	case "", "azure":
-		return NewAzureTranslationService(azureKey, azureRegion)
+		return NewAzureTranslationService(apiKey, azureRegion)
+	case "doubao":
+		return NewDoubaoTranslationService(apiKey)
 	case "baidu":
 		appID, secret := strings.TrimSpace(baiduAppID), strings.TrimSpace(baiduSecret)
 		if appID != "" && secret != "" {
@@ -75,6 +77,10 @@ func newTranslationService(name string, provider translationProvider) *Translati
 }
 
 func (s *TranslationService) translate(ctx context.Context, source string, texts []string) map[string]string {
+	return s.translateWithin(ctx, source, texts, 4*time.Second)
+}
+
+func (s *TranslationService) translateWithin(ctx context.Context, source string, texts []string, timeout time.Duration) map[string]string {
 	out := make(map[string]string)
 	if s == nil || len(texts) == 0 {
 		return out
@@ -85,7 +91,7 @@ func (s *TranslationService) translate(ctx context.Context, source string, texts
 		return out
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	waiting := make(map[string]*translationFlight)
@@ -246,7 +252,18 @@ func categoryTranslationSource(categoryID string) string {
 
 // TranslateCategoryBatch is for the offline CBT dictionary updater.
 func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts []string) map[string]string {
+	if s != nil && s.providerName == "doubao" {
+		return s.translateWithin(ctx, "en", texts, 30*time.Second)
+	}
 	return s.translate(ctx, "en", texts)
+}
+
+// CategoryBatchSize is the offline updater's maximum number of texts per request.
+func (s *TranslationService) CategoryBatchSize() int {
+	if s != nil && s.providerName == "doubao" {
+		return 16
+	}
+	return 120
 }
 
 func categoryAttributeTranslationTexts(result meli.CategoryRules) []string {

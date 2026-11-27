@@ -91,6 +91,15 @@ func TestAccountEndpointAndProviderValidation(t *testing.T) {
 	if err := s.validateAccountConfig("translation", baidu); err != nil {
 		t.Fatal(err)
 	}
+	doubao := accountServiceConfig{Provider: "doubao", APIKey: "mock-doubao"}
+	if err := s.validateAccountConfig("translation", doubao); err != nil {
+		t.Fatal(err)
+	}
+	invalidDoubao := doubao
+	invalidDoubao.AppID = "unexpected"
+	if err := s.validateAccountConfig("translation", invalidDoubao); err == nil {
+		t.Fatal("Doubao accepted legacy APP ID")
+	}
 	bad := azure
 	bad.BaseURL = "https://example.org/v1"
 	if err := s.validateAccountConfig("translation", bad); err == nil {

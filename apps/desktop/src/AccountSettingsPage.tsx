@@ -6,7 +6,7 @@ import {
 } from "./accountServices";
 import "./accountSettings.css";
 
-type TranslationProvider = "azure" | "baidu";
+type TranslationProvider = "azure" | "baidu" | "doubao";
 const aiDefaultURL = "https://api.openai.com/v1";
 
 export default function AccountSettingsPage({ email }: { email: string }) {
@@ -38,7 +38,7 @@ export default function AccountSettingsPage({ email }: { email: string }) {
         setAIModel(ai.model || "");
       }
       const translation = rows.find(row => row.kind === "translation");
-      if (translation?.provider === "azure" || translation?.provider === "baidu") {
+      if (translation?.provider === "azure" || translation?.provider === "baidu" || translation?.provider === "doubao") {
         setTranslationProvider(translation.provider);
         setAzureRegion(translation.region || "");
         setBaiduAppID(translation.app_id || "");
@@ -100,7 +100,7 @@ export default function AccountSettingsPage({ email }: { email: string }) {
     }
     void run(() => updateService("translation", {
       provider: translationProvider, api_key: translationKey,
-      ...(translationProvider === "azure" ? { region: azureRegion.trim() } : { app_id: baiduAppID.trim() }),
+      ...(translationProvider === "azure" ? { region: azureRegion.trim() } : translationProvider === "baidu" ? { app_id: baiduAppID.trim() } : {}),
     }), "中文翻译凭据已保存，未自动发起付费请求。");
   }
 
@@ -196,17 +196,17 @@ export default function AccountSettingsPage({ email }: { email: string }) {
       <h2>中文翻译服务</h2>
       <p className="account-help">用于订单标题、类目和属性的中文阅读，不代替商品详情 EN/MX/BR AI 生成。</p>
       <p className="account-connection" role="status">{loading ? "正在读取配置…" :
-        translationStatus?.needs_rebind ? "密钥需要重新绑定（服务端加密主密钥已更换）" : translationStatus?.configured ? "已绑定 · " + (translationStatus.provider === "azure" ? "Azure Translator" : "百度翻译") : "尚未绑定"}</p>
+        translationStatus?.needs_rebind ? "密钥需要重新绑定（服务端加密主密钥已更换）" : translationStatus?.configured ? "已绑定 · " + (translationStatus.provider === "azure" ? "Azure Translator" : translationStatus.provider === "doubao" ? "火山引擎 · 豆包机器翻译" : "百度翻译") : "尚未绑定"}</p>
       <form onSubmit={saveTranslation} className="account-form">
         <label>翻译服务商<select value={translationProvider} disabled={busy}
           onChange={e => setTranslationProvider(e.target.value as TranslationProvider)}>
-          <option value="azure">Azure Translator</option><option value="baidu">百度翻译</option>
+          <option value="azure">Azure Translator</option><option value="baidu">百度翻译</option><option value="doubao">火山引擎 · 豆包机器翻译</option>
         </select></label>
         {translationProvider === "azure" ? <label>Azure Region<input value={azureRegion} disabled={busy}
           onChange={e => setAzureRegion(e.target.value)} placeholder="例如 eastus" required /></label>
-          : <label>百度 APP ID<input value={baiduAppID} disabled={busy}
-            onChange={e => setBaiduAppID(e.target.value)} placeholder="百度翻译平台 APP ID" required /></label>}
-        <label>{translationProvider === "azure" ? "Azure API Key" : "百度密钥"}
+          : translationProvider === "baidu" ? <label>百度 APP ID<input value={baiduAppID} disabled={busy}
+            onChange={e => setBaiduAppID(e.target.value)} placeholder="百度翻译平台 APP ID" required /></label> : null}
+        <label>{translationProvider === "azure" ? "Azure API Key" : translationProvider === "doubao" ? "豆包 API Key" : "百度密钥"}
           <input type="password" value={translationKey} disabled={busy}
             onChange={e => setTranslationKey(e.target.value)} autoComplete="new-password"
             placeholder={translationStatus ? "已绑定 Key 不会回传，填入新 Key 才替换" : "请输入服务商密钥"} required /></label>

@@ -128,6 +128,8 @@ func TestTranslationServiceProviderSelection(t *testing.T) {
 		{"", "mock-azure", "mock-baidu", "mock-value", "azure"},
 		{"azure", "mock-azure", "mock-baidu", "mock-value", "azure"},
 		{"baidu", "mock-azure", "mock-baidu", "mock-value", "baidu"},
+		{"doubao", "mock-doubao", "", "", "doubao"},
+		{"doubao", "", "", "", ""},
 		{"", "", "mock-baidu", "mock-value", ""},
 		{"baidu", "mock-azure", "", "mock-value", ""},
 		{"baidu", "mock-azure", "mock-baidu", "", ""},
@@ -328,5 +330,71 @@ func TestTranslationServiceDedupesNFCAndBoundsCache(t *testing.T) {
 	if got := service.translate(context.Background(), "es", []string{composed}); got[composed] != "咖啡" ||
 		calls.Load() != 3 || len(service.cache) != translationCacheLimit {
 		t.Fatalf("cache crossed source languages or exceeded its bound: %#v", got)
+	}
+}
+
+func TestDoubaoTranslationProtocolAndBatching(t *testing.T) {
+	service := NewDoubaoTranslationService("mock-doubao-key")
+	p := service.provider.(*doubaoTranslationProvider)
+	calls := 0
+	ids := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		id := r.Header.Get("X-Api-Request-Id")
+		if r.Method != http.MethodPost || r.Header.Get("X-Api-Key") != "mock-doubao-key" ||
+			r.Header.Get("X-Api-Resource-Id") != "volc.speech.mt" || len(id) != 36 || ids[id] ||
+			r.Header.Get("Content-Type") != "application/json" {
+			t.Error("invalid Doubao request")
+		}
+		ids[id] = true
+		var body struct {
+			Source string   `json:"source_language"`
+			Target string   `json:"target_language"`
+			Texts  []string `json:"text_list"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Source != "en" ||
+			body.Target != "zh" || len(body.Texts) == 0 || len(body.Texts) > 16 {
+			t.Error("invalid Doubao body")
+		}
+		rows := make([]map[string]string, 0, len(body.Texts))
+		for _, text := range body.Texts {
+			rows = append(rows, map[string]string{"translation": "译：" + text})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000000, "data": map[string]any{"translation_list": rows}})
+	}))
+	defer server.Close()
+	p.endpoint = server.URL
+	texts := make([]string, 17)
+	for i := range texts {
+		texts[i] = fmt.Sprintf("category %d", i)
+	}
+	out := service.TranslateCategoryBatch(context.Background(), texts)
+	if calls != 2 || len(out) != 17 || service.CategoryBatchSize() != 16 {
+		t.Fatalf("invalid batch result: calls=%d count=%d", calls, len(out))
+	}
+	for _, text := range texts {
+		if out[text] != "译："+text {
+			t.Fatal("translation alignment changed")
+		}
+	}
+	if len(service.TranslateCategoryBatch(context.Background(), texts)) != 17 || calls != 2 {
+		t.Fatal("cache did not reuse completed translations")
+	}
+}
+
+func TestDoubaoRejectsFailedBusinessResponse(t *testing.T) {
+	for _, body := range []string{
+		`{"code":45000001,"data":{"translation_list":[{"translation":"bad"}]}}`,
+		`{"code":20000000,"data":{"translation_list":[]}}`,
+	} {
+		service := NewDoubaoTranslationService("mock-key")
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+		service.provider.(*doubaoTranslationProvider).endpoint = server.URL
+		if out := service.translate(context.Background(), "es", []string{"Marca"}); len(out) != 0 {
+			t.Error("invalid response accepted")
+		}
+		server.Close()
 	}
 }

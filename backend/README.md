@@ -73,7 +73,7 @@ TRANSLATION_PROVIDER=disabled go run ./cmd/api cbt-categories update
 go run ./cmd/api cbt-categories update -max-batches 50
 ```
 
-第一条更新读取、校验并发布官方分类数据，供缺少翻译配置时显示原文。第二条沿用配置的 Azure 或百度 Provider，最多处理 50 个批次。省略 `-max-batches` 时持续处理，直到完成或 Provider 暂停。部署后可用 `una-seller-api cbt-categories update` 作为 cron 入口，由同一服务账号运行。同一目录仅允许一个更新进程。锁随文件句柄关闭释放，退出后目录中可保留空的 `update.lock`。
+第一条更新读取、校验并发布官方分类数据，供缺少翻译配置时显示原文。第二条沿用配置的 Azure、百度或豆包机器翻译 Provider，最多处理 50 个批次。豆包使用 `TRANSLATION_PROVIDER=doubao` 与仅服务端保存的 `DOUBAO_TRANSLATE_API_KEY`，每批最多 16 条；先用 `-max-batches 5` 受控验证，确认计费、译文与进度后再扩大批次。豆包按 Token 计费，不适用火山通用机器翻译的免费字符政策。账号管理可另外绑定用户自己的豆包 Key，公共离线词典维护凭据不得复用用户 Key。省略 `-max-batches` 时持续处理，直到完成或 Provider 暂停。部署后可用 `una-seller-api cbt-categories update` 作为 cron 入口，由同一服务账号运行。同一目录仅允许一个更新进程。锁随文件句柄关闭释放，退出后目录中可保留空的 `update.lock`。
 
 - 命令优先检查官方时间和 MD5。相同版本已完成时跳过翻译。新版本继续使用 ID、名称及完整路径都匹配的译文。运行中断后执行相同命令，从已保存的批次续跑。
 - Provider 已配置且更新暂停时，API 继续读取有效词典。关闭 Provider 时，验证通过的新官方版本可原子发布，未译名称显示原文。停用和已移除类目供历史阅读，已知不可上市的类目从新预测候选排除。
