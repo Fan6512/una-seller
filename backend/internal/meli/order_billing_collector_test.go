@@ -133,4 +133,47 @@ func TestBillingCollectorBatchResumeAndProfit(t *testing.T) {
 	if err != nil || out.NetUSD != nil || out.Profit != nil {
 		t.Fatalf("known sharing did not invalidate estimate: %+v %v", out, err)
 	}
+
+	// Simulate a process that stopped after reserving its final attempt.
+	// Both phases must become visible review states without another GET.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET shipment_id='80002'
+		WHERE store_id=$1 AND order_id='10002'`, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders o SET
+		expected_profit_billing_estimate=NULL,
+		expected_profit_billing_attempt=jsonb_build_object('evidence',`+expectedProfitEvidence+`,
+			'state',CASE WHEN o.order_id='10001' THEN 'pending' ELSE 'billing_read' END,
+			'billing_attempts',3,'relation_attempts',3,'retry_unix',0)
+		FROM app.meli_store_connections c WHERE c.id=o.store_id AND o.store_id=$1
+		AND o.order_id IN ('10001','10002')`, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.refreshBillingEstimates(ctx, now.Add(3*billing.Interval)); err != nil || billingCalls != 1 || relationCalls != after {
+		t.Fatalf("exhausted attempts made a request: %v", err)
+	}
+	for _, id := range []string{"10001", "10002"} {
+		got, err := s.GetExpectedOrderProfit(ctx, owner, store, scope, id)
+		if err != nil || got.Reason != "billing_review" || got.CollectionReason != "attempts_exhausted" || got.Profit != nil {
+			t.Fatalf("exhausted attempt not visible: %+v %v", got, err)
+		}
+	}
+	// Local contention before a GET must not consume the Billing budget.
+	if _, err := db.Exec(ctx, `UPDATE app.meli_orders SET expected_profit_billing_attempt=NULL
+		WHERE store_id=$1 AND order_id='10001'`, store); err != nil {
+		t.Fatal(err)
+	}
+	s.orderRequests.Lock()
+	busyErr := s.refreshBillingEstimates(ctx, now.Add(4*billing.Interval))
+	s.orderRequests.Unlock()
+	if busyErr == nil || billingCalls != 1 || relationCalls != after {
+		t.Fatalf("local busy request: %v", busyErr)
+	}
+	var attempts int
+	var reason string
+	if err := db.QueryRow(ctx, `SELECT (expected_profit_billing_attempt->>'billing_attempts')::int,
+		expected_profit_billing_attempt->>'reason' FROM app.meli_orders
+		WHERE store_id=$1 AND order_id='10001'`, store).Scan(&attempts, &reason); err != nil || attempts != 0 || reason != "request_busy" {
+		t.Fatalf("busy consumed budget: %d/%s %v", attempts, reason, err)
+	}
 }

@@ -155,7 +155,9 @@ func (s *Service) refreshBillingEstimates(ctx context.Context, now time.Time) er
 		var released bool
 		if err := conn.QueryRow(unlock, "SELECT pg_advisory_unlock($1)", billingCollectorLock).Scan(&released); err != nil || !released {
 			uncertain := conn.Hijack()
-			_ = uncertain.Close(unlock)
+			cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+			defer stop()
+			_ = uncertain.Close(cleanup)
 		}
 	}()
 	targets, err := s.billingCollectionTargets(ctx, now)

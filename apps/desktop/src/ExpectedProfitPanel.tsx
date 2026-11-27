@@ -55,13 +55,13 @@ export default function ExpectedProfitPanel({order, scope, disabled, billingChec
       ()=>"预计利润暂不可用（可能尚未完成服务端升级）").then(value=>{
       if (!controller.signal.aborted) {setData(value);setNeedsRefresh(false);setError("");}
     }).catch(problem=>{
-      if (!controller.signal.aborted) setError(problem instanceof Error?problem.message:"读取预计利润失败");
+      if (!controller.signal.aborted) {setError(problem instanceof Error?problem.message:"读取预计利润失败");setNeedsRefresh(true);}
     }).finally(()=>{if (!controller.signal.aborted) setLoading(false);});
     return ()=>controller.abort();
   },[path,order.status,order.last_updated,order.purchase_cost_cny,billingChecked,refresh]);
   useEffect(()=>()=>{action.current?.abort();},[path]);
   async function save(clear: boolean) {
-    if (!path || !data || disabled || loading || needsRefresh || action.current) return;
+    if (!path || loadedPath.current!==path || !data || disabled || loading || needsRefresh || action.current) return;
     const onlyCost=costOnly && !clear;
     if (!clear && ((!onlyCost && (!data.can_confirm || !/^-?(0|[1-9][0-9]{0,15})(\.[0-9]{1,8})?$/.test(net))) ||
         (onlyCost && !data.can_set_extra_cost) || !/^(0|[1-9][0-9]{0,11})(\.[0-9]{1,2})?$/.test(extra))) {
@@ -97,6 +97,7 @@ export default function ExpectedProfitPanel({order, scope, disabled, billingChec
     <p className="orders-muted">{data?reasons[data.reason]??"待核实":"预计利润尚未读取"}；不代表实际到账。</p>
     {isEstimate && <p className="orders-muted">{data?.net_risk==="shipment_membership_unknown"?"官方货件成员关系未完整核验；":""}账单估算仅供经营参考，费用完整性仍待核对。</p>}
     {isEstimate && data?.net_observed_at && <p className="orders-muted">账单观察时间：{new Date(data.net_observed_at).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})}（北京时间），非实时数据。</p>}
+    {data?.reason==="billing_review" && data.collection_reason && <p className="orders-muted">{{attempts_exhausted:"采集重试已耗尽",provider_read_failed:"平台读取失败",request_busy:"请求繁忙",rate_limited:"平台限流",request_interrupted:"请求中断",billing_unavailable:"账单尚不可用",invalid_saved_preview:"缓存证据无效",estimate_gate_rejected:"费用或归属证据不足"}[data.collection_reason]??"需人工核对"}</p>}
     {error && <p className="orders-alert" role="alert">{error}{needsRefresh?"；保留上次读取值和输入，请刷新核对后再保存。":""}</p>}
     <button type="button" className="orders-table-action" disabled={disabled || busy || !path} onClick={()=>setRefresh(n=>n+1)}>刷新预计利润</button>
     {data?.can_confirm && !editing && <button type="button" className="orders-table-action" disabled={disabled || busy}
