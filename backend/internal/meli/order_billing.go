@@ -340,6 +340,13 @@ func billingShippingDebit(charges []BillingCharge, shipment string) (amount, det
 // Every order must currently belong to the owner's verified marketplace child.
 func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, scope OrderScope,
 	ids []string) (BillingPreviewPage, error) {
+	return s.readOrderBilling(ctx, owner, store, scope, ids, true)
+}
+
+// readOrderBilling preserves the existing authorization and provider checks.
+// Diagnostic callers pass persist=false to avoid updating financial snapshots.
+func (s *Service) readOrderBilling(ctx context.Context, owner, store string, scope OrderScope,
+	ids []string, persist bool) (BillingPreviewPage, error) {
 	if !validUUID(store) || !orderScopeValid(scope) || !billingIDsValid(ids) {
 		return BillingPreviewPage{}, ErrOrderBillingInvalid
 	}
@@ -414,7 +421,7 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 	// Preserve A1 batch behavior. The desktop requests one order at a time.
 	// Never replace the last successful snapshot with missing billing or a
 	// partial shipment-cost response (including a costs request failure).
-	if len(ids) == 1 && page.Items[0].Available && (shipment == "" ||
+	if persist && len(ids) == 1 && page.Items[0].Available && (shipment == "" ||
 		(page.Items[0].Shipping != nil && page.Items[0].Shipping.SellerNetCostUSD != "")) {
 		item, err := s.saveOrderBillingSnapshot(ctx, owner, store, scope, child, auth.SellerID, shipment, startedAt, page.Items[0])
 		if err != nil {
