@@ -1,7 +1,7 @@
 # UNA Seller · 功能状态总台账
 
 > **日常功能进度与需求登记的统一入口** · 首次盘点：2026-11-23  
-> 核对基线：2026-11-27 main `abe3eb2b`（#115/#116/#117 已合并）；最近已记录生产 API `b1dd92ff`（0014–0020，订单/货件通知与自动补偿已启用）；联合生产升级未获批/未执行。当前已发布签名测试版 V0.5.0。旧基线与证据保留在 [整理前台账](https://github.com/Fan6512/una-seller/blob/abe3eb2b7c77caa589daafb61b1c42ac09c5da7d/docs/product/FEATURE-STATUS.md) 和各行历史记录。
+> 核对基线：2026-11-27 main `64a45994`（文档；固定代码 `f644d353`，#125/#126）；最近已记录生产 API `f644d353`（TR-02 词典与额度升级，全量暂停待质量决策）；V0.8.0 联合生产升级已执行，桌面签名发布仍以负责人回执为准。旧基线与证据保留在 [整理前台账](https://github.com/Fan6512/una-seller/blob/abe3eb2b7c77caa589daafb61b1c42ac09c5da7d/docs/product/FEATURE-STATUS.md) 和各行历史记录。
 > 产品范围：自用的 Mercado Libre CBT ERP；核心链路 **采集 → 工作稿/产品箱 → AI 整理 → CBT 刊登 → 已刊登管理 → 订单/财务**。Amazon 等平台只作为采集来源。  
 > 本文件记录功能进度与验收，不替代 [产品定义](PRODUCT-WORKFLOW-AND-EDITOR.md)、[技术路线](../architecture/DELIVERY.md)、具体 PR/Issue 或官方 API 取证。发现记录与实际代码冲突时，先核实当前 main、PR 和真实验收证据，再更新本台账。
 
