@@ -556,3 +556,31 @@ func TestBaiduRetryConsumesQuotaBeforeEachAttempt(t *testing.T) {
 		})
 	}
 }
+
+func TestBaiduPersonalKeyKeepsLargeKnownLanguageBatch(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		rows := make([]map[string]string, 0)
+		for _, original := range strings.Split(r.FormValue("q"), "\n") {
+			rows = append(rows, map[string]string{"src": original, "dst": "译:" + original})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"from": "en", "to": "zh", "trans_result": rows})
+	}))
+	defer server.Close()
+	texts := make([]string, 32)
+	for i := range texts {
+		texts[i] = fmt.Sprintf("Label %d", i)
+	}
+	personal := NewTranslationService("baidu", "", "", "mock-id", "mock-value")
+	personal.provider.(*baiduTranslationProvider).endpoint = server.URL
+	if got := personal.translate(context.Background(), "en", texts); len(got) != len(texts) || calls.Load() != 1 {
+		t.Fatalf("personal key batching regressed: translated=%d requests=%d", len(got), calls.Load())
+	}
+	calls.Store(0)
+	public := NewBaiduTranslationService("mock-id", "mock-value", filepath.Join(t.TempDir(), "usage.json"), 50000)
+	public.provider.(*baiduTranslationProvider).endpoint = server.URL
+	if got := public.TranslateCategoryBatch(context.Background(), texts); len(got) != len(texts) || calls.Load() != 2 {
+		t.Fatalf("public key did not retain 16-text batches: translated=%d requests=%d", len(got), calls.Load())
+	}
+}

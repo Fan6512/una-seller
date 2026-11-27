@@ -147,12 +147,13 @@ type baiduQuotaState struct {
 // baiduQuota is a fail-closed monthly character budget persisted next to the
 // dictionary. A nil quota means the caller supplies its own billed key.
 type baiduQuota struct {
-	mu     sync.Mutex
-	path   string
-	limit  int
-	month  string
-	used   int
-	warned bool
+	mu            sync.Mutex
+	path          string
+	limit         int
+	month         string
+	used          int
+	warned        bool
+	invalidWarned bool
 }
 
 func baiduMonth() string {
@@ -181,7 +182,7 @@ func (q *baiduQuota) reserve(n int) bool {
 	defer lock.Close()
 	month := baiduMonth()
 	if q.month != month {
-		q.warned = false
+		q.warned, q.invalidWarned = false, false
 	}
 	q.month, q.used = month, 0
 	data, err := os.ReadFile(q.path)
@@ -191,17 +192,24 @@ func (q *baiduQuota) reserve(n int) bool {
 			Chars *int   `json:"chars"`
 		}
 		if err != nil || json.Unmarshal(data, &state) != nil || state.Chars == nil || *state.Chars < 0 {
-			log.Print("translation provider=baidu outcome=quota_state_invalid")
+			if !q.invalidWarned {
+				log.Print("translation provider=baidu outcome=quota_state_invalid")
+				q.invalidWarned = true
+			}
 			return false
 		}
 		if parsed, err := time.Parse("2006-01", state.Month); err != nil || parsed.Format("2006-01") != state.Month || state.Month > month {
-			log.Print("translation provider=baidu outcome=quota_state_invalid")
+			if !q.invalidWarned {
+				log.Print("translation provider=baidu outcome=quota_state_invalid")
+				q.invalidWarned = true
+			}
 			return false
 		}
 		if state.Month == month {
 			q.used = *state.Chars
 		}
 	}
+	q.invalidWarned = false
 	if q.used > q.limit || n > q.limit-q.used {
 		if !q.warned {
 			q.warned = true
@@ -255,7 +263,8 @@ type baiduTranslationProvider struct {
 }
 
 // NewBaiduTranslationService is the operator-owned provider. monthlyLimit is a
-// hard cap in source characters; the counter persists in usagePath.
+// hard cap in source characters; the counter persists in usagePath. An empty
+// usagePath fails closed; personal keys use NewTranslationService instead.
 func NewBaiduTranslationService(appID, secret, usagePath string, monthlyLimit int) *TranslationService {
 	appID, secret = strings.TrimSpace(appID), strings.TrimSpace(secret)
 	if appID == "" || secret == "" || strings.ContainsAny(secret, "\r\n") {
@@ -298,7 +307,7 @@ func (p *baiduTranslationProvider) translate(ctx context.Context, source string,
 			continue
 		}
 		// Auto-detection returns one source language per request.
-		if characters > 0 && (source == "auto" || len(batch) >= 16 || characters+1+count > 1000) {
+		if characters > 0 && (source == "auto" || (p.quota != nil && len(batch) >= 16) || characters+1+count > 1000) {
 			if !p.translateBatch(ctx, source, batch, indexes, out) {
 				return out
 			}
