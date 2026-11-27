@@ -9,22 +9,22 @@ import (
 // confirmed expected-net source, and a local singleton pack is not proof of
 // the official pack or shipment membership.
 type BillingProbeReport struct {
-	Site                  string               `json:"site"`
-	Logistic              string               `json:"logistic"`
-	OrderStatus           string               `json:"order_status"`
-	MerchandiseUSD        string               `json:"merchandise_usd,omitempty"`
-	Available             bool                 `json:"billing_available"`
-	Payments              []billingProbePayment `json:"payments"`
-	Charges               []billingProbeCharge  `json:"charges"`
-	Taxes                 []BillingTax          `json:"taxes"`
-	Shipping              *billingProbeShipping `json:"shipping,omitempty"`
-	OfficialMembership    string               `json:"official_membership"`
+	Site               string                `json:"site"`
+	Logistic           string                `json:"logistic"`
+	OrderStatus        string                `json:"order_status"`
+	MerchandiseUSD     string                `json:"merchandise_usd,omitempty"`
+	Available          bool                  `json:"billing_available"`
+	Payments           []billingProbePayment `json:"payments"`
+	Charges            []billingProbeCharge  `json:"charges"`
+	Taxes              []BillingTax          `json:"taxes"`
+	Shipping           *billingProbeShipping `json:"shipping,omitempty"`
+	OfficialMembership string                `json:"official_membership"`
 }
 
 type billingProbePayment struct {
-	Status              string `json:"status"`
-	MoneyReleaseStatus  string `json:"money_release_status"`
-	HasPaymentID        bool   `json:"has_payment_id"`
+	Status             string `json:"status"`
+	MoneyReleaseStatus string `json:"money_release_status"`
+	HasPaymentID       bool   `json:"has_payment_id"`
 }
 
 type billingProbeCharge struct {
