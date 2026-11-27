@@ -40,6 +40,10 @@ func TestLLMReviewOfflineCandidates(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(plan, again) {
 		t.Fatal("sample not reproducible")
 	}
+	excluded, err := PlanReview(dir, "translated", "fixed", 200, false, true, map[string]bool{item.ID: true})
+	if err != nil || excluded.Selected != 0 || excluded.PriorExcluded != 1 {
+		t.Fatalf("prior sample not excluded: %+v %v", excluded, err)
+	}
 	plan.Rows[0].Candidate = "家居其他用品"
 	in := ReviewSet{Version: plan.Version, Rows: plan.Rows}
 	if err := saveJSON(dir, "input.json", in); err != nil {
@@ -101,5 +105,28 @@ func TestLLMCumulativeQuotaNeverResets(t *testing.T) {
 	}
 	if _, err := ReconcileLLMUsage(dir, 0); err == nil {
 		t.Fatal("corrupt state silently reset")
+	}
+}
+
+func TestLLMReviewProperNameException(t *testing.T) {
+	item := category{ID: "CBT106855", Name: "PS Vita - PlayStation Vita", Status: "enabled",
+		Path: []PathNode{{ID: "CBT106855", Name: "PS Vita - PlayStation Vita"}}}
+	row := reviewRow(item, true)
+	for _, label := range []string{item.Name, "PS Vita", "PlayStation Vita"} {
+		row.Candidate = label
+		if !validReviewRow(row, item) {
+			t.Fatalf("verified name rejected: %q", label)
+		}
+	}
+	row.Candidate = "Other Console"
+	if validReviewRow(row, item) {
+		t.Fatal("unverified English candidate accepted")
+	}
+	item.ID, item.Name = "CBT123", "Tools"
+	item.Path = []PathNode{{ID: item.ID, Name: item.Name}}
+	row = reviewRow(item, true)
+	row.Candidate = "Tools"
+	if validReviewRow(row, item) {
+		t.Fatal("untranslated generic name accepted")
 	}
 }

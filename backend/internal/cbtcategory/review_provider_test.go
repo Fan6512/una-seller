@@ -33,13 +33,13 @@ func TestLLMProviderBearerAndQuota(t *testing.T) {
 	}))
 	defer server.Close()
 	p := llmReviewProvider{appID: "mock-app", key: "mock-key", endpoint: server.URL, client: server.Client(), limit: LLMTrialLimit}
-	if got, err := p.translate(context.Background(), dir, "Tools | Axes"); err != nil || got != "斧头" {
+	if got, _, err := p.translate(context.Background(), dir, "Tools | Axes"); err != nil || got != "斧头" {
 		t.Fatalf("unexpected result %q %v", got, err)
 	}
 	if _, err := ReconcileLLMUsage(dir, LLMTrialLimit); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.translate(context.Background(), dir, "Tools | Axes"); err == nil || calls != 1 {
+	if _, _, err := p.translate(context.Background(), dir, "Tools | Axes"); err == nil || calls != 1 {
 		t.Fatal("quota overage reached upstream")
 	}
 }
@@ -65,7 +65,7 @@ func TestLLMProviderOfficialErrorAndResponseValidation(t *testing.T) {
 			}))
 			defer server.Close()
 			p := llmReviewProvider{appID: "mock-app", key: "mock-key", endpoint: server.URL, client: server.Client(), limit: LLMTrialLimit}
-			got, err := p.translate(context.Background(), dir, "Tools | Axes")
+			got, _, err := p.translate(context.Background(), dir, "Tools | Axes")
 			if got != "" || err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret-must-not-leak") {
 				t.Fatalf("unexpected result %q %v", got, err)
 			}
@@ -97,7 +97,7 @@ func TestLLMTrialFailureReportsReservedUsage(t *testing.T) {
 	p := llmReviewProvider{appID: "mock-app", key: "mock-key", endpoint: server.URL, client: server.Client(), limit: LLMTrialLimit}
 	out, err := runLLMTrial(context.Background(), dir, "all", "fixed", 1, false, p)
 	state, readErr := loadLLMUsage(dir)
-	if err == nil || readErr != nil || out.Usage == nil || *out.Usage != state.Chars || state.Chars <= 100 || out.Completed != 0 {
+	if err == nil || readErr != nil || out.Usage == nil || *out.Usage != state.Chars || state.Chars <= 100 || out.Completed != 0 || out.UsageBefore == nil || *out.UsageBefore != 100 || out.ReservedChars != state.Chars-100 || len(out.Attempts) != 1 || out.Attempts[0].ReservedChars != out.ReservedChars || out.Attempts[0].Outcome != "request_failed" {
 		t.Fatalf("failed trial did not report reserved quota: %+v state=%+v err=%v readErr=%v", out, state, err, readErr)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
