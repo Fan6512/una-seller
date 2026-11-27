@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { MotionValue } from "./motion";
+import { OperationFeedbackToaster, renderOperationFeedback } from "./OperationFeedbackToaster";
+import { OperationFeedbackContext } from "./operationFeedbackContext";
+import { createFeedback } from "./operationFeedback";
+import DesktopSidebar, { ConnectionAlert, type DesktopSection } from "./DesktopSidebar";
+import "./desktopShell.css";
 import { restoreSession, signOut, type AuthSession } from "./auth";
 import Login from "./Login";
 import DevelopmentDiagnostics, { diagnosticsEnabled } from "./DevelopmentDiagnostics";
@@ -9,6 +15,7 @@ import { cachedStores, checkStoreConnection, listStores, watchStoreList } from "
 import { checkStoresOnLogin, resolveManualStoreCheck, storeHealthFromList, type StoreHealth } from "./storeLoginCheck";
 import PublishedListingsPage from "./PublishedListingsPage";
 import OrdersPage from "./OrdersPage";
+import OperationsPage from "./OperationsPage";
 import WorkingDraftEditor from "./WorkingDraftEditor";
 import OwnProductsPage from "./OwnProductsPage";
 import { approveCollection } from "./ownProducts";
@@ -20,7 +27,7 @@ import {
 } from "./collections";
 
 type ServiceStatus = "checking" | "online" | "offline";
-type IconName = "search" | "refresh" | "box" | "image" | "external" | "left" | "right" | "warning";
+type IconName = "search" | "refresh" | "box" | "image" | "external" | "left" | "right" | "warning" | "bell";
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   return (
@@ -32,6 +39,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
       {name === "external" && <><path d="M13 5h6v6M19 5l-9 9" /><path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" /></>}
       {name === "left" && <path d="m15 18-6-6 6-6" />}
       {name === "right" && <path d="m9 18 6-6-6-6" />}
+      {name === "bell" && <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>}
       {name === "warning" && <><path d="m12 3 10 18H2L12 3Z" /><path d="M12 9v5M12 17h.01" /></>}
     </svg>
   );
@@ -49,13 +57,16 @@ function CapturePill({ status }: { status: string }) {
   return <span className={"capture-pill " + style}>{label}</span>;
 }
 
-function ProductImage({ src, alt, className = "", eager = false }: { src: string | null; alt: string; className?: string; eager?: boolean }) {
+function ProductImage({ src, alt, className = "", eager = false, reveal = false }: { src: string | null; alt: string; className?: string; eager?: boolean; reveal?: boolean }) {
   const [failed, setFailed] = useState(false);
+  const [loadedSource, setLoadedSource] = useState<string | null>(null);
   useEffect(() => setFailed(false), [src]);
   if (!src || failed) {
     return <span className={"image-fallback " + className} role="img" aria-label="暂无商品图片"><Icon name="image" size={24} /></span>;
   }
-  return <img className={className} src={src} alt={alt} loading={eager ? "eager" : "lazy"} referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+  return <img className={className} src={src} alt={alt} loading={eager ? "eager" : "lazy"} referrerPolicy="no-referrer"
+    data-motion-image={reveal && loadedSource === src ? "ready" : undefined}
+    onLoad={reveal ? () => setLoadedSource(src) : undefined} onError={() => setFailed(true)} />;
 }
 
 // The cloud database retains original source URLs for auditability. Displaying a
@@ -100,10 +111,10 @@ function ProductGallery({ images, title }: { images: CollectionDetail["images"];
   return (
     <div className="gallery">
       <div className="gallery-stage">
-        <ProductImage key={selected.url} src={selected.url} alt={title + "，图片 " + (active + 1)} className="gallery-main" eager />
+        <ProductImage key={selected.url} src={selected.url} alt={title + "，图片 " + (active + 1)} className="gallery-main" eager reveal />
         {images.length > 1 && (
           <>
-            <span className="gallery-count">{active + 1} / {images.length}</span>
+            <span className="gallery-count"><MotionValue value={`${active + 1} / ${images.length}`} /></span>
             <div className="gallery-arrows">
               <button type="button" aria-label="上一张图片" disabled={active === 0} onClick={() => setActive((n) => Math.max(0, n - 1))}><Icon name="left" size={17} /></button>
               <button type="button" aria-label="下一张图片" disabled={active === images.length - 1} onClick={() => setActive((n) => Math.min(images.length - 1, n + 1))}><Icon name="right" size={17} /></button>
@@ -233,11 +244,12 @@ function LoadError({ detail, onRetry, isDetail = false }: { detail: string; onRe
   );
 }
 
-function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }: {
+function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount, feedbackSound, setFeedbackSound }: {
   email: string; onLogout: () => void; updates: ReturnType<typeof useDesktopUpdates>;
   beginSync: () => (() => void) | undefined; syncCount: number;
+  feedbackSound: boolean; setFeedbackSound: (enabled: boolean) => void;
 }) {
-  const [section, setSection] = useState<"collections" | "published" | "orders">("collections");
+  const [section, setSection] = useState<DesktopSection>("operations");
   const [workspaceTab,setWorkspaceTab] = useState<"inbox"|"products">("inbox");
   const [showTransferred,setShowTransferred] = useState(false);
   const [checked,setChecked] = useState<Set<string>>(()=>new Set());
@@ -252,7 +264,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   });
   const failedStoreChecks = useRef(new Set<string>());
   const [service, setService] = useState<ServiceStatus>("checking");
-  const [serviceError, setServiceError] = useState("");
+  const [healthRefresh, setHealthRefresh] = useState(0);
   const [searchDraft, setSearchDraft] = useState("");
   const [isComposing, setIsComposing] = useState(false);
   const [search, setSearch] = useState("");
@@ -367,12 +379,10 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
       if (result.status !== "ok" || result.service !== "una-seller-api") throw new Error("服务响应格式不正确");
       if (!signal.aborted) {
         setService("online");
-        setServiceError("");
       }
     } catch (error) {
       if (!signal.aborted) {
         setService("offline");
-        setServiceError(error instanceof Error ? error.message : "无法连接服务");
       }
     }
   }, []);
@@ -381,7 +391,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
     const controller = new AbortController();
     void checkHealth(controller.signal);
     return () => controller.abort();
-  }, [checkHealth, refresh]);
+  }, [checkHealth, refresh, healthRefresh]);
 
   useEffect(() => {
     if (isComposing || approving || draftDirty) return;
@@ -458,38 +468,19 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
   }, [selectedId, refresh]);
 
   const showDetail = items.length > 0 && !listError;
-  const connectionStatus: ServiceStatus = listError || serviceError ? "offline" : service;
   const pageNumber = Math.floor(offset / PAGE_SIZE) + 1;
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">U</span><span className="brand-name">Una Seller</span></div>
-        <span className="topbar-divider" aria-hidden="true" />
-        <nav aria-label="商品工作台">
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "collections"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("collections"); }}>工作台</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "published"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("published"); }}>已刊登商品</button>
-          <button type="button" className="logout-action" aria-pressed={!settings && section === "orders"} onClick={() => { if(!leavingDirty())return;setSettings(false); setSection("orders"); }}>订单管理</button>
-          <button type="button" className="logout-action" aria-pressed={settings} onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("updates"); }}>{updates.update ? "设置 · 有更新" : "设置"}</button>
-        </nav>
-        <div className="topbar-spacer" />
-        <span className={"connection-indicator " + connectionStatus} role="status">
-          <span className="connection-dot" aria-hidden="true" />
-          {connectionStatus === "checking" ? "连接中" : connectionStatus === "online" ? "服务正常" : "连接异常"}
-        </span>
-        <button type="button"
-          className={"store-health-button " + (storeHealth.status === "connected" ? "online" : storeHealth.status)}
-          title={storeHealth.message}
-          onClick={() => { if(!leavingDirty())return;setSettings(true); setSettingsSection("stores"); }}>
-          <span className="connection-dot" aria-hidden="true" />
-          {storeHealth.status === "checking" ? "店铺检查中"
-            : storeHealth.status === "connected" ? "店铺已连接"
-              : storeHealth.status === "empty" ? "未绑定店铺" : "店铺需检查"}
-        </button>
-        <span className="account-email" title={email}>{email || "当前用户"}</span>
-        <button type="button" className="logout-action" onClick={() => { if(leavingDirty())onLogout(); }}>退出登录</button>
-      </header>
-
+    <div className="app-shell desktop-shell">
+      <DesktopSidebar email={email} section={settings ? null : section}
+        accountSelected={settings && settingsSection === "account"}
+        settingsSelected={settings && settingsSection !== "account"}
+        updateAvailable={Boolean(updates.update)}
+        onNavigate={target => { if (!leavingDirty()) return; setSettings(false); setSection(target); }}
+        onAccount={() => { if (!leavingDirty()) return; setSettings(true); setSettingsSection("account"); }}
+        onSettings={() => { if (!leavingDirty()) return; setSettings(true); setSettingsSection("updates"); }} />
+      <div className="desktop-content">
+      <OperationFeedbackToaster sound={feedbackSound} />
       <main className="main-content">
         {settings && <>
           <nav className="settings-navigation" aria-label="设置分类">
@@ -504,9 +495,19 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           </nav>
           {settingsSection === "updates" && <>
             <DesktopUpdates updates={updates} syncCount={syncCount} onLater={() => setSettings(false)} />
+            <section className="detail-section" aria-label="操作反馈">
+              <h2>操作反馈</h2>
+              <label className="desktop-test-updates-toggle">
+                <input type="checkbox" checked={feedbackSound} onChange={e => setFeedbackSound(e.target.checked)} />
+                <span>本次登录播放操作提示音</span>
+              </label>
+            </section>
             {diagnosticsEnabled && <DevelopmentDiagnostics />}
           </>}
-          {settingsSection === "account" && <AccountSettingsPage email={email} />}
+          {settingsSection === "account" && <>
+            <AccountSettingsPage email={email} />
+            <div className="desktop-account-actions"><button type="button" className="logout-action" onClick={() => { if(leavingDirty())onLogout(); }}>退出登录</button></div>
+          </>}
           {settingsSection === "titles" && <TitleModeSettingsPage />}
           {settingsSection === "stores" && <StoresPage onConnectionChecked={(id) => {
             const latest = cachedStores();
@@ -516,8 +517,17 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             }
           }} />}
         </>}
-        {section === "published" ? <div hidden={settings}><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
-          : section === "orders" ? <div hidden={settings}><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+        {section === "published" ? <div hidden={settings} data-motion-view="true"><PublishedListingsPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} /></div>
+          : section === "orders" ? <div hidden={settings} data-motion-view="true"><OrdersPage beginSync={beginSync} installingUpdate={updates.phase === "installing"} visible={!settings} /></div>
+          : section === "operations" ? (!settings && <OperationsPage onNavigate={target => { if (!leavingDirty()) return; setSection(target); }} />)
+          : section === "afterSales" ? (!settings && <section className="desktop-module-preview">
+              <div className="page-heading"><h1>售后管理</h1></div>
+              <div className="desktop-module-panel">
+                <h2>客服与售后</h2>
+                <p>售前问答、买家消息和投诉纠纷管理将逐步开放。目前可在运营中心查看已支持的待办与动态。</p>
+                <button type="button" className="refresh-button" onClick={() => { if(leavingDirty())setSection("operations"); }}>查看运营中心</button>
+              </div>
+            </section>)
           : !settings && <>
         <div className="page-heading">
           <div><h1>工作台</h1></div>
@@ -532,7 +542,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
           <label><input type="checkbox" checked={showTransferred} disabled={approving}
             onClick={e=>{if(draftDirty&&!leavingDirty())e.preventDefault();}}
             onChange={e=>{setShowTransferred(e.target.checked);setOffset(0);setChecked(new Set());}} /> 包含已转入来源</label>
-          <span>已勾选 {checked.size} 件</span>
+          <span>已勾选 <MotionValue value={checked.size} /> 件</span>
           <button type="button" className="approval-select-current" disabled={!selectedId||approving||!items.some(item=>item.id===selectedId)}
             aria-pressed={selectedId!==null&&checked.has(selectedId)}
             onClick={()=>{
@@ -586,7 +596,7 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
             </div>
             {items.length > 0 && !listError && (
               <div className="list-footer">
-                <span>第 {pageNumber} 页</span>
+                <span>第 <MotionValue value={pageNumber} /> 页</span>
                 <div className="page-actions">
                   <button type="button" disabled={offset === 0 || listLoading || draftDirty || approving} aria-label="上一页" onClick={() => {setChecked(new Set());setOffset((n) => Math.max(0, n - PAGE_SIZE));}}><Icon name="left" size={17} />上一页</button>
                   <button type="button" disabled={!hasMore || listLoading || draftDirty || approving} aria-label="下一页" onClick={() => {setChecked(new Set());setOffset((n) => n + PAGE_SIZE);}}>下一页<Icon name="right" size={17} /></button>
@@ -610,8 +620,28 @@ function CollectionWorkspace({ email, onLogout, updates, beginSync, syncCount }:
         </>}
         </>}
       </main>
+      </div>
+      {service === "offline" && <ConnectionAlert key="service"
+        title="服务连接异常" message="暂时无法连接 UNA Seller 服务，请检查网络后重试。"
+        actionLabel="重新检查" onAction={() => { setService("checking"); setHealthRefresh(n => n + 1); return true; }} />}
+      {storeHealth.status === "attention" && <ConnectionAlert key="store"
+        hidden={service !== "online" || (settings && settingsSection === "stores")}
+        title="店铺连接需要检查" message={storeHealth.message}
+        actionLabel="店铺管理" onAction={() => {
+          if (!leavingDirty()) return false;
+          setSettings(true); setSettingsSection("stores"); return true;
+        }} />}
     </div>
   );
+}
+
+function AuthenticatedWorkspace(props: Omit<ComponentProps<typeof CollectionWorkspace>, "feedbackSound" | "setFeedbackSound">) {
+  const [sound, setSound] = useState(false);
+  const [feedback] = useState(() => createFeedback(renderOperationFeedback));
+  useLayoutEffect(() => () => feedback.clear(), [feedback]);
+  return <OperationFeedbackContext.Provider value={feedback}>
+    <CollectionWorkspace {...props} feedbackSound={sound} setFeedbackSound={setSound} />
+  </OperationFeedbackContext.Provider>;
 }
 
 export default function App() {
@@ -646,7 +676,7 @@ export default function App() {
     return <div className="login-page"><div className="loading-state" role="status"><span className="spinner" />正在恢复登录…</div></div>;
   }
   if (!session) return <Login onSignedIn={setSession} />;
-  return <CollectionWorkspace key={session.user.id} email={session.user.email}
+  return <AuthenticatedWorkspace key={session.user.id} email={session.user.email}
     updates={updates} beginSync={beginSync} syncCount={syncCount} onLogout={() => {
     setSession(null);
     void signOut();

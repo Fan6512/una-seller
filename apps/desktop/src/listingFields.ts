@@ -1,6 +1,8 @@
 import type { CollectionImage, CollectionVariant } from "./collections";
 
 export type ListingVariant = {
+  variant_id?: string;
+  available_quantity?: number | null;
   seller_sku: string;
   attributes: Record<string,string>;
   price: string;
@@ -28,6 +30,8 @@ export type CategoryAttributeValue = {
 };
 
 export type ListingFields = {
+  variant_identity_version?: number;
+  available_quantity?: number | null;
   titles: LocalizedTitles;
   descriptions?: LocalizedDescriptions;
   description_translation?: {
@@ -65,6 +69,7 @@ export type ListingSource = {
 export function initialListingFields(saved?: Partial<ListingFields> | null, source?: ListingSource, capturedTitle = ""): ListingFields {
   const defaults: ListingFields = {
     titles: titlesFromSource(capturedTitle),
+    variant_identity_version:1,available_quantity:null,
     category_id:"",category_path:"",brand:"",model:"",
     seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"CNY",target_net_proceeds_usd:"",
     weight_g:"",length_cm:"",width_cm:"",height_cm:"",
@@ -72,7 +77,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
     attributes:[],
     images:source?.images.map(x=>({...x}))??[],
     variants:source?.variants.map(v=>({
-      seller_sku:"",
+      seller_sku:"",variant_id:"",available_quantity:null,
       attributes:{...v.attributes},
       price:v.price??"",
       currency:v.currency??"",
@@ -83,7 +88,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
     }))??[],
   };
   if(!saved)return defaults;
-  const result:ListingFields={...defaults,...saved,
+  const result:ListingFields={...defaults,...saved,variant_identity_version:1,
     titles:saved.titles ? {...defaults.titles,...saved.titles} : defaults.titles};
   if (saved.descriptions) result.descriptions = { ...saved.descriptions };
   if (saved.description_translation) result.description_translation = { ...saved.description_translation };
@@ -94,6 +99,7 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   if (saved.category_attributes) result.category_attributes = saved.category_attributes.map(field => ({ ...field }));
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
   if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,
+    variant_id:v.variant_id??"",available_quantity:v.available_quantity??null,
     seller_sku:v.seller_sku??"",price:v.price??"",currency:v.currency??"",
     attributes:{...v.attributes},image_urls:v.image_urls?.slice()??[],
     purchase_cost_cny:v.purchase_cost_cny??"",target_net_proceeds_usd:v.target_net_proceeds_usd??"",
@@ -127,7 +133,9 @@ const isMoney=(v:string)=>v===""||/^(0|[1-9][0-9]{0,15})(\.[0-9]{1,4})?$/.test(v
 const isDecimal=(v:string,max:number,integer:boolean)=>v===""||
   (new RegExp(integer?"^[0-9]+$":"^[0-9]+(?:\\.[0-9]+)?$").test(v)&&
     Number(v)>0&&Number(v)<=max);
+const validQuantity=(n:number|null|undefined)=>n==null||(Number.isInteger(n)&&n>=0&&n<=2147483647);
 export function validateListingFields(v:ListingFields, previousTitles?: LocalizedTitles):string {
+  if(!validQuantity(v.available_quantity)||v.variants?.some(x=>!validQuantity(x.available_quantity)))return "库存请输入非负整数，未填写与零库存不同";
   if(Object.values(v.titles).some(t=>listingTextCount(t)>500))return "单个语言标题不能超过 500 字符";
   for (const lang of ["es", "pt"] as const) {
     const title = v.titles[lang].normalize("NFC");

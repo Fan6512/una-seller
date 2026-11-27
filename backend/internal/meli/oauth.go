@@ -49,12 +49,14 @@ type Service struct {
 	apiURL           string
 	refreshGroup     singleflight.Group
 	listingRuns      sync.Map
-	orderRequests    sync.Mutex
+	orderRequests    orderRequestGate
 	orderNextRequest time.Time
 	orderNextSearch  time.Time
 	orderRetryUntil  time.Time
 	probeMu          sync.Mutex
 	probeNext        map[string]time.Time
+
+	sharedOrderCoordination bool
 }
 
 type Store struct {

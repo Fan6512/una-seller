@@ -92,8 +92,16 @@ func TestPublishedListingHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = db.Exec(context.Background(), "DELETE FROM app.meli_store_connections WHERE owner_user_id=$1::uuid", owner)
-		_, _ = db.Exec(context.Background(), "DELETE FROM app.users WHERE id=$1::uuid", owner)
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		for _, query := range []string{
+			"DELETE FROM app.meli_store_connections WHERE owner_user_id=$1::uuid",
+			"DELETE FROM app.users WHERE id=$1::uuid",
+		} {
+			if _, err := db.Exec(cleanup, query, owner); err != nil {
+				t.Errorf("listing fixture cleanup: %v", err)
+			}
+		}
 	}()
 	const seller = "678901"
 	const access = "synthetic_listing_access"

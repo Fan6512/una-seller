@@ -96,6 +96,8 @@ type ListingFields struct {
 	CategoryAttributes     *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
 	Images                 *[]Image                    `json:"images,omitempty"`
 	Variants               *[]ListingVariant           `json:"variants,omitempty"`
+	VariantIdentityVersion int                         `json:"variant_identity_version,omitempty"`
+	AvailableQuantity      *int                        `json:"available_quantity,omitempty"`
 }
 
 type ListingAttribute struct {
@@ -121,6 +123,8 @@ type ListingVariant struct {
 	PurchaseCostCNY      *string                     `json:"purchase_cost_cny,omitempty"`
 	TargetNetProceedsUSD *string                     `json:"target_net_proceeds_usd,omitempty"`
 	CategoryAttributes   *[]ListingCategoryAttribute `json:"category_attributes,omitempty"`
+	VariantID            string                      `json:"variant_id,omitempty"`
+	AvailableQuantity    *int                        `json:"available_quantity,omitempty"`
 }
 
 func allNumeric(value string) bool {
@@ -184,11 +188,6 @@ func (f ListingFields) normalizedCopy() *ListingFields {
 		f.Descriptions = &descriptions
 	}
 	return &f
-}
-
-func (f ListingFields) needsPrevious() bool {
-	return f.Descriptions != nil || f.Titles.NFC().exceedsRegionalLimits() ||
-		(f.Variants != nil && slices.ContainsFunc(*f.Variants, ListingVariant.omitsWorkbenchFields))
 }
 
 func (v ListingVariant) omitsWorkbenchFields() bool {
@@ -323,12 +322,17 @@ func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, e
 	if err := next.Titles.validateRegionalLimits(previous.Titles.NFC()); err != nil {
 		return nil, err
 	}
-	if next.Variants != nil && previous.Variants != nil && slices.ContainsFunc(*next.Variants, ListingVariant.omitsWorkbenchFields) {
+	if next.Variants != nil && previous.Variants != nil &&
+		(next.VariantIdentityVersion == 0 || previous.VariantIdentityVersion == 0) &&
+		slices.ContainsFunc(*next.Variants, ListingVariant.omitsWorkbenchFields) {
 		variants, err := preserveVariantFields(*next.Variants, *previous.Variants)
 		if err != nil {
 			return nil, err
 		}
 		next.Variants = &variants
+	}
+	if err := prepareVariantIdentity(next, previous); err != nil {
+		return nil, err
 	}
 	if next.Descriptions == nil {
 		if next.DescriptionTranslation != nil {
@@ -385,6 +389,9 @@ func (f ListingFields) prepareForSave(previous ListingFields) (*ListingFields, e
 }
 
 func (f ListingFields) Validate() error {
+	if f.VariantIdentityVersion < 0 || f.VariantIdentityVersion > 1 || !validAvailableQuantity(f.AvailableQuantity) {
+		return errors.New("invalid variant identity version or available quantity")
+	}
 	if !validListingTitle(f.Titles.English) || !validListingTitle(f.Titles.Spanish) ||
 		!validListingTitle(f.Titles.Portuguese) ||
 		!validListingText(f.CategoryID, 60) ||
@@ -447,6 +454,7 @@ func (f ListingFields) Validate() error {
 		}
 		for _, v := range *f.Variants {
 			if !validListingText(v.SellerSKU, 120) || len(v.Attributes) > 12 ||
+				(v.VariantID != "" && !variantIDPattern.MatchString(v.VariantID)) || !validAvailableQuantity(v.AvailableQuantity) ||
 				!listingMoney(v.Price) || !optionalListingMoney(v.PurchaseCostCNY) || !optionalListingMoney(v.TargetNetProceedsUSD) || (v.Currency != "" && !currencyPattern.MatchString(v.Currency)) ||
 				len(v.ImageURLs) > 30 {
 				return errors.New("invalid variant fields")

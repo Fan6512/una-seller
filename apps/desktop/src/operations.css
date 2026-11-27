@@ -1,0 +1,63 @@
+.operations-page { max-width: 1280px; margin: 0 auto; color: var(--ui-text); }
+.operations-store { background: var(--ui-surface); border: 1px solid var(--ui-outline); border-radius: 16px; padding: 20px; margin: 16px 0; }
+.operations-store-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.operations-store-header h2 { font-size: 17px; margin: 0 0 12px; overflow-wrap: anywhere; }
+.operations-store-header span, .operations-note { font-size: 12px; color: var(--ui-muted); }
+.operations-error { border-left: 3px solid currentColor; color: #a44d35; padding: 10px; font-size: 13px; }
+.operations-metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(145px,100%),1fr)); gap: 10px; }
+.operations-metric { background: var(--ui-elevated); padding: 14px; border-radius: 12px; min-width: 0; }
+.operations-metric span { display: block; color: var(--ui-muted); font-size: 12px; overflow-wrap: anywhere; }
+.operations-metric strong { display: block; font-size: 26px; font-variant-numeric: tabular-nums; margin-top: 6px; overflow-wrap: anywhere; }
+
+.operations-filters { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.operations-filters label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ui-muted); }
+.operations-filters select { max-width: 240px; padding: 7px 10px; border: 1px solid var(--ui-outline); border-radius: 8px; background: var(--ui-surface); color: var(--ui-text); }
+.operations-work { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(340px,100%),1fr)); gap: 16px; align-items: start; }
+.operations-work > article { margin: 0 0 16px; min-width: 0; }
+.operations-work h2 { font-size: 16px; margin: 0 0 8px; }
+.operations-list { list-style: none; padding: 0; margin: 0; }
+.operations-list li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--ui-outline); overflow-wrap: anywhere; }
+.operations-list li:last-child { border-bottom: 0; }
+.operations-list strong, .operations-list span { display: block; font-size: 13px; }
+.operations-list span { color: var(--ui-muted); font-size: 12px; margin-top: 4px; }
+.operations-row-time { text-align: right; min-width: 0; }
+.operations-row-time button { margin-top: 6px; color: var(--ui-accent); background: transparent; border: 0; cursor: pointer; padding: 4px; }
+
+/* Operations landing page: calm hierarchy, financial overview, then work lists. */
+.operations-dashboard { max-width: 1320px; }
+.operations-heading { margin-bottom: 8px; }
+.operations-heading p { color: var(--ui-muted); font-size: 13px; margin: 5px 0 0; }
+.operations-filter-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px; margin-bottom: 20px; }
+.operations-filter-row .operations-filters { margin: 4px 0; gap: 12px; }
+.operations-clock { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.operations-section { margin-bottom: 28px; min-width: 0; }
+.operations-section-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 12px; }
+.operations-section-heading h2 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -.02em; }
+.operations-section-heading h3 { font-size: 13px; font-weight: 600; margin: 0; }
+.operations-subheading { margin-top: 18px; }
+.operations-overview-cards { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.operations-count-cards { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.operations-kpi { background: var(--ui-surface); border: 1px solid var(--ui-outline); border-radius: 12px; padding: 15px 18px; min-width: 0; display: grid; gap: 7px; }
+.operations-kpi > span { color: var(--ui-muted); font-size: 12px; line-height: 1.5; }
+.operations-kpi > strong { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.operations-financial { padding: 19px 20px; }
+.operations-financial > strong { font-size: 30px; }
+.operations-kpi > small { color: var(--ui-muted); font-size: 11px; line-height: 1.5; }
+.operations-coverage { margin: 9px 0; line-height: 1.5; }
+.operations-breakdown { border: 1px solid var(--ui-outline); background: var(--ui-surface); border-radius: 10px; padding: 10px 14px; margin-top: 12px; }
+.operations-breakdown summary { cursor: pointer; color: var(--ui-muted); font-size: 12px; }
+.operations-breakdown .operations-store { margin: 10px 0 0; padding: 12px; }
+.operations-breakdown h3 { font-size: 13px; margin: 0 0 10px; }
+.operations-breakdown .operations-metric strong { font-size: 19px; }
+.operations-list-panel { background: var(--ui-surface); border: 1px solid var(--ui-outline); border-radius: 12px; padding: 16px 18px; }
+.operations-list-panel > .operations-note:first-child { margin: 0 0 8px; line-height: 1.5; }
+.operations-list-panel .operations-list li { min-height: 50px; align-items: center; }
+.operations-list-panel .operations-row-time { flex-shrink: 0; max-width: 48%; }
+@media (max-width: 1100px) {
+  .operations-count-cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 700px) {
+  .operations-financial { padding: 14px; }
+  .operations-kpi { padding: 12px; }
+  .operations-financial > strong { font-size: 25px; }
+}

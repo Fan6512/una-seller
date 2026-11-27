@@ -844,8 +844,14 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	if strings.HasPrefix(path, "/user-products/") || strings.Contains(path, "/user-products-families/") {
+		req.Header.Set("X-API-Version", "2")
+	}
 	if strings.HasPrefix(path, "/marketplace/shipments/") {
 		req.Header.Set("x-format-new", "true")
+	}
+	if strings.HasPrefix(path, "/shipments/") && strings.HasSuffix(path, "/orders") {
+		req.Header.Set("X-New-Domain", "true")
 	}
 	var written atomic.Bool
 	if timing == nil {

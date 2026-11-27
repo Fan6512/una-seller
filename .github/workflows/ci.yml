@@ -97,13 +97,15 @@ jobs:
         if: needs.changes.outputs.persistence == 'true'
         env:
           TEST_RESTART_PHASE: before
-        run: go test -p 1 -count=1 -run '^(TestPostgresProcessRestartPersistence|TestBillingSnapshotPostgresRestartPersistence)$' ./internal/collections ./internal/meli
+        run: go test -v -p 1 -count=1 -run '^(TestPostgresProcessRestartPersistence|TestBillingSnapshotPostgresRestartPersistence|TestNotificationPostgresRestart)$' ./internal/collections ./internal/meli ./internal/notifications
 
-      - name: Restart PostgreSQL 17 service container
+      - name: Stop PostgreSQL 17, verify offline ACK, and restart
         if: needs.changes.outputs.persistence == 'true'
         run: |
           container="${{ job.services.postgres.id }}"
-          docker restart "$container"
+          docker stop "$container"
+          TEST_RESTART_PHASE=down go test -v -count=1 -run '^TestNotificationPostgresRestart$' ./internal/notifications
+          docker start "$container"
           ready=0
           for attempt in $(seq 1 30); do
             if docker exec "$container" pg_isready -U postgres -d una_seller_test >/dev/null 2>&1; then
@@ -122,7 +124,7 @@ jobs:
         if: needs.changes.outputs.persistence == 'true'
         env:
           TEST_RESTART_PHASE: after
-        run: go test -p 1 -count=1 -run '^(TestPostgresProcessRestartPersistence|TestBillingSnapshotPostgresRestartPersistence)$' ./internal/collections ./internal/meli
+        run: go test -v -p 1 -count=1 -run '^(TestPostgresProcessRestartPersistence|TestBillingSnapshotPostgresRestartPersistence|TestNotificationPostgresRestart)$' ./internal/collections ./internal/meli ./internal/notifications
 
   desktop:
     name: Desktop Frontend
@@ -150,6 +152,9 @@ jobs:
       - name: Verify listing sync batch and resume behavior
         run: node --experimental-strip-types --test tests/listingBatches.test.mjs
 
+      - name: Verify operation feedback state
+        run: node --experimental-strip-types --test tests/operationFeedback.test.mjs
+
       - name: Verify order workbench scope switching
         run: node --test tests/ordersScope.test.mjs
 
@@ -173,6 +178,9 @@ jobs:
 
       - name: Verify readable and bounded API errors
         run: node --experimental-strip-types --test tests/apiErrors.test.mjs
+
+      - name: Verify shared desktop motion invariants
+        run: node --test tests/motion.test.mjs
 
       - name: TypeScript check and Vite build
         run: npm run build

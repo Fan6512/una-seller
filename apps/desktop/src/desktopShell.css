@@ -1,0 +1,88 @@
+/* Full-height desktop sidebar. Keep the content pane fluid and avoid glass/blur. */
+.desktop-shell {
+  --desktop-sidebar-width: 184px;
+  display: grid;
+  grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--ui-canvas);
+}
+.desktop-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 10px 13px;
+  background: #eff0f3;
+  border-right: 1px solid var(--ui-outline);
+  color: var(--ui-text);
+}
+.desktop-sidebar-brand { display: flex; align-items: center; gap: 9px; padding: 0 9px; min-height: 36px; margin-bottom: 24px; white-space: nowrap; }
+.desktop-sidebar-brand .brand-mark { flex: 0 0 28px; width: 28px; height: 28px; font-size: 17px; border-radius: 8px; }
+.desktop-sidebar-brand strong { font-size: 14px; font-weight: 600; letter-spacing: -.25px; }
+.desktop-sidebar-nav { display: flex; flex-direction: column; gap: 3px; flex: 1; min-height: 0; overflow-y: auto; }
+.desktop-nav-item, .desktop-profile, .desktop-settings-icon {
+  border: 0; background: transparent; color: #555e6b;
+  display: flex; align-items: center; text-align: left; cursor: pointer;
+}
+.desktop-nav-item { width: 100%; min-height: 38px; flex-shrink: 0; gap: 11px; padding: 8px 11px; border-radius: 7px; font-size: 13px; font-weight: 500; line-height: 1.35; white-space: nowrap; }
+.desktop-nav-item svg, .desktop-settings-icon svg { flex: none; }
+.desktop-nav-item:hover, .desktop-profile:hover, .desktop-settings-icon:hover { background: #e4e6eb; color: var(--ui-text); }
+.desktop-nav-item[aria-current="page"], .desktop-profile[aria-current="page"], .desktop-settings-icon[aria-current="page"] { background: #dde6f3; color: #285da7; }
+.desktop-sidebar-footer { margin-top: auto; padding-top: 11px; border-top: 1px solid var(--ui-outline); display: flex; align-items: center; gap: 4px; min-width: 0; }
+.desktop-profile { border-radius: 9px; padding: 5px; gap: 7px; flex: 1; min-width: 0; }
+.desktop-avatar { display: grid; place-items: center; flex: 0 0 29px; width: 29px; height: 29px; border-radius: 50%; background: #e1e4eb; color: #566276; }
+.desktop-profile-text { min-width: 0; display: grid; gap: 3px; }
+.desktop-profile-text strong { font-size: 12px; font-weight: 600; color: inherit; white-space: nowrap; }
+.desktop-profile-text small { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ui-muted); }
+.desktop-settings-icon { position: relative; flex: 0 0 34px; height: 34px; justify-content: center; border-radius: 8px; padding: 0; }
+.desktop-update-dot { position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--ui-accent); }
+.desktop-content { min-width: 0; }
+.desktop-content > .main-content { padding: 24px 24px 28px; }
+.desktop-account-actions { margin-top: 16px; }
+.desktop-module-panel { background: var(--ui-surface); border: 1px solid var(--ui-outline); border-radius: 12px; padding: 24px; }
+.desktop-module-panel h2 { font-size: 15px; margin: 0 0 8px; }
+.desktop-module-panel p { color: var(--ui-muted); font-size: 13px; line-height: 1.6; }
+@media (max-width: 1000px) {
+  .desktop-shell { --desktop-sidebar-width: 84px; }
+  .desktop-sidebar { padding: 14px 7px 10px; }
+  .desktop-sidebar-brand { justify-content: center; padding: 0; margin-bottom: 18px; }
+  .desktop-sidebar-brand strong, .desktop-nav-item span, .desktop-profile-text { display: none; }
+  .desktop-nav-item { padding: 8px; justify-content: center; }
+  .desktop-sidebar-footer { gap: 2px; }
+  .desktop-profile { flex: 0 0 32px; padding: 1px; justify-content: center; }
+  .desktop-settings-icon { flex-basis: 32px; }
+  .desktop-content > .main-content { padding: 18px 14px 24px; }
+}
+
+.desktop-nav-item[aria-current="page"] { font-weight: 600; }
+.desktop-sidebar button:focus-visible { outline-offset: -2px; }
+/* Only actual connectivity failures open a compact, non-modal popup.
+   No persistent indicator, no blur, no layout shift, no repeating animation. */
+.desktop-connection-alert { position: fixed; right: 20px; bottom: 20px; z-index: 40; width: min(340px, calc(100vw - var(--desktop-sidebar-width) - 32px)); padding: 16px; border: 1px solid var(--ui-outline); border-radius: 12px; background: var(--ui-surface); box-shadow: 0 6px 24px rgba(0,0,0,.09); }
+.desktop-connection-copy strong { font-size: 14px; color: var(--ui-text); }
+.desktop-connection-copy p { margin: 8px 0 14px; font-size: 12px; color: var(--ui-muted); line-height: 1.6; overflow-wrap: anywhere; }
+.desktop-connection-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.desktop-alert-dismiss, .desktop-alert-action { border: 0; border-radius: 7px; padding: 7px 11px; font-size: 12px; }
+.desktop-alert-dismiss { background: var(--ui-elevated); color: var(--ui-text); }
+.desktop-alert-action { background: var(--ui-accent); color: white; }
+
+/* Ding is a top-layer popover but inherits the shell's responsive width.
+   Center in the business pane, never the full application window. */
+.una-feedback-layer .tst-viewport {
+  inset: 0 0 0 var(--desktop-sidebar-width, 0px) !important;
+  overflow: hidden;
+}
+.una-feedback-layer .tst-body {
+  max-width: calc(100vw - var(--desktop-sidebar-width, 0px) - 2 * var(--tst-pad, 16px) - var(--tst-size, 44px) + 1px) !important;
+}
+/* Preserve the lightweight Ding rendering overrides from DESK-06. */
+.una-feedback-layer .tst,
+.una-feedback-layer .tst-body,
+.una-feedback-layer .tst-ghost,
+.una-feedback-layer .tst-svg,
+.una-feedback-layer .tst-action,
+.una-feedback-layer .tst-close { filter: none !important; }
