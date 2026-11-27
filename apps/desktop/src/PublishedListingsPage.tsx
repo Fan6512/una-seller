@@ -41,6 +41,12 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
   const storeCacheReported = useRef(false);
   const [storeId, setStoreId] = useState("");
   const [scope, setScope] = useState("");
+  const dirtyDraft = useRef(false);
+  function allowDiscard() {
+    if (dirtyDraft.current && !window.confirm("当前商品草稿有未保存修改，确定放弃修改并离开？")) return false;
+    dirtyDraft.current = false;
+    return true;
+  }
   const [error, setError] = useState("");
   useEffect(() => {
     if (!storeCacheReported.current && cachedStores()) {
@@ -78,12 +84,12 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
     {store && <>
       <div className="published-top-filters">
         <label>店铺
-          <select value={store.id} onChange={(event) => { setStoreId(event.target.value); setScope(""); }}>
+          <select value={store.id} onChange={(event) => { if (allowDiscard()) { setStoreId(event.target.value); setScope(""); } }}>
             {stores?.map((item) => <option key={item.id} value={item.id}>{item.nickname || item.seller_id}</option>)}
           </select>
         </label>
         <label>站点
-          <select value={scopeValue} onChange={(event) => setScope(event.target.value)} disabled={markets.length === 0}>
+          <select value={scopeValue} onChange={(event) => { if (allowDiscard()) setScope(event.target.value); }} disabled={markets.length === 0}>
             {markets.map((market) => {
               const value = market.site_id + ":" + market.logistic_type;
               return <option key={value} value={value}>{SITE_LABELS[market.site_id] || market.site_id} · {market.logistic_type}</option>;
@@ -94,14 +100,16 @@ export default function PublishedListingsPage({ beginSync, installingUpdate }: {
       </div>
       {scopeValue
         ? <ListingScope key={store.id + ":" + scopeValue} store={store.id} scope={scopeValue}
-            beginSync={beginSync} installingUpdate={installingUpdate} />
+            beginSync={beginSync} installingUpdate={installingUpdate} allowDiscard={allowDiscard}
+            onDirtyChange={(dirty) => { dirtyDraft.current = dirty; }} />
         : <p className="published-empty">该店铺尚无已验证的站点，请到店铺管理检查站点关联。</p>}
     </>}
   </div>;
 }
 
-function ListingScope({ store, scope, beginSync, installingUpdate }: {
+function ListingScope({ store, scope, beginSync, installingUpdate, allowDiscard, onDirtyChange }: {
   store: string; scope: string; beginSync: BeginSync; installingUpdate: boolean;
+  allowDiscard: () => boolean; onDirtyChange: (dirty: boolean) => void;
 }) {
   const [offset, setOffset] = useState(0);
   const [revision, setRevision] = useState(0);
@@ -133,7 +141,7 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     loadListingPage(pagePath, controller.signal).then((next) => {
       if (controller.signal.aborted) return;
       setLoaded({ path: pagePath, page: next });
-      setSelectedId((old) => next.items.some((item) => item.id === old) ? old : next.items[0]?.id ?? "");
+      setSelectedId((old) => next.items.some((item) => item.id === old) ? old : "");
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) {
         if (listingAccessDenied(e)) {
@@ -244,12 +252,13 @@ function ListingScope({ store, scope, beginSync, installingUpdate }: {
     {reading && <p role="status">{page ? "正在更新已保存商品…" : "正在读取已保存商品…"}</p>}
     {!reading && page?.items.length === 0 && <p>此范围暂无已保存商品。</p>}
     {!!page?.items.length && <PublishedListingView
-      items={page.items} selectedId={selectedId} onSelect={setSelectedId} site={site} logistic={logistic} store={store}
+      key={pagePath} items={page.items} selectedId={selectedId} onSelect={setSelectedId} site={site} logistic={logistic} store={store}
+      allowDiscard={allowDiscard} onDirtyChange={onDirtyChange}
     />}
     {(offset > 0 || page?.has_more) && <p className="page-actions">
-      <button type="button" disabled={reading || offset === 0} onClick={() => setOffset(offset - pageSize)}>上一页</button>
+      <button type="button" disabled={reading || offset === 0} onClick={() => { if (allowDiscard()) { setSelectedId(""); setOffset(offset - pageSize); } }}>上一页</button>
       <span>第 {offset / pageSize + 1} 页</span>
-      <button type="button" disabled={reading || !page?.has_more} onClick={() => setOffset(offset + pageSize)}>下一页</button>
+      <button type="button" disabled={reading || !page?.has_more} onClick={() => { if (allowDiscard()) { setSelectedId(""); setOffset(offset + pageSize); } }}>下一页</button>
     </p>}
   </>;
 }

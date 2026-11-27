@@ -187,3 +187,16 @@ test("secondary reuse skips missing main, invalid and empty source without delet
   assert.ok(planSecondaryImageReuse(target,[]).error);
   assert.ok(planSecondaryImageReuse(["https://cdn.example/a",...Array.from({length:30},(_,i)=>"https://cdn.example/"+i)],target).error);
 });
+
+test("published gallery inserts only the selected family after its entire current row", async () => {
+  const { galleryColumns, expandedRowEnd } = await import("../src/publishedGalleryLayout.ts");
+  assert.equal(galleryColumns(1079), 5);
+  assert.equal(galleryColumns(1080), 6);
+  assert.equal(galleryColumns(534), 3);
+  assert.equal(galleryColumns(160), 1);
+  assert.equal(expandedRowEnd(2, 6, 12), 5);
+  assert.equal(expandedRowEnd(2, 3, 12), 2);
+  assert.equal(expandedRowEnd(10, 6, 11), 10);
+  assert.equal(expandedRowEnd(-1, 6, 12), -1);
+  assert.equal(expandedRowEnd(12, 6, 12), -1);
+});

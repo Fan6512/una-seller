@@ -14,7 +14,7 @@ type Draft = {
   attributes: Record<string, string>;
   title: string; price: string; quantity: string; description: string;
 };
-type Props = { listing: Listing; site: string; logistic: string; store: string; members: Listing[] };
+type Props = { listing: Listing; site: string; logistic: string; store: string; members: Listing[]; onDirtyChange: (dirty: boolean) => void };
 
 const defaultLabel = "未返回";
 const titleLimit = 255;
@@ -148,7 +148,7 @@ function AttributeGroup({ title, fields, draft, onChange, display }: {
           onClick={() => setExpanded(true)}>显示其余 {fields.length - visible.length} 项选填属性</button>}
   </div>;
 }
-export default function PublishedListingEditor({ listing, site, logistic, store, members }: Props) {
+export default function PublishedListingEditor({ listing, site, logistic, store, members, onDirtyChange }: Props) {
   const localKey = keyFor(store, site, logistic, listing);
   const [draft, setDraft] = useState<Draft>(() => loadDraft(localKey, listing));
   const [saved, setSaved] = useState("");
@@ -275,15 +275,18 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
   };
 
   function update(field: keyof Omit<Draft, "attributes">, value: string) {
+    onDirtyChange(true);
     if (field === "description") descriptionTouched.current = true;
     setDraft((old) => ({ ...old, [field]: value })); setSaved("");
   }
   function changeAttr(id: string, value: string) {
+    onDirtyChange(true);
     setDraft((old) => ({ ...old, attributes: { ...old.attributes, [id]: value } })); setSaved("");
   }
   function save() {
     try {
       localStorage.setItem(localKey, JSON.stringify(draft));
+      onDirtyChange(false);
       setSaved("草稿已保存在本机。不会修改 Mercado Libre 线上商品。");
     } catch { setSaved("本地存储失败，请检查客户端存储空间。"); }
   }
@@ -292,6 +295,7 @@ export default function PublishedListingEditor({ listing, site, logistic, store,
     try { localStorage.removeItem(localKey); } catch { /* still reset visible form */ }
     descriptionTouched.current = false;
     setDraft({ ...initialDraft(listing), description: remoteDescription || listing.description || "" });
+    onDirtyChange(false);
     setSaved("已恢复已读取的商品资料。");
   }
   return <>
