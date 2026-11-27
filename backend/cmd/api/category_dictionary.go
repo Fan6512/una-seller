@@ -125,11 +125,34 @@ func reviewCBTCategories(args []string, dir string) error {
 	input := command.String("import", "", "import validated candidate JSON into separate review file")
 	exclude := command.String("exclude-ids", "", "JSON array of previously reviewed IDs to exclude from plan/trial")
 	trial := command.Bool("trial", false, "explicitly run a capped LLM trial; requires separate LLM API key")
+	build := command.Bool("build", false, "explicit full-path candidate build, 1-200 rows per invocation")
+	buildPlan := command.Bool("build-plan", false, "read-only full remaining build budget and deferred state")
+	budget := command.Int("budget", 0, "explicit cumulative build cap, at most 900000")
 	reconcile := command.Int("reconcile-usage", -1, "explicit console usage; initializes or raises cumulative counter")
 	if err := command.Parse(args); err != nil {
 		return err
 	}
-	if command.NArg() != 0 || *reconcile < -1 || (*exclude != "" && (*input != "" || *reconcile >= 0)) || (*input != "" && *reconcile >= 0) || (*trial && (*input != "" || *reconcile >= 0 || *export)) {
+	if *build || *buildPlan {
+		if command.NArg() != 0 || (*build && *buildPlan) || *trial || *input != "" || *reconcile != -1 || *export || *exclude != "" || *scope != "all" || !*full || *budget <= 0 || *budget > cbtcategory.LLMReviewHardLimit || (*buildPlan && *sample != 0) || (*build && (*sample <= 0 || *sample > cbtcategory.LLMBuildMaxRows)) {
+			return errors.New("build requires -full-path -budget N; build additionally requires -sample 1..200; no other review modes")
+		}
+		if *buildPlan {
+			result, err := cbtcategory.PlanLLMBuild(dir, *seed, *budget)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(result)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		result, err := cbtcategory.RunLLMBuild(ctx, dir, *seed, *sample, *budget,
+			firstEnv("BAIDU_LLM_APP_ID", "BAIDU_TRANSLATION_APP_ID"), os.Getenv("BAIDU_LLM_API_KEY"))
+		if outputErr := json.NewEncoder(os.Stdout).Encode(result); outputErr != nil {
+			return outputErr
+		}
+		return err
+	}
+	if *budget != 0 || command.NArg() != 0 || *reconcile < -1 || (*exclude != "" && (*input != "" || *reconcile >= 0)) || (*input != "" && *reconcile >= 0) || (*trial && (*input != "" || *reconcile >= 0 || *export)) {
 		return errors.New("invalid review arguments")
 	}
 	if *reconcile >= 0 {

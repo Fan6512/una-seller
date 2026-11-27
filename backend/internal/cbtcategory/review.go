@@ -183,6 +183,11 @@ func PlanReview(dir, scope, seed string, sample int, full, export bool, exclusio
 	if err != nil {
 		return ReviewPlan{}, err
 	}
+	return planReviewSnapshot(s, source, manual, completed, scope, seed, sample, full, export, exclusions...)
+}
+
+// The caller holds update.lock for the lifetime of the snapshot.
+func planReviewSnapshot(s snapshot, source string, manual map[string]string, completed map[string]ReviewRow, scope, seed string, sample int, full, export bool, exclusions ...map[string]bool) (ReviewPlan, error) {
 	out := ReviewPlan{Version: s.Version, Snapshot: source, Scope: scope, FullPath: full}
 	groups := make(map[string][]ReviewRow)
 	for _, item := range s.Categories {
@@ -291,13 +296,17 @@ func storeReview(dir string, incoming ReviewSet) (int, error) {
 		}
 		existing[row.ID] = row
 	}
-	set := ReviewSet{Version: s.Version, Rows: make([]ReviewRow, 0, len(existing))}
+	if err := saveReviewMap(dir, s.Version, existing); err != nil {
+		return 0, err
+	}
+	return len(existing), nil
+}
+
+func saveReviewMap(dir string, v version, existing map[string]ReviewRow) error {
+	set := ReviewSet{Version: v, Rows: make([]ReviewRow, 0, len(existing))}
 	for _, row := range existing {
 		set.Rows = append(set.Rows, row)
 	}
 	slices.SortFunc(set.Rows, func(a, b ReviewRow) int { return strings.Compare(a.ID, b.ID) })
-	if err = saveJSON(dir, reviewFile, set); err != nil {
-		return 0, err
-	}
-	return len(set.Rows), nil
+	return saveJSON(dir, reviewFile, set)
 }

@@ -1,0 +1,109 @@
+[
+  {
+    "id": "CBT46006",
+    "path_names": [
+      "Babies",
+      "Baby Toys & Games",
+      "Rocking Chairs & Jumpers"
+    ],
+    "original_llm": "摇椅及蹦床",
+    "suggested_zh": "摇椅与婴儿跳跳椅"
+  },
+  {
+    "id": "CBT417048",
+    "path_names": [
+      "Cell Phones and Phones",
+      "Walkie Talkies&Radio Frequency",
+      "Accessories",
+      "Cases"
+    ],
+    "original_llm": "手机壳",
+    "suggested_zh": "对讲机保护套"
+  },
+  {
+    "id": "CBT435188",
+    "path_names": [
+      "Musical Instruments",
+      "DJ Equipment & Accessories",
+      "DJ Accessories",
+      "Control Vinyl"
+    ],
+    "original_llm": "控制台",
+    "suggested_zh": "时间码黑胶唱片"
+  },
+  {
+    "id": "CBT416841",
+    "path_names": [
+      "Sports and Fitness",
+      "Badminton",
+      "Balls"
+    ],
+    "original_llm": "球类",
+    "suggested_zh": "羽毛球"
+  },
+  {
+    "id": "CBT429486",
+    "path_names": [
+      "Musical Instruments",
+      "Wind Instruments",
+      "Shofar"
+    ],
+    "original_llm": "短号",
+    "suggested_zh": "羊角号"
+  },
+  {
+    "id": "CBT2740",
+    "path_names": [
+      "Other categories",
+      "Adults",
+      "Sex Toys",
+      "Rings"
+    ],
+    "original_llm": "戒指",
+    "suggested_zh": "阴茎环"
+  },
+  {
+    "id": "CBT416798",
+    "path_names": [
+      "Health and Health Supplies",
+      "Orthopedics",
+      "Heel Cushions"
+    ],
+    "original_llm": "鞋垫",
+    "suggested_zh": "后跟垫"
+  },
+  {
+    "id": "CBT439056",
+    "path_names": [
+      "Consoles and Video Games",
+      "Console Accessories",
+      "For PlayStation",
+      "PSP - PlayStation Portable",
+      "Cases, Protectors and Skins"
+    ],
+    "original_llm": "保护套、保护壳和皮肤",
+    "suggested_zh": "保护套、保护壳和机身贴"
+  },
+  {
+    "id": "CBT432092",
+    "path_names": [
+      "Sports and Fitness",
+      "Cycling",
+      "Accessories",
+      "Alarms"
+    ],
+    "original_llm": "闹钟",
+    "suggested_zh": "自行车防盗报警器"
+  },
+  {
+    "id": "CBT414101",
+    "path_names": [
+      "Cameras and Accessories",
+      "Camera Accessories",
+      "Film Rolls",
+      "For Instant Cameras"
+    ],
+    "original_llm": "适用于一次性相机",
+    "suggested_zh": "适用于即时成像相机"
+  }
+]
