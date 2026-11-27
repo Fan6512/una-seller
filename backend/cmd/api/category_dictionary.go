@@ -72,7 +72,10 @@ func configuredTranslator() *httpapi.TranslationService {
 }
 
 func updateCBTCategories(args []string, dir string, translator *httpapi.TranslationService) error {
-	const usage = "usage: api cbt-categories update [-max-batches N] [-plan [-plan-batch-size N]]"
+	if len(args) > 0 && args[0] == "review" {
+		return reviewCBTCategories(args[1:], dir)
+	}
+	const usage = "usage: api cbt-categories update [-max-batches N] [-plan [-plan-batch-size N]] or review"
 	if len(args) == 0 || args[0] != "update" {
 		return errors.New(usage)
 	}
@@ -110,4 +113,51 @@ func updateCBTCategories(args []string, dir string, translator *httpapi.Translat
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func reviewCBTCategories(args []string, dir string) error {
+	command := flag.NewFlagSet("cbt-categories review", flag.ContinueOnError)
+	scope := command.String("scope", "all", "all, translated, or missing")
+	seed := command.String("seed", "tr02d-v1", "deterministic sample seed")
+	sample := command.Int("sample", 0, "sample size; zero selects all")
+	full := command.Bool("full-path", false, "use complete official path instead of immediate parent")
+	export := command.Bool("export", false, "include source and current leaf translations in JSON")
+	input := command.String("import", "", "import validated candidate JSON into separate review file")
+	trial := command.Bool("trial", false, "explicitly run a capped LLM trial; requires separate LLM API key")
+	reconcile := command.Int("reconcile-usage", -1, "explicit console usage; initializes or raises cumulative counter")
+	if err := command.Parse(args); err != nil {
+		return err
+	}
+	if command.NArg() != 0 || *reconcile < -1 || (*input != "" && *reconcile >= 0) || (*trial && (*input != "" || *reconcile >= 0 || *export)) {
+		return errors.New("invalid review arguments")
+	}
+	if *reconcile >= 0 {
+		state, err := cbtcategory.ReconcileLLMUsage(dir, *reconcile)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(state)
+	}
+	if *input != "" {
+		count, err := cbtcategory.ImportReview(dir, *input)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]int{"total_candidates": count})
+	}
+	if *trial {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		result, err := cbtcategory.RunLLMTrial(ctx, dir, *scope, *seed, *sample, *full,
+			firstEnv("BAIDU_LLM_APP_ID", "BAIDU_TRANSLATION_APP_ID"), os.Getenv("BAIDU_LLM_API_KEY"))
+		if outputErr := json.NewEncoder(os.Stdout).Encode(result); outputErr != nil {
+			return outputErr
+		}
+		return err
+	}
+	plan, err := cbtcategory.PlanReview(dir, *scope, *seed, *sample, *full, *export)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(plan)
 }
