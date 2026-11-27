@@ -16,8 +16,6 @@ import (
 
 func configuredTranslator() *httpapi.TranslationService {
 	switch strings.TrimSpace(os.Getenv("TRANSLATION_PROVIDER")) {
-	case "doubao":
-		return httpapi.NewDoubaoTranslationService(os.Getenv("DOUBAO_TRANSLATE_API_KEY"))
 	case "volcengine":
 		return httpapi.NewVolcengineTranslationService(os.Getenv("VOLCENGINE_TRANSLATE_ACCESS_KEY_ID"), os.Getenv("VOLCENGINE_TRANSLATE_SECRET_ACCESS_KEY"))
 	}

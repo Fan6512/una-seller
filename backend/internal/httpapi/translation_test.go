@@ -128,10 +128,6 @@ func TestTranslationServiceProviderSelection(t *testing.T) {
 		{"", "mock-azure", "mock-baidu", "mock-value", "azure"},
 		{"azure", "mock-azure", "mock-baidu", "mock-value", "azure"},
 		{"baidu", "mock-azure", "mock-baidu", "mock-value", "baidu"},
-		{"doubao", "mock-doubao", "", "", "doubao"},
-		{"doubao", "", "", "", ""},
-		{"volcengine", "mock-secret", "mock-access-id", "", "volcengine"},
-		{"volcengine", "", "mock-access-id", "", ""},
 		{"", "", "mock-baidu", "mock-value", ""},
 		{"baidu", "mock-azure", "", "mock-value", ""},
 		{"baidu", "mock-azure", "mock-baidu", "", ""},
@@ -335,72 +331,6 @@ func TestTranslationServiceDedupesNFCAndBoundsCache(t *testing.T) {
 	}
 }
 
-func TestDoubaoTranslationProtocolAndBatching(t *testing.T) {
-	service := NewDoubaoTranslationService("mock-doubao-key")
-	p := service.provider.(*doubaoTranslationProvider)
-	calls := 0
-	ids := map[string]bool{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		id := r.Header.Get("X-Api-Request-Id")
-		if r.Method != http.MethodPost || r.Header.Get("X-Api-Key") != "mock-doubao-key" ||
-			r.Header.Get("X-Api-Resource-Id") != "volc.speech.mt" || len(id) != 36 || ids[id] ||
-			r.Header.Get("Content-Type") != "application/json" {
-			t.Error("invalid Doubao request")
-		}
-		ids[id] = true
-		var body struct {
-			Source string   `json:"source_language"`
-			Target string   `json:"target_language"`
-			Texts  []string `json:"text_list"`
-		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Source != "en" ||
-			body.Target != "zh" || len(body.Texts) == 0 || len(body.Texts) > 16 {
-			t.Error("invalid Doubao body")
-		}
-		rows := make([]map[string]string, 0, len(body.Texts))
-		for _, text := range body.Texts {
-			rows = append(rows, map[string]string{"translation": "译：" + text})
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": 20000000, "data": map[string]any{"translation_list": rows}})
-	}))
-	defer server.Close()
-	p.endpoint = server.URL
-	texts := make([]string, 17)
-	for i := range texts {
-		texts[i] = fmt.Sprintf("category %d", i)
-	}
-	out := service.TranslateCategoryBatch(context.Background(), texts)
-	if calls != 2 || len(out) != 17 || service.CategoryBatchSize() != 16 {
-		t.Fatalf("invalid batch result: calls=%d count=%d", calls, len(out))
-	}
-	for _, text := range texts {
-		if out[text] != "译："+text {
-			t.Fatal("translation alignment changed")
-		}
-	}
-	if len(service.TranslateCategoryBatch(context.Background(), texts)) != 17 || calls != 2 {
-		t.Fatal("cache did not reuse completed translations")
-	}
-}
-
-func TestDoubaoRejectsFailedBusinessResponse(t *testing.T) {
-	for _, body := range []string{
-		`{"code":45000001,"data":{"translation_list":[{"translation":"bad"}]}}`,
-		`{"code":20000000,"data":{"translation_list":[]}}`,
-	} {
-		service := NewDoubaoTranslationService("mock-key")
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = io.WriteString(w, body)
-		}))
-		service.provider.(*doubaoTranslationProvider).endpoint = server.URL
-		if out := service.translate(context.Background(), "es", []string{"Marca"}); len(out) != 0 {
-			t.Error("invalid response accepted")
-		}
-		server.Close()
-	}
-}
-
 func TestVolcengineTranslateFixedSignature(t *testing.T) {
 	body := []byte(`{"TargetLanguage":"zh","TextList":["Hello world"]}`)
 	req, err := http.NewRequest(http.MethodPost, volcTranslateURL, nil)
@@ -459,5 +389,59 @@ func TestVolcengineTranslationBatchAndBusinessError(t *testing.T) {
 	}
 	if out := service.TranslateCategoryBatch(context.Background(), []string{"another"}); len(out) != 0 || calls != 3 {
 		t.Fatal("rate-limit cooldown ignored")
+	}
+}
+
+func TestVolcengineCategoryReadMultipleBatches(t *testing.T) {
+	service := NewVolcengineTranslationService("mock-access-id", "mock-secret")
+	p := service.provider.(*volcengineTranslationProvider)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Texts []string `json:"TextList"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Texts) > 16 {
+			t.Error("invalid request")
+		}
+		rows := make([]map[string]string, 0, len(body.Texts))
+		for _, text := range body.Texts {
+			rows = append(rows, map[string]string{"Translation": "译：" + text})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ResponseMetadata": map[string]any{"Error": nil}, "TranslationList": rows})
+	}))
+	defer server.Close()
+	p.endpoint = server.URL
+	attrs := make([]map[string]string, 81)
+	for i := range attrs {
+		attrs[i] = map[string]string{"id": fmt.Sprintf("FIELD_%d", i), "name": fmt.Sprintf("label %d", i)}
+	}
+	data, err := json.Marshal(attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := storeAPI{localizeCategoryAttributes: service.translateCategoryRules}
+	rec := httptest.NewRecorder()
+	api.writeCategoryRules(rec, httptest.NewRequest(http.MethodGet, "/", nil), "fixture", meli.CategoryRules{CategoryID: "MLM123", Attributes: data})
+	var rules meli.CategoryRules
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &rules) != nil || calls != 6 || len(rules.Translations) != 81 {
+		t.Fatalf("interactive category translation incomplete: status=%d calls=%d labels=%d", rec.Code, calls, len(rules.Translations))
+	}
+}
+
+func TestVolcengineAuthenticationCooldown(t *testing.T) {
+	service := NewVolcengineTranslationService("mock-id", "mock-secret")
+	p := service.provider.(*volcengineTranslationProvider)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	p.endpoint = server.URL
+	if len(service.TranslateCategoryBatch(context.Background(), []string{"a"})) != 0 ||
+		len(service.TranslateCategoryBatch(context.Background(), []string{"b"})) != 0 ||
+		calls != 1 || time.Until(p.retryAfter) < time.Minute || time.Until(p.retryAfter) > 2*time.Minute {
+		t.Fatal("authentication cooldown failed")
 	}
 }

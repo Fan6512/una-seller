@@ -54,7 +54,7 @@ func HandlerWithAccountServices(store *collections.Store, verifier IdentityVerif
 	s := storeAPI{auth: api, service: storeService, translator: translator, categoryDictionary: dictionary, accounts: accounts}
 	if translator != nil {
 		s.localizeCategoryAttributes = func(ctx context.Context, rules meli.CategoryRules) map[string]string {
-			return translator.translate(ctx, categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules))
+			return translator.translateCategoryRules(ctx, rules)
 		}
 	}
 	mux.HandleFunc("/api/v1/stores/order-title-translations", s.orderTitleTranslations)

@@ -55,10 +55,6 @@ func NewTranslationService(provider, apiKey, azureRegion, baiduAppID, baiduSecre
 	switch strings.TrimSpace(provider) {
 	case "", "azure":
 		return NewAzureTranslationService(apiKey, azureRegion)
-	case "doubao":
-		return NewDoubaoTranslationService(apiKey)
-	case "volcengine":
-		return NewVolcengineTranslationService(baiduAppID, apiKey)
 	case "baidu":
 		appID, secret := strings.TrimSpace(baiduAppID), strings.TrimSpace(baiduSecret)
 		if appID != "" && secret != "" {
@@ -252,9 +248,19 @@ func categoryTranslationSource(categoryID string) string {
 	return ""
 }
 
+// Category metadata may contain many official options. Give the 16-text
+// Volcengine batches a bounded larger budget without slowing order reads.
+func (s *TranslationService) translateCategoryRules(ctx context.Context, rules meli.CategoryRules) map[string]string {
+	timeout := 4 * time.Second
+	if s != nil && s.providerName == "volcengine" {
+		timeout = 10 * time.Second
+	}
+	return s.translateWithin(ctx, categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules), timeout)
+}
+
 // TranslateCategoryBatch is for the offline CBT dictionary updater.
 func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts []string) map[string]string {
-	if s != nil && (s.providerName == "doubao" || s.providerName == "volcengine") {
+	if s != nil && s.providerName == "volcengine" {
 		return s.translateWithin(ctx, "en", texts, 30*time.Second)
 	}
 	return s.translate(ctx, "en", texts)
@@ -262,7 +268,7 @@ func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts [
 
 // CategoryBatchSize is the offline updater's maximum number of texts per request.
 func (s *TranslationService) CategoryBatchSize() int {
-	if s != nil && (s.providerName == "doubao" || s.providerName == "volcengine") {
+	if s != nil && s.providerName == "volcengine" {
 		return 16
 	}
 	return 120

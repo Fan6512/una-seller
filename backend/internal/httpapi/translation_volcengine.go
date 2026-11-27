@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -30,8 +31,11 @@ func NewVolcengineTranslationService(accessID, secret string) *TranslationServic
 	if !accountSimpleID.MatchString(accessID) || secret == "" || strings.ContainsAny(secret, "\r\n") {
 		return nil
 	}
+	client := newTranslationHTTPClient()
+	// Bound each upstream request; the caller also enforces a total budget.
+	client.Timeout = 8 * time.Second
 	return newTranslationService("volcengine", &volcengineTranslationProvider{
-		accessID: accessID, secret: secret, endpoint: volcTranslateURL, client: newTranslationHTTPClient(),
+		accessID: accessID, secret: secret, endpoint: volcTranslateURL, client: client,
 	})
 }
 
@@ -133,7 +137,7 @@ func (p *volcengineTranslationProvider) translateBatch(ctx context.Context, sour
 	case http.StatusTooManyRequests:
 		p.retryAfter = translationRateLimitUntil(res)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		p.retryAfter = time.Now().Add(time.Hour)
+		p.authFailed()
 	}
 	if res.StatusCode != http.StatusOK {
 		return false
@@ -152,8 +156,11 @@ func (p *volcengineTranslationProvider) translateBatch(ctx context.Context, sour
 		return false
 	}
 	if result.Metadata.Error != nil {
-		if result.Metadata.Error.Code == "-429" {
+		switch result.Metadata.Error.Code {
+		case "-429", "429", "TooManyRequests", "RequestLimitExceeded":
 			p.retryAfter = translationRateLimitUntil(res)
+		case "-401", "-403", "401", "403", "InvalidAccessKey", "SignatureDoesNotMatch", "AccessDenied":
+			p.authFailed()
 		}
 		return false
 	}
@@ -166,4 +173,10 @@ func (p *volcengineTranslationProvider) translateBatch(ctx context.Context, sour
 		}
 	}
 	return true
+}
+
+// Log only a fixed reason, never upstream bodies, IDs, headers or credentials.
+func (p *volcengineTranslationProvider) authFailed() {
+	p.retryAfter = time.Now().Add(2 * time.Minute)
+	log.Print("translation provider=volcengine outcome=authentication_failed cooldown=120s")
 }

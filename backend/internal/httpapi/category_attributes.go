@@ -45,7 +45,7 @@ func (a storeAPI) writeCategoryRules(w http.ResponseWriter, r *http.Request, own
 		} else if err != nil {
 			log.Printf("account translation unavailable: provider config read error, owner=%s", owner)
 		} else if translator != nil {
-			rules.Translations = translator.translate(r.Context(), categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules))
+			rules.Translations = translator.translateCategoryRules(r.Context(), rules)
 		}
 	} else if a.localizeCategoryAttributes != nil {
 		rules.Translations = a.localizeCategoryAttributes(r.Context(), rules)
