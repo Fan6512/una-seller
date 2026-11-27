@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
+	"math/big"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -47,6 +49,7 @@ type OrderScope struct {
 }
 
 type OrderLine struct {
+	ElementID   string `json:"element_id,omitempty"`
 	ItemID      string `json:"item_id"`
 	Title       string `json:"title"`
 	VariationID string `json:"variation_id,omitempty"`
@@ -57,21 +60,24 @@ type OrderLine struct {
 }
 
 type OrderRecord struct {
-	ID                     string      `json:"order_id"`
-	PackID                 string      `json:"pack_id,omitempty"`
-	Status                 string      `json:"status"`
-	CurrencyID             string      `json:"currency_id"`
-	TotalAmount            string      `json:"total_amount"`
-	DateCreated            time.Time   `json:"date_created"`
-	LastUpdated            time.Time   `json:"last_updated"`
-	ShipmentID             string      `json:"shipment_id,omitempty"`
-	Items                  []OrderLine `json:"order_items"`
-	PurchaseOrderID        string      `json:"purchase_order_id,omitempty"`
-	PurchaseCostCNY        *string     `json:"purchase_cost_cny,omitempty"`
-	PurchaseTrackingNumber string      `json:"purchase_tracking_number,omitempty"`
-	DispatchDeadline       *time.Time  `json:"dispatch_deadline,omitempty"`
-	DispatchSLAStatus      string      `json:"dispatch_sla_status,omitempty"`
-	DispatchCheckedAt      *time.Time  `json:"dispatch_checked_at,omitempty"`
+	ID                       string         `json:"order_id"`
+	PackID                   string         `json:"pack_id,omitempty"`
+	Status                   string         `json:"status"`
+	CurrencyID               string         `json:"currency_id"`
+	TotalAmount              string         `json:"total_amount"` // Raw upstream field; its currency label can disagree with its value.
+	SalesAmountUSD           string         `json:"sales_amount_usd,omitempty"`
+	OrderItemsReviewRequired bool           `json:"order_items_review_required,omitempty"`
+	DateCreated              time.Time      `json:"date_created"`
+	LastUpdated              time.Time      `json:"last_updated"`
+	ShipmentID               string         `json:"shipment_id,omitempty"`
+	Shipment                 *OrderShipment `json:"shipment,omitempty"`
+	Items                    []OrderLine    `json:"order_items"`
+	PurchaseOrderID          string         `json:"purchase_order_id,omitempty"`
+	PurchaseCostCNY          *string        `json:"purchase_cost_cny,omitempty"`
+	PurchaseTrackingNumber   string         `json:"purchase_tracking_number,omitempty"`
+	DispatchDeadline         *time.Time     `json:"dispatch_deadline,omitempty"`
+	DispatchSLAStatus        string         `json:"dispatch_sla_status,omitempty"`
+	DispatchCheckedAt        *time.Time     `json:"dispatch_checked_at,omitempty"`
 }
 
 type OrderPage struct {
@@ -104,7 +110,8 @@ type OrderReview struct {
 func (r *OrderReview) Error() string { return "order_needs_review" }
 
 type OrderRateLimitError struct {
-	until time.Time
+	until  time.Time
+	shared bool
 }
 
 func (e *OrderRateLimitError) Error() string { return "order rate limited" }
@@ -117,16 +124,57 @@ func (e *OrderRateLimitError) RetryAfter() string {
 	return strconv.FormatInt(int64((delay-1)/time.Second)+1, 10)
 }
 
+// Use a fixed diagnostic label, never a URL, query, store/order ID or token.
+func orderReadResource(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/billing/integration/group/ML/order/details?"):
+		return "billing"
+	case strings.HasPrefix(path, "/marketplace/shipments/"):
+		return "shipment"
+	case path == "/marketplace/orders/search" || strings.HasPrefix(path, "/marketplace/orders/search?"):
+		return "order_search"
+	case strings.HasPrefix(path, "/marketplace/orders/"):
+		return "order_detail"
+	default:
+		return "other"
+	}
+}
+
 // Pace order reads across scopes in this process and apply upstream cooldowns
 // before another request can start, including concurrent syncs from other stores.
-func (s *Service) orderGET(ctx context.Context, token, path string, target any) (int, error) {
-	if !s.orderRequests.TryLock() {
-		// A concurrent local request is not an upstream 429.
-		return http.StatusConflict, ErrOrderBusy
+func (s *Service) orderGET(ctx context.Context, token, path string, target any) (status int, err error) {
+	if s.sharedOrderCoordination {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+	}
+	if err := s.orderRequests.acquire(ctx, isBackgroundOrderRead(ctx)); err != nil {
+		if errors.Is(err, ErrOrderBusy) {
+			return http.StatusConflict, err
+		}
+		return 0, err
 	}
 	defer s.orderRequests.Unlock()
+	finish, err := s.beginSharedOrderRead(ctx)
+	if err != nil {
+		if errors.Is(err, ErrOrderBusy) {
+			return http.StatusConflict, err
+		}
+		return 0, err
+	}
+	if finish != nil {
+		defer func() {
+			if finishErr := finish(); finishErr != nil {
+				status, err = 0, finishErr
+			}
+		}()
+	}
 	if time.Now().Before(s.orderRetryUntil) {
-		return http.StatusTooManyRequests, &OrderRateLimitError{until: s.orderRetryUntil}
+		cooldown := &OrderRateLimitError{until: s.orderRetryUntil, shared: s.sharedOrderCoordination}
+		if orderReadResource(path) == "billing" {
+			slog.Info("order read rate limited", "source", "local_cooldown", "resource", "billing", "retry_after_seconds", cooldown.RetryAfter())
+		}
+		return http.StatusTooManyRequests, cooldown
 	}
 	// Both clocks are protected by orderRequests. Search calls have their
 	// own slower quota; detail reads must not inherit the search delay.
@@ -153,7 +201,7 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 		s.orderNextSearch = now.Add(orderSearchRequestInterval)
 	}
 	var response listingGETTiming
-	status, err := s.listingGET(ctx, token, path, target, &response)
+	status, err = s.listingGET(ctx, token, path, target, &response)
 	if status == http.StatusTooManyRequests {
 		now := time.Now()
 		until, dateErr := http.ParseTime(response.retryAfter)
@@ -164,8 +212,14 @@ func (s *Service) orderGET(ctx context.Context, token, path string, target any) 
 			}
 			until = now.Add(delay)
 		}
+		if s.sharedOrderCoordination {
+			until = laterOrderTime(until, now.Add(time.Minute))
+		}
 		s.orderRetryUntil = until
-		return status, &OrderRateLimitError{until: until}
+		cooldown := &OrderRateLimitError{until: until, shared: s.sharedOrderCoordination}
+		slog.Warn("order read rate limited", "source", "upstream", "resource", orderReadResource(path),
+			"upstream_http_status", response.httpStatus, "retry_after_seconds", cooldown.RetryAfter())
+		return status, cooldown
 	}
 	return status, err
 }
@@ -258,6 +312,7 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 				Title       string      `json:"title"`
 				VariationID json.Number `json:"variation_id"`
 			} `json:"item"`
+			ElementID  json.Number `json:"element_id"`
 			Quantity   int         `json:"quantity"`
 			UnitPrice  json.Number `json:"unit_price"`
 			CurrencyID string      `json:"currency_id"`
@@ -313,6 +368,7 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 	if len(payload.OrderItems) > 100 {
 		return OrderRecord{}, ErrOrderInvalidResponse
 	}
+	seenElements := make(map[string]OrderLine)
 	for _, item := range payload.OrderItems {
 		if item.Quantity <= 0 || item.Quantity > 100000 ||
 			!orderAmountPattern.MatchString(item.UnitPrice.String()) ||
@@ -329,9 +385,86 @@ func parseOrderDetail(data []byte, expectedID, seller, site string) (OrderRecord
 			}
 			line.VariationID = item.Item.VariationID.String()
 		}
+		if elementID := item.ElementID.String(); elementID != "" {
+			if !orderNumber(elementID) {
+				return OrderRecord{}, ErrOrderInvalidResponse
+			}
+			line.ElementID = elementID
+			if previous, found := seenElements[elementID]; found {
+				if previous != line {
+					return OrderRecord{}, ErrOrderInvalidResponse
+				}
+				continue
+			}
+			seenElements[elementID] = line
+		}
 		record.Items = append(record.Items, line)
 	}
 	return record, nil
+}
+
+// Legacy snapshots lack element IDs. Equal commercial lines are only candidates
+// for duplication, not proof: never delete or silently merge them. A fresh
+// official order read may establish distinct element IDs or deduplicate them.
+func orderItemsNeedReview(items []OrderLine) bool {
+	type signature struct {
+		item, variation, currency, price string
+		quantity                         int
+	}
+	seen := make(map[signature]bool, len(items))
+	for _, line := range items {
+		price := line.UnitPrice
+		if orderAmountPattern.MatchString(price) {
+			if value, ok := new(big.Rat).SetString(price); ok {
+				price = value.RatString()
+			}
+		}
+		key := signature{line.ItemID, line.VariationID, line.CurrencyID, price, line.Quantity}
+		missing := line.ElementID == ""
+		if previousMissing, exists := seen[key]; exists && (previousMissing || missing) {
+			return true
+		}
+		seen[key] = missing
+	}
+	return false
+}
+
+// Marketplace Orders can report a local total under a USD header. Only sum
+// explicit USD merchandise lines, per Order, excluding shipping and payments.
+func orderSalesAmountUSD(items []OrderLine) string {
+	if len(items) == 0 || orderItemsNeedReview(items) {
+		return ""
+	}
+	total := new(big.Rat)
+	for _, line := range items {
+		if line.CurrencyID != "USD" || line.Quantity < 1 || !orderAmountPattern.MatchString(line.UnitPrice) {
+			return ""
+		}
+		price, _ := new(big.Rat).SetString(line.UnitPrice)
+		total.Add(total, price.Mul(price, big.NewRat(int64(line.Quantity), 1)))
+	}
+	amount := strings.TrimRight(total.FloatString(8), "0")
+	if strings.HasSuffix(amount, ".") {
+		return amount + "00"
+	}
+	if len(amount)-strings.IndexByte(amount, '.') == 2 {
+		return amount + "0"
+	}
+	return amount
+}
+
+// Both order ingestion paths can replace the line snapshots. Keep a cached
+// product image for any listing still present without restoring old line data.
+func orderItemsWithSavedImages(incoming, stored string) string {
+	return `(SELECT COALESCE(jsonb_agg(
+	 CASE WHEN saved.url IS NOT NULL THEN jsonb_set(line.value,'{image_url}',to_jsonb(saved.url),true)
+	      ELSE line.value END ORDER BY line.pos),'[]'::jsonb)
+	 FROM jsonb_array_elements(` + incoming + `) WITH ORDINALITY AS line(value,pos)
+	 LEFT JOIN LATERAL (
+	   SELECT old.value->>'image_url' AS url FROM jsonb_array_elements(` + stored + `) AS old(value)
+	   WHERE old.value->>'item_id'=line.value->>'item_id' AND COALESCE(old.value->>'image_url','')<>''
+	   LIMIT 1
+	 ) saved ON true)`
 }
 
 const orderConnection = `SELECT c.id,c.status,m.value->>'user_id' AS child_id
@@ -568,22 +701,7 @@ WHERE store_id=$1::uuid AND site_id=$2 AND logistic_type=$3 AND seller_id=$4 AND
 		return OrderSyncResult{}, ErrOrderBusy
 	}
 	for _, rec := range records {
-		items, jsonErr := json.Marshal(rec.Items)
-		if jsonErr != nil {
-			return OrderSyncResult{}, jsonErr
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO app.meli_orders
-(store_id,site_id,logistic_type,seller_id,order_id,pack_id,status,currency_id,total_amount,date_created,last_updated,shipment_id,order_items)
-VALUES($1::uuid,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9::numeric,$10,$11,NULLIF($12,''),$13::jsonb)
-ON CONFLICT (store_id,site_id,logistic_type,seller_id,order_id) DO UPDATE
-SET pack_id=EXCLUDED.pack_id,status=EXCLUDED.status,currency_id=EXCLUDED.currency_id,
-total_amount=EXCLUDED.total_amount,date_created=EXCLUDED.date_created,
-last_updated=EXCLUDED.last_updated,shipment_id=EXCLUDED.shipment_id,
-order_items=EXCLUDED.order_items,updated_at=now()
-WHERE app.meli_orders.last_updated<=EXCLUDED.last_updated`,
-			store, scope.Site, scope.Logistic, childSeller, rec.ID, rec.PackID, rec.Status,
-			rec.CurrencyID, rec.TotalAmount, rec.DateCreated, rec.LastUpdated, rec.ShipmentID, string(items))
-		if err != nil {
+		if err = upsertOrderRecord(ctx, tx, store, scope, childSeller, rec); err != nil {
 			return OrderSyncResult{}, err
 		}
 	}
@@ -783,14 +901,13 @@ func (s *Service) authorizeOrderRead(ctx context.Context, owner, store string, s
 }
 
 // Recheck the current mapping in the same statement that reads cached orders.
-// Shared 15-column projection used by both local and cross-store cached order reads.
+// Shared projection used by both local and cross-store cached order reads.
 // Keep scanOrder's destinations in this same column order.
-const orderColumns = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
+const orderColumnsBase = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
  trim_scale(o.total_amount)::text,o.date_created,o.last_updated,COALESCE(o.shipment_id,''),
  COALESCE((
-   SELECT jsonb_agg(line.value ||
-     CASE WHEN image.url IS NOT NULL THEN jsonb_build_object('image_url',image.url)
-          ELSE '{}'::jsonb END ORDER BY line.pos)
+   SELECT jsonb_agg(line.value || jsonb_build_object(
+     'listing_image_url',image.url,'cached_image_url',cached.url) ORDER BY line.pos)
    FROM jsonb_array_elements(o.order_items) WITH ORDINALITY AS line(value,pos)
    LEFT JOIN LATERAL (
      SELECT COALESCE(NULLIF(p.details->>'secure_thumbnail',''),
@@ -802,14 +919,30 @@ const orderColumns = `o.order_id,COALESCE(o.pack_id,''),o.status,o.currency_id,
        AND p.details->>'seller_id'=o.seller_id
      LIMIT 1
    ) AS image ON true
+   LEFT JOIN LATERAL (
+     SELECT entry.value->>'image_url' AS url
+     FROM app.meli_orders sibling
+     CROSS JOIN LATERAL jsonb_array_elements(sibling.order_items) AS entry(value)
+     WHERE image.url IS NULL AND COALESCE(line.value->>'image_url','')=''
+       AND sibling.store_id=o.store_id AND sibling.site_id=o.site_id
+       AND sibling.logistic_type=o.logistic_type AND sibling.seller_id=o.seller_id
+       AND entry.value->>'item_id'=line.value->>'item_id'
+       AND COALESCE(entry.value->>'image_url','')<>''
+     LIMIT 1
+   ) AS cached ON true
  ), '[]'::jsonb),
  COALESCE(p.purchase_order_id,''),
  CASE WHEN p.cost_cny IS NULL THEN NULL ELSE trim_scale(p.cost_cny)::text END,
  COALESCE(p.purchase_tracking_number,''),
- COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at`
+ COALESCE(sla.sla_status,''),sla.expected_date,sla.checked_at,`
 
-const orderSelect = `WITH connection AS (` + orderConnection + `)
- SELECT ` + orderColumns + `
+// List and cross-store search never return the potentially large history array.
+const orderColumns = orderColumnsBase + ` CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id THEN o.shipment_snapshot-'details' END`
+const orderDetailColumns = orderColumnsBase + ` CASE WHEN o.shipment_snapshot->>'shipment_id'=o.shipment_id THEN o.shipment_snapshot END`
+
+const orderSelectPrefix = `WITH connection AS (` + orderConnection + `)
+ SELECT `
+const orderSelectFrom = `
  FROM app.meli_orders o
  JOIN connection c ON c.id=o.store_id AND c.child_id=o.seller_id
  LEFT JOIN app.meli_order_purchases p
@@ -821,6 +954,9 @@ const orderSelect = `WITH connection AS (` + orderConnection + `)
    AND sla.shipment_id=o.shipment_id
  WHERE c.status<>'disconnected' AND o.site_id=$3 AND o.logistic_type=$4`
 
+const orderSelect = orderSelectPrefix + orderColumns + orderSelectFrom
+const orderDetailSelect = orderSelectPrefix + orderDetailColumns + orderSelectFrom
+
 func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	var o OrderRecord
 	var items []byte
@@ -828,7 +964,7 @@ func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	var deadline, checked sql.NullTime
 	destinations := []any{&o.ID, &o.PackID, &o.Status, &o.CurrencyID, &o.TotalAmount,
 		&o.DateCreated, &o.LastUpdated, &o.ShipmentID, &items, &o.PurchaseOrderID, &cost,
-		&o.PurchaseTrackingNumber, &o.DispatchSLAStatus, &deadline, &checked}
+		&o.PurchaseTrackingNumber, &o.DispatchSLAStatus, &deadline, &checked, &o.Shipment}
 	err := rows.Scan(append(destinations, extra...)...)
 	if deadline.Valid {
 		o.DispatchDeadline = &deadline.Time
@@ -836,19 +972,35 @@ func scanOrder(rows pgx.Rows, extra ...any) (OrderRecord, error) {
 	if checked.Valid {
 		o.DispatchCheckedAt = &checked.Time
 	}
-	if err == nil {
-		err = json.Unmarshal(items, &o.Items)
+	if err != nil {
+		return o, err
 	}
+	var lines []struct {
+		OrderLine
+		ListingURL string `json:"listing_image_url"`
+		CachedURL  string `json:"cached_image_url"`
+	}
+	if err := json.Unmarshal(items, &lines); err != nil {
+		return o, err
+	}
+	o.Items = make([]OrderLine, 0, len(lines))
+	for _, line := range lines {
+		storedURL := line.ImageURL
+		line.ImageURL = ""
+		for _, candidate := range []string{line.ListingURL, storedURL, line.CachedURL} {
+			if orderImageURLAllowed(candidate) {
+				line.ImageURL = candidate
+				break
+			}
+		}
+		o.Items = append(o.Items, line.OrderLine)
+	}
+	o.OrderItemsReviewRequired = orderItemsNeedReview(o.Items)
+	o.SalesAmountUSD = orderSalesAmountUSD(o.Items)
 	if cost.Valid {
 		o.PurchaseCostCNY = &cost.String
 	}
-	// Only the official Mercado Libre image CDN can render in the desktop app.
-	for i := range o.Items {
-		if !orderImageURLAllowed(o.Items[i].ImageURL) {
-			o.Items[i].ImageURL = ""
-		}
-	}
-	return o, err
+	return o, nil
 }
 
 func orderImageURLAllowed(raw string) bool {
@@ -866,6 +1018,25 @@ func orderImageURLAllowed(raw string) bool {
 	return host == "mlstatic.com" || strings.HasSuffix(host, ".mlstatic.com")
 }
 
+// Keep this expression aligned with desktop orderFulfillmentStatus. Raw status
+// filters remain backward compatible; new fulfillment_* filters are applied
+// before pagination in both scoped list and global search.
+const orderFulfillmentStatusSQL = `CASE
+ WHEN o.status <> 'paid' OR o.shipment_id IS NULL OR
+   (o.shipment_snapshot->>'shipment_id') IS DISTINCT FROM o.shipment_id THEN o.status
+ WHEN o.shipment_snapshot->>'status'='ready_to_ship' AND o.shipment_snapshot->>'substatus'='printed' THEN 'label_printed'
+ WHEN o.shipment_snapshot->>'status' IN ('pending','handling','ready_to_ship') THEN 'awaiting_dispatch'
+ WHEN o.shipment_snapshot->>'status'='delivered' THEN 'delivered'
+ WHEN o.shipment_snapshot->>'status'='cancelled' THEN 'shipment_cancelled'
+ WHEN o.shipment_snapshot->>'status'='not_delivered' THEN 'logistics_exception'
+ WHEN o.shipment_snapshot->>'status'='shipped' THEN CASE
+   WHEN o.shipment_snapshot->>'substatus' IN ('receiver_absent','bad_address','delivery_blocked','impassable_zone') THEN 'logistics_exception'
+   WHEN o.shipment_snapshot->>'substatus' IN ('out_for_delivery','soon_deliver','at_the_door') THEN 'out_for_delivery'
+   WHEN o.shipment_snapshot->>'substatus'='in_transit' THEN 'in_transit'
+   ELSE 'shipped' END
+ ELSE o.status END`
+const orderStatusFilterSQL = `($5='' OR o.status=$5 OR ('fulfillment_' || (` + orderFulfillmentStatusSQL + `))=$5)`
+
 func (s *Service) ListOrders(ctx context.Context, owner, store string,
 	scope OrderScope, status, purchaseLink string, offset int) (OrderPage, error) {
 	if !orderScopeValid(scope) || offset < 0 || offset > 100000 ||
@@ -875,7 +1046,7 @@ func (s *Service) ListOrders(ctx context.Context, owner, store string,
 	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
 		return OrderPage{}, err
 	}
-	rows, err := s.db.Query(ctx, orderSelect+` AND ($5='' OR o.status=$5)
+	rows, err := s.db.Query(ctx, orderSelect+` AND `+orderStatusFilterSQL+`
  AND ($8='' OR ($8='linked' AND p.purchase_order_id IS NOT NULL)
    OR ($8='unlinked' AND p.purchase_order_id IS NULL))
  ORDER BY o.date_created DESC,o.order_id DESC LIMIT $6 OFFSET $7`,
@@ -904,13 +1075,29 @@ func (s *Service) ListOrders(ctx context.Context, owner, store string,
 
 func (s *Service) GetOrder(ctx context.Context, owner, store string,
 	scope OrderScope, id string) (OrderRecord, error) {
+	return s.getOrder(ctx, owner, store, scope, id, true)
+}
+
+// GetOrderSummary reads the same scoped cached order without shipment details.
+// Use for non-detail consumers such as title translation and image refresh.
+func (s *Service) GetOrderSummary(ctx context.Context, owner, store string,
+	scope OrderScope, id string) (OrderRecord, error) {
+	return s.getOrder(ctx, owner, store, scope, id, false)
+}
+
+func (s *Service) getOrder(ctx context.Context, owner, store string,
+	scope OrderScope, id string, withDetails bool) (OrderRecord, error) {
 	if !orderScopeValid(scope) || !orderNumber(id) {
 		return OrderRecord{}, ErrOrderNotFound
 	}
 	if err := s.authorizeOrderRead(ctx, owner, store, scope); err != nil {
 		return OrderRecord{}, err
 	}
-	rows, err := s.db.Query(ctx, orderSelect+` AND o.order_id=$5 LIMIT 1`,
+	query := orderSelect
+	if withDetails {
+		query = orderDetailSelect
+	}
+	rows, err := s.db.Query(ctx, query+` AND o.order_id=$5 LIMIT 1`,
 		store, owner, scope.Site, scope.Logistic, id)
 	if err != nil {
 		return OrderRecord{}, err

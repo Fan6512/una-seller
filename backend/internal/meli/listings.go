@@ -823,6 +823,7 @@ type listingGETTiming struct {
 	request, body, decode time.Duration
 	failedPhase           string
 	retryAfter            string
+	httpStatus            int
 }
 
 func (timing listingGETTiming) attrs(ctx context.Context) []any {
@@ -843,8 +844,14 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	if strings.HasPrefix(path, "/marketplace/shipments/") && strings.HasSuffix(path, "/sla") {
+	if strings.HasPrefix(path, "/user-products/") || strings.Contains(path, "/user-products-families/") {
+		req.Header.Set("X-API-Version", "2")
+	}
+	if strings.HasPrefix(path, "/marketplace/shipments/") {
 		req.Header.Set("x-format-new", "true")
+	}
+	if strings.HasPrefix(path, "/shipments/") && strings.HasSuffix(path, "/orders") {
+		req.Header.Set("X-New-Domain", "true")
 	}
 	var written atomic.Bool
 	if timing == nil {
@@ -866,10 +873,24 @@ func (s *Service) listingGET(ctx context.Context, token, path string, target any
 		return 0, listingReadError(ctx, err)
 	}
 	defer resp.Body.Close()
+	timing.httpStatus = resp.StatusCode
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		timing.failedPhase = "http_status"
 		if resp.StatusCode == http.StatusTooManyRequests {
 			timing.retryAfter = resp.Header.Get("Retry-After")
+		}
+		// CBT Billing can wrap its own upstream 429 in HTTP 400. Recognize
+		// only the observed endpoint-specific marker, never expose the body.
+		if resp.StatusCode == http.StatusBadRequest && strings.HasPrefix(path, "/billing/integration/group/ML/order/details?") {
+			const maxErrorBody = 16 << 10
+			data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody+1))
+			if readErr == nil && len(data) <= maxErrorBody && strings.Contains(string(data), "[REPORTING_CORE_API][ML_DETAILS_BY_ORDER][429]") {
+				timing.retryAfter = resp.Header.Get("Retry-After")
+				if timing.retryAfter == "" {
+					timing.retryAfter = "60"
+				}
+				return http.StatusTooManyRequests, ListingPlatformError(http.StatusTooManyRequests)
+			}
 		}
 		return resp.StatusCode, ListingPlatformError(resp.StatusCode)
 	}

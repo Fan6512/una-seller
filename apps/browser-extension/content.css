@@ -1,21 +1,30 @@
 .una-collector-wrapper {
   box-sizing: border-box !important;
   position: static !important;
-  clear: both !important;
   display: flex !important;
   flex-wrap: wrap !important;
-  flex: 0 0 100% !important;
-  grid-column: 1 / -1 !important;
-  align-self: stretch !important;
   align-items: center !important;
   gap: 8px !important;
-  width: 100% !important;
   margin: 8px 0 0 !important;
   padding: 8px 4px !important;
   border-top: 1px solid #d9e3f3 !important;
   background: #f2f6ff !important;
   border-radius: 5px !important;
   z-index: 2 !important;
+}
+/* Search cards retain their full-row layout; product titles must not clear floats. */
+.una-collector-wrapper.una-collector-card {
+  clear: both !important;
+  flex: 0 0 100% !important;
+  grid-column: 1 / -1 !important;
+  align-self: stretch !important;
+  width: 100% !important;
+}
+.una-collector-wrapper.una-collector-detail {
+  clear: none !important;
+  width: auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
 }
 .una-collector-button {
   background: #165bc6 !important;

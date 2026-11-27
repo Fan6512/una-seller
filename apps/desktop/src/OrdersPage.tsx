@@ -1,13 +1,16 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { cachedStores, listStores, watchStoreList, type StoreConnection } from "./stores";
+import { cachedStores, listStores, watchStoreList, StoreRequestError, type StoreConnection } from "./stores";
 import {
-  getOrder, getOrderSyncState, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderMoney,
-  OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderDispatchSLA, resetOrderCursor, skipOrder, syncOrders,
-  shouldApplyOrderRefresh, shouldStopSLABatch, displayOrderStatus, hasProcurement, orderVariationText,
+  getOrder, getOrderSyncState, listShipmentRefreshCandidates, listOrders, searchOrders, orderRecordScope, orderRecordKey, orderDate, orderUSD, officialTrackingURL,
+  OrderRequestError, refreshOrderImage, refreshOneOrder, refreshOrderLogistics, resetOrderCursor, skipOrder, syncOrders,
+  shouldApplyOrderRefresh, shouldStopLogisticsBatch, displayOrderStatus, orderFulfillmentStatus, orderStatusLabel, hasProcurement, orderVariationText, shipmentStatusLabel,
   type OrderPage, type OrderProgress, type OrderRecord, type OrderReview, type OrderScope, type OrderSyncState,
 } from "./orders";
 import { loadPurchase, savePurchase, type OrderPurchase } from "./orderPurchases";
+import OrderProfitCard from "./OrderProfitCard";
 import TranslatedOrderTitle, { useOrderTitleTranslations } from "./TranslatedOrderTitle";
+import { useOperationFeedback } from "./operationFeedbackContext";
 import "./orders.css";
 
 const PAGE_SIZE = 20;
@@ -19,9 +22,20 @@ function logisticLabel(value?: string) {
 }
 const FILTERS = [
   { value: "", label: "全部订单" },
-  { value: "paid", label: "已付款" },
+  { value: "paid", label: "全部已付款" },
+  { value: "fulfillment_paid", label: "已付款（物流待确认）" },
+  { value: "fulfillment_awaiting_dispatch", label: "待发货" },
+  { value: "fulfillment_label_printed", label: "标签已打印" },
+  { value: "fulfillment_shipped", label: "已发货" },
+  { value: "fulfillment_in_transit", label: "运输中" },
+  { value: "fulfillment_out_for_delivery", label: "派送中" },
+  { value: "fulfillment_delivered", label: "已签收" },
+  { value: "fulfillment_logistics_exception", label: "物流异常" },
+  { value: "fulfillment_shipment_cancelled", label: "物流已取消" },
   { value: "payment_required", label: "待付款" },
   { value: "cancelled", label: "已取消" },
+  { value: "refunded", label: "已退款" },
+  { value: "partially_refunded", label: "部分退款" },
 ];
 const REVIEW_LABELS: Record<string, string> = {
   invalid_detail: "平台订单详情字段异常",
@@ -35,28 +49,35 @@ function displayError(error: unknown) {
   return error instanceof Error ? error.message : "订单请求失败";
 }
 function orderCount(order: OrderRecord) {
-  return order.order_items.reduce((sum, item) => sum + item.quantity, 0);
+  return order.order_items_review_required ? "件数待核实" : order.order_items.reduce((sum, item) => sum + item.quantity, 0) + " 件";
 }
 function safeOrderStatus(status: string) {
-  return status === "paid" ? "paid" : status === "cancelled" ? "cancelled" : "other";
+  return ["paid", "delivered"].includes(status) ? "paid" : ["cancelled", "shipment_cancelled", "logistics_exception", "refunded", "partially_refunded"].includes(status) ? "cancelled" : "other";
 }
 function trustedOrderImage(src?: string) {
   if (!src) return false;
   try {
     const uri = new URL(src);
     return uri.protocol === "https:" &&
+      !uri.username && !uri.password && !uri.port &&
       (uri.hostname === "mlstatic.com" || uri.hostname.endsWith(".mlstatic.com"));
   } catch { return false; }
 }
 // The absolute cutoff is in China time; the countdown uses epoch milliseconds.
 // Never infer that a shipment was dispatched from the Shipment ID or deadline.
 export function dispatchDeadlineLabel(order: OrderRecord, now = Date.now(), logistic = "") {
-  if (order.status === "cancelled" || order.status === "cancellation_requested")
-    return { date: "不适用", countdown: "不适用", hint: "已取消订单", state: "neutral" };
+  if (["cancelled", "cancellation_requested", "refunded"].includes(order.status))
+    return { date: "不适用", countdown: "不适用", hint: orderStatusLabel(order.status), state: "neutral" };
   if (logistic.toLowerCase() === "fulfillment" || logistic.toLowerCase() === "fulfilment")
     return { date: "不适用", countdown: "不适用", hint: "Fulfillment 不适用", state: "neutral" };
   if (!order.shipment_id)
     return { date: "无平台物流", countdown: "无平台物流", hint: "", state: "neutral" };
+  const currentShipment = order.shipment?.shipment_id === order.shipment_id ? order.shipment : undefined;
+  if (currentShipment && ["shipped", "delivered"].includes(currentShipment.status)) {
+    return { date: order.dispatch_deadline ? orderDate(order.dispatch_deadline) : "暂无截止时间",
+      countdown: currentShipment.status === "delivered" ? "已签收" : "已发货",
+      hint: "", state: "neutral" };
+  }
   if (!order.dispatch_deadline) {
     if (order.dispatch_sla_status === "delayed")
       return { date: "暂无截止时间", countdown: "平台标记逾期", hint: "请核实是否已发货", state: "late" };
@@ -64,24 +85,22 @@ export function dispatchDeadlineLabel(order: OrderRecord, now = Date.now(), logi
     return {
       date: checked ? "暂无截止时间" : "待获取",
       countdown: checked ? "暂无截止时间" : "待获取",
-      hint: checked ? "官方未提供，请后台核实" : "点击更新本页时限",
+      hint: checked ? "官方未提供，请后台核实" : "可在手动核验中读取",
       state: "neutral",
     };
   }
   const date = new Date(order.dispatch_deadline);
   if (!Number.isFinite(date.getTime()))
     return { date: "时间格式异常", countdown: "时间格式异常", hint: "请重新获取", state: "neutral" };
-  const dateLabel = date.toLocaleString("zh-CN", {
-    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  });
+  const dateLabel = orderDate(order.dispatch_deadline);
   const remaining = date.getTime() - now;
   const platformLate = order.dispatch_sla_status === "delayed";
+  const hours = Math.floor(remaining / 3_600_000);
   const countdown = platformLate ? "平台标记逾期"
-    : remaining <= 0 ? "截止已过"
+    : remaining <= 0 ? "已逾期"
       : remaining < 3_600_000 ? "不足1小时"
         : remaining < 86_400_000 ? "剩余" + Math.floor(remaining / 3_600_000) + "小时"
-          : "约剩余" + Math.floor(remaining / 86_400_000) + "天";
+          : "剩余" + Math.floor(hours / 24) + "天" + (hours % 24) + "小时";
   const hint = platformLate || remaining <= 0 ? "请核实是否已发货" : "";
   // Red only in the final 24 hours (and for overdue/officially delayed).
   const state = platformLate || remaining < 86_400_000 ? "late" : "neutral";
@@ -92,8 +111,10 @@ function DispatchCountdown({ order, now, logistic }: {
 }) {
   const result = dispatchDeadlineLabel(order, now, logistic);
   return <div className={"orders-dispatch orders-dispatch-" + result.state}
-    title={order.dispatch_checked_at ? "官方 SLA 最近核验：" + order.dispatch_checked_at : "此订单尚未读取官方发货 SLA"}>
+    title={order.dispatch_checked_at ? "官方 SLA 最近核验（北京时间）：" + orderDate(order.dispatch_checked_at) : "此订单尚未读取官方发货 SLA"}>
     <strong>{result.countdown}</strong>
+    {order.dispatch_deadline && result.date !== "—" && !["不适用", "时间格式异常", "无平台物流"].includes(result.date) &&
+      !["已发货", "已签收"].includes(result.countdown) && <small title="北京时间">截止：{result.date}</small>}
     {result.hint && <small>{result.hint}</small>}
   </div>;
 }
@@ -110,9 +131,10 @@ function ProductThumbnail({ src, title, size = "list" }: {
   </span>;
 }
 
-export default function OrdersPage({ beginSync, installingUpdate }: {
+export default function OrdersPage({ beginSync, installingUpdate, visible = true }: {
   beginSync: BeginSync;
   installingUpdate: boolean;
+  visible?: boolean;
 }) {
   const [stores, setStores] = useState<StoreConnection[]>(() => cachedStores() ?? []);
   const [storeError, setStoreError] = useState("");
@@ -175,13 +197,13 @@ export default function OrdersPage({ beginSync, installingUpdate }: {
     marketplaces={marketplaces}
     selectStore={(id) => { setStoreChoice(id); setScopeChoice(id === "all" ? "all" : ""); }}
     selectScope={setScopeChoice}
-    beginSync={beginSync} installingUpdate={installingUpdate}
+    beginSync={beginSync} installingUpdate={installingUpdate} visible={visible}
     reloadStores={reloadStores} storeRefreshing={storeRefreshing} />;
 }
 
 function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter, setStatusFilter,
   searchText, setSearchText, activeQuery, setActiveQuery, storeFilter, siteFilter, logisticFilter, marketplaces,
-  selectStore, selectScope, beginSync, installingUpdate, reloadStores, storeRefreshing }: {
+  selectStore, selectScope, beginSync, installingUpdate, visible, reloadStores, storeRefreshing }: {
   scope: OrderScope | null;
   scopeKey: string;
   store: StoreConnection | undefined;
@@ -201,9 +223,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   selectScope: (key: string) => void;
   beginSync: BeginSync;
   installingUpdate: boolean;
+  visible: boolean;
   reloadStores: () => Promise<void>;
   storeRefreshing: boolean;
 }) {
+  const feedback = useOperationFeedback();
+  const feedbackScope = JSON.stringify([scope, storeFilter, siteFilter, logisticFilter]);
+  const mounted = useRef(false);
   const [purchaseLink, setPurchaseLink] = useState<"" | "linked" | "unlinked">("");
   const [offset, setOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
@@ -219,24 +245,21 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const detailDialogRef = useRef<HTMLDialogElement>(null);
   const purchaseDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<OrderRecord | null>(null);
+  const billingCooldown = useRef({until:0});
   const [detailError, setDetailError] = useState("");
+  const [trackingError, setTrackingError] = useState("");
+  const [trackingProvider, setTrackingProvider] = useState<"track718" | "17track">("track718");
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedRowScope, setSelectedRowScope] = useState<OrderScope | null>(null);
+  const billingKey = detail ? JSON.stringify([orderRecordKey(detail, selectedRowScope ?? scope), detail.last_updated, detail.shipment_id]) : "";
   const [purchaseRowScope, setPurchaseRowScope] = useState<OrderScope | null>(null);
   const [running, setRunning] = useState(false);
-  const [slaBusy, setSLABusy] = useState(false);
+  const [logisticsAction, setLogisticsAction] = useState<"sla" | "shipment" | null>(null);
   const [slaProgress, setSLAProgress] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  useEffect(() => {
-    if (!notice.startsWith("本次尝试补全")) return;
-    const timer = window.setTimeout(() => setNotice((current) => current === notice ? "" : current), 8000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
   const [review, setReview] = useState<OrderReview | null>(null);
-  const [progress, setProgress] = useState<OrderProgress | null>(null);
   const [syncState, setSyncState] = useState<OrderSyncState | null>(null);
-  const [completedBatches, setCompletedBatches] = useState(0);
   const [purchase, setPurchase] = useState<OrderPurchase | null>(null);
   const [purchaseNumber, setPurchaseNumber] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
@@ -250,6 +273,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const syncAbort = useRef<AbortController | null>(null);
   const slaAbort = useRef<AbortController | null>(null);
   const imageAbort = useRef<AbortController | null>(null);
+  const loadedImageView = useRef("");
+  const autoImageView = useRef("");
+  const autoImageController = useRef<AbortController | null>(null);
+  const imageAttempts = useRef(new Map<string, AbortController>());
+  const imageView = JSON.stringify([scope?.storeId, scope?.site, scope?.logistic,
+    storeFilter, siteFilter, logisticFilter, activeQuery, statusFilter, purchaseLink, offset, nonce]);
   const orderRefreshAbort = useRef<AbortController | null>(null);
 
   const reviewAbort = useRef<AbortController | null>(null);
@@ -259,9 +288,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   const [clockNow, setClockNow] = useState(() => Date.now());
 
   useEffect(() => {
-    // Local clock only; dispatch is an hourly/day-level concern, not minute-level.
     const updateClock = () => setClockNow(Date.now());
-    const interval = window.setInterval(updateClock, 15 * 60_000);
+    const interval = window.setInterval(updateClock, 60_000);
     window.addEventListener("focus", updateClock);
     document.addEventListener("visibilitychange", updateClock);
     return () => {
@@ -271,12 +299,16 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     };
   }, []);
 
-  useLayoutEffect(() => () => {
-    syncAbort.current?.abort();
-    imageAbort.current?.abort();
-    slaAbort.current?.abort();
-    orderRefreshAbort.current?.abort();
-    reviewAbort.current?.abort();
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      syncAbort.current?.abort();
+      imageAbort.current?.abort();
+      slaAbort.current?.abort();
+      orderRefreshAbort.current?.abort();
+      reviewAbort.current?.abort();
+    };
   }, []);
 
   // Closing or switching orders invalidates the previous detail refresh.
@@ -284,7 +316,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     orderRefreshAbort.current?.abort();
     orderRefreshAbort.current = null;
     setRefreshingOrder(false);
-  }, [selectedId, selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic]);
+  }, [selectedId, selectedRowScope?.storeId, selectedRowScope?.site, selectedRowScope?.logistic,
+    scope?.storeId, scope?.site, scope?.logistic]);
 
   const loadRows = useCallback(() => setNonce((x) => x + 1), []);
   const closeOrder = () => { setSelectedId(""); setSelectedRowScope(null); };
@@ -353,6 +386,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
         selectScope("all");
         return;
       }
+      // A state change can empty the last filtered page. Return to the preceding page.
+      if (statusFilter && offset > 0 && !value.items.length) {
+        setOffset(Math.max(0, offset - PAGE_SIZE));
+        return;
+      }
+      loadedImageView.current = imageView;
       setPage(value);
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
@@ -363,12 +402,55 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     });
     return () => controller.abort();
   }, [scope?.storeId, scope?.site, scope?.logistic, storeFilter, siteFilter, logisticFilter,
-    stores.length, activeQuery, scopeKey, statusFilter, purchaseLink, offset, nonce]);
+    stores.length, activeQuery, scopeKey, statusFilter, purchaseLink, offset, nonce, imageView]);
 
+  // Only read the server's local order cache while the idle first page is
+  // visible. Do not reload the manual sync cursor, trigger an official search,
+  // interrupt a detail/purchase dialog, or restart automatic image requests.
   useEffect(() => {
+    if (!visible || !storeFilter || !stores.length || offset !== 0 || activeQuery ||
+        loading || running || imageBusy || logisticsAction || actionBusy || refreshingOrder ||
+        selectedId || purchaseSelectedId || purchaseBusy || installingUpdate) return;
+    let stopped = false;
+    let request: AbortController | undefined;
+    const refresh = async () => {
+      if (stopped || document.hidden || request || loadedImageView.current !== imageView ||
+          autoImageView.current !== imageView) return;
+      const current = new AbortController();
+      request = current;
+      try {
+        const value = scope
+          ? await listOrders(scope, statusFilter, purchaseLink, 0, current.signal)
+          : await searchOrders(storeFilter, siteFilter, siteFilter === "*" ? "*" : logisticFilter,
+              "", statusFilter, purchaseLink, 0, current.signal);
+        if (!stopped && !current.signal.aborted && !document.hidden) {
+          setPage(previous => JSON.stringify(previous) === JSON.stringify(value) ? previous : value);
+          setListError("");
+        }
+      } catch {
+        // A failed background read leaves the last visible snapshot intact.
+      } finally {
+        if (request === current) request = undefined;
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    const visibilityChanged = () => { if (document.hidden) request?.abort(); };
+    document.addEventListener("visibilitychange", visibilityChanged);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      request?.abort();
+      document.removeEventListener("visibilitychange", visibilityChanged);
+    };
+  }, [visible, scope, storeFilter, siteFilter, logisticFilter, stores.length, offset, activeQuery,
+    statusFilter, purchaseLink, loading, running, imageBusy, logisticsAction, actionBusy,
+    refreshingOrder, selectedId, purchaseSelectedId, purchaseBusy, installingUpdate, imageView]);
+
+  useLayoutEffect(() => {
     const controller = new AbortController();
     setDetail(null);
     setDetailError("");
+    setTrackingError("");
     const target = selectedRowScope ?? scope;
     if (!target || !selectedId) {
       setDetailLoading(false);
@@ -417,9 +499,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   }, [scope, purchaseRowScope?.storeId, purchaseRowScope?.site, purchaseRowScope?.logistic,
     purchaseSelectedId, purchaseReload]);
 
-  const refreshSelectedOrder = async () => {
+  const refreshSelectedOrder = async (action: "order" | "shipment" = "order") => {
     const target = selectedRowScope ?? scope;
-    if (!target || !selectedId || refreshingOrder || running) return;
+    if (!target || !selectedId || refreshingOrder || running || logisticsAction || installingUpdate) return;
     const id = selectedId;
     const controller = new AbortController();
     orderRefreshAbort.current?.abort();
@@ -427,13 +509,34 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     setRefreshingOrder(true);
     setDetailError("");
     try {
-      const fresh = await refreshOneOrder(target, id, controller.signal);
+      let fresh = action === "shipment"
+        ? await refreshOrderLogistics(target, id, "shipmentDetails", controller.signal)
+        : await refreshOneOrder(target, id, controller.signal);
+      if (controller.signal.aborted) return;
+      let logisticsNote = "";
+      if (action === "order" && fresh.status === "paid" && /^[1-9]\d{0,29}$/.test(fresh.shipment_id ?? "")) {
+        try {
+          const summary = await refreshOrderLogistics(target, id, "shipment", controller.signal);
+          controller.signal.throwIfAborted();
+          const previousDetails = fresh.shipment?.shipment_id === summary.shipment?.shipment_id ? fresh.shipment?.details : undefined;
+          fresh = { ...summary, shipment: summary.shipment && { ...summary.shipment, details: summary.shipment.details ?? previousDetails } };
+          logisticsNote = "，官方物流概要已更新";
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          logisticsNote = "，物流未更新：" + displayError(error);
+        }
+      }
       if (controller.signal.aborted) return;
       if (shouldApplyOrderRefresh(id, selectedIdRef.current, controller.signal.aborted)) setDetail(fresh);
-      setNotice("已从 Mercado Libre 重新读取订单 " + id + " 的最新状态。退款金额与最终净回款仍需单独核账。");
+      setNotice(action === "shipment" ? "已读取订单 " + id + " 的官方物流。" :
+        "已读取订单 " + id + " 的交易状态" + logisticsNote + "。退款金额与最终净回款仍需单独核账。");
       setPage((previous) => ({ ...previous, items: previous.items.map((record) =>
         record.order_id === fresh.order_id && orderRecordKey(record, scope) ===
-          orderRecordKey(fresh, target) ? { ...record, ...fresh } : record) }));
+          orderRecordKey(fresh, target)
+          ? { ...record, ...fresh, shipment: fresh.shipment && { ...fresh.shipment, details: undefined } }
+          : record) }));
+      // Requery the server rather than locally dropping a row or losing pagination.
+      if (statusFilter) loadRows();
     } catch (error) {
       if (!controller.signal.aborted) setDetailError(displayError(error));
     } finally {
@@ -473,69 +576,140 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
   // No local-page pseudo-search: global search and pagination are server-scoped.
   const visibleOrders = page.items;
 
-  useEffect(() => () => { imageAbort.current?.abort(); }, 
-    [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
-  const refreshPageImages = async () => {
-    if (!scope || activeQuery || imageBusy || running || installingUpdate || loading) return;
-    const snapshot = page.items.filter((order) =>
-      order.order_items.some((item) => !item.image_url)).slice(0, 5);
+  useLayoutEffect(() => {
+    const interrupted = imageAbort.current;
+    if (interrupted && autoImageController.current === interrupted) {
+      // Only an actively interrupted automatic batch may resume this view.
+      // Completed batches and actual upstream errors retain their stop marker.
+      autoImageView.current = "";
+      autoImageController.current = null;
+    }
+    interrupted?.abort();
+    imageAbort.current = null;
+    setImageBusy(false);
+  }, [imageView, running, logisticsAction, refreshingOrder, installingUpdate]);
+
+  const refreshPageImages = useCallback(async (manual: boolean) => {
+    if (imageAbort.current || running || logisticsAction || refreshingOrder ||
+        installingUpdate || loading || loadedImageView.current !== imageView) return;
+    const seen = new Set<string>();
+    const snapshot = page.items.flatMap((order) => {
+      const target = orderRecordScope(order, scope);
+      const first = order.order_items[0];
+      if (!target || !first || trustedOrderImage(first.image_url) ||
+          !new RegExp("^" + target.site + "\\d+$").test(first.item_id)) return [];
+      const key = JSON.stringify([target.storeId, target.site, target.logistic, first.item_id]);
+      if (seen.has(key) || (!manual && imageAttempts.current.has(key))) return [];
+      seen.add(key);
+      return [{ order, target, key, itemId: first.item_id }];
+    }).slice(0, manual ? 5 : PAGE_SIZE);
+    if (!manual) autoImageView.current = imageView;
     if (!snapshot.length) {
-      setNotice("本页已有可用主图，或平台未返回商品明细。");
+      if (manual) {
+        setNotice("");
+        feedback.notify({ scope: feedbackScope, key: "order-images" }, "info", "本页无待补全主图");
+      }
       return;
     }
     const controller = new AbortController();
     imageAbort.current = controller;
+    const batch = manual ? feedback.batch({ scope: feedbackScope, key: "order-images" }, "补全订单主图", snapshot.length) : null;
+    if (manual) setNotice("");
+    else autoImageController.current = controller;
     setImageBusy(true);
     let completed = 0;
     try {
-      for (const order of snapshot) {
+      for (const { order, target, key, itemId } of snapshot) {
         if (controller.signal.aborted) break;
+        if (imageAttempts.current.size >= 500) {
+          const oldest = imageAttempts.current.keys().next();
+          if (!oldest.done) imageAttempts.current.delete(oldest.value);
+        }
+        imageAttempts.current.set(key, controller);
         try {
-          const updated = await refreshOrderImage(scope, order.order_id, controller.signal);
+          const updated = await refreshOrderImage(target, order.order_id, controller.signal);
           if (controller.signal.aborted) break;
-          setPage((previous) => ({ ...previous, items: previous.items.map((item) =>
-            item.order_id === updated.order_id ? updated : item) }));
+          const url = updated.order_items.find((line) => line.item_id === itemId)?.image_url;
+          if (!trustedOrderImage(url)) {
+            batch?.record(key, "skipped");
+            continue;
+          }
+          batch?.record(key, "success");
+          const applyImage = (row: OrderRecord, rowScope: OrderScope | null) =>
+            rowScope?.storeId === target.storeId && rowScope.site === target.site &&
+            rowScope.logistic === target.logistic && row.order_items.some((line) => line.item_id === itemId)
+              ? { ...row, order_items: row.order_items.map((line) =>
+                line.item_id === itemId && !trustedOrderImage(line.image_url) ? { ...line, image_url: url } : line) }
+              : row;
+          setPage((previous) => ({ ...previous, items: previous.items.map((row) =>
+            applyImage(row, orderRecordScope(row, scope))) }));
           completed++;
         } catch (error) {
           if (controller.signal.aborted) break;
-          setNotice("已补全 " + completed + " 笔订单图片；之后停止：" + displayError(error) +
-            "。不自动重试，请核对服务端版本和官方刊登权限。");
+          if (error instanceof StoreRequestError && [404, 422].includes(error.status) &&
+              ["order_not_found", "order_image_unavailable"].includes(error.code)) {
+            batch?.record(key, "skipped");
+            continue;
+          }
+          batch?.record(key, "failed");
+          if (manual) setNotice("已补全 " + completed + " 张主图，暂时停止：" + displayError(error));
           return;
+        } finally {
+          if (controller.signal.aborted && imageAttempts.current.get(key) === controller) imageAttempts.current.delete(key);
         }
       }
-      if (!controller.signal.aborted) {
-        setNotice("本次尝试补全 " + completed + " 笔订单的主图。剩余缺图可再次点击；不存在可信图片时仍显示暂无图片。");
-      }
     } finally {
-      if (imageAbort.current === controller) imageAbort.current = null;
-      if (!controller.signal.aborted) setImageBusy(false);
+      batch?.finish(controller.signal.aborted ? "订单主图补全已停止" : "订单主图补全结果");
+      if (autoImageController.current === controller) autoImageController.current = null;
+      if (imageAbort.current === controller) {
+        imageAbort.current = null;
+        setImageBusy(false);
+      }
     }
-  };
+  }, [scope, imageView, page.items, running, logisticsAction, refreshingOrder, installingUpdate, loading, feedback, feedbackScope]);
+  useEffect(() => {
+    if (loading || imageBusy || running || logisticsAction || refreshingOrder || installingUpdate ||
+        autoImageView.current === imageView || loadedImageView.current !== imageView) return;
+    const timer = window.setTimeout(() => void refreshPageImages(false), 400);
+    return () => window.clearTimeout(timer);
+  }, [imageView, loading, imageBusy, running, logisticsAction, refreshingOrder, installingUpdate, refreshPageImages]);
+
   const selectStatus = (value: string) => {
     setStatusFilter(value);
     setOffset(0);
   };
 
-  useEffect(() => () => { slaAbort.current?.abort(); setSLABusy(false); },
-    [scope?.storeId, scope?.site, scope?.logistic, statusFilter, purchaseLink, offset]);
+  useEffect(() => () => {
+    slaAbort.current?.abort();
+    slaAbort.current = null;
+    setLogisticsAction(null);
+  }, [scope?.storeId, scope?.site, scope?.logistic, activeQuery, statusFilter, purchaseLink, offset]);
 
-  const refreshPageDispatchSLA = async () => {
-    if (!scope || activeQuery || slaBusy || running || installingUpdate ||
-        (store?.status !== "connected" && store?.status !== "token_expired")) return;
-    if (scope.logistic.toLowerCase() === "fulfillment" || scope.logistic.toLowerCase() === "fulfilment") {
+  const refreshPageLogistics = async (action: "sla" | "shipment") => {
+    if (slaAbort.current || running || refreshingOrder || installingUpdate || loading) return;
+    const isSLA = action === "sla";
+    if (isSLA && (!scope || activeQuery ||
+        (store?.status !== "connected" && store?.status !== "token_expired"))) return;
+    if (isSLA && scope && /^fulfil+ment$/i.test(scope.logistic)) {
       setNotice("Fulfillment 订单不适用发货截止 SLA。");
       return;
     }
-    const snapshot = page.items.filter((item) =>
-      item.status !== "cancelled" && item.status !== "cancellation_requested" &&
-      /^[1-9]\d{0,29}$/.test(item.shipment_id ?? ""));
+    const snapshot = page.items.slice(0, PAGE_SIZE).flatMap((item) => {
+      const target = orderRecordScope(item, scope);
+      if (!target || !/^[1-9]\d{0,29}$/.test(item.shipment_id ?? "") ||
+          (isSLA && ["cancelled", "cancellation_requested", "refunded"].includes(item.status))) return [];
+      return [{ item, target }];
+    });
+    const label = isSLA ? "官方发货截止时间" : "平台物流";
     if (!snapshot.length) {
-      setNotice("本页暂无可以读取官方发货截止时间的 Shipment ID。");
+      setNotice(page.items.some(item => orderRecordScope(item, scope)) || scope
+        ? "本页暂无可用于查询" + label + "的 Shipment ID。"
+        : "请先选择已验证的店铺、站点和物流类型，或使用跨店铺订单搜索。");
       return;
     }
     const controller = new AbortController();
     slaAbort.current = controller;
-    setSLABusy(true);
+    setLogisticsAction(action);
     setSLAProgress("0/" + snapshot.length);
     let done = 0;
     let failed = 0;
@@ -544,58 +718,60 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     try {
       // One user click, up to one page (20 orders), sequential and cancellable.
       // Never run the official SLA fetch automatically in the background.
-      for (const item of snapshot) {
+      for (const { item, target } of snapshot) {
         if (controller.signal.aborted) break;
         try {
-          const refreshed = await refreshOrderDispatchSLA(scope, item.order_id, controller.signal);
+          const refreshed = await refreshOrderLogistics(target, item.order_id, action, controller.signal);
           if (controller.signal.aborted) break;
           setPage((previous) => ({ ...previous, items: previous.items.map((order) =>
-            order.order_id === refreshed.order_id && order.shipment_id === refreshed.shipment_id
-              ? refreshed : order) }));
-          setDetail((current) =>
-            current?.order_id === refreshed.order_id && current.shipment_id === refreshed.shipment_id
-              ? refreshed : current);
+            orderRecordKey(order, scope) === orderRecordKey(refreshed, target) &&
+              order.shipment_id === item.shipment_id && refreshed.shipment_id === item.shipment_id
+              ? isSLA ? { ...order, dispatch_deadline: refreshed.dispatch_deadline,
+                dispatch_sla_status: refreshed.dispatch_sla_status, dispatch_checked_at: refreshed.dispatch_checked_at }
+                : { ...order, shipment: refreshed.shipment }
+              : order) }));
           done++;
           if (refreshed.dispatch_deadline) haveDate++;
         } catch (error) {
           if (controller.signal.aborted) break;
           failed++;
-          const status = error instanceof OrderRequestError ? error.status : 0;
-          const code = error instanceof OrderRequestError ? error.code : "";
+          const status = error instanceof StoreRequestError ? error.status : 0;
+          const code = error instanceof StoreRequestError ? error.code : "";
           // An upstream 403 may be translated into a sanitized 502 response.
-          if (shouldStopSLABatch(status, code)) {
+          if (shouldStopLogisticsBatch(status, code)) {
             stoppedReason = displayError(error);
             break;
           }
         }
         setSLAProgress((done + failed) + "/" + snapshot.length);
       }
+      if (!controller.signal.aborted && !isSLA && done && statusFilter.startsWith("fulfillment_")) loadRows();
       if (!controller.signal.aborted && stoppedReason) {
         const unattempted = snapshot.length - done - failed;
-        setNotice("平台发货时限读取已停止：" + stoppedReason + "。成功 " + done +
+        setNotice(label + "读取已停止：" + stoppedReason + "。成功 " + done +
           " 笔，失败 " + failed + " 笔，剩余未尝试 " + unattempted + " 笔；不会自动重试。");
       } else if (!controller.signal.aborted && !failed) {
-        setNotice("本页已核验 " + done + " 笔官方 SLA，其中有有效截止时间 " + haveDate + " 笔。");
+        setNotice("本页已核验 " + done + " 笔" + label + (isSLA ? "，其中有有效截止时间 " + haveDate + " 笔。" : "。"));
       } else if (!controller.signal.aborted) {
-        setNotice("官方发货截止时间：成功 " + done + " 笔，未获取 " + failed +
-          " 笔。未获取的不推算截止时间，请按卖家后台核实。");
+        setNotice(label + "读取成功 " + done + " 笔，未获取 " + failed + " 笔。请在卖家后台核实。");
       }
     } finally {
-      if (slaAbort.current === controller) slaAbort.current = null;
-      setSLABusy(false);
+      if (slaAbort.current === controller) {
+        slaAbort.current = null;
+        setLogisticsAction(null);
+      }
     }
   };
 
   const performSync = async () => {
-    if (!scope || running || slaBusy || actionBusy || installingUpdate ||
+    if (!scope || running || logisticsAction || actionBusy || installingUpdate ||
         (store?.status !== "connected" && store?.status !== "token_expired")) return;
     const endSync = beginSync();
     if (!endSync) return;
     const controller = new AbortController();
     syncAbort.current = controller;
+    const task = feedback.task({ scope: feedbackScope, key: "order-sync" }, "准备同步订单");
     setRunning(true);
-    setCompletedBatches(0);
-    setProgress(null);
     setNotice("");
     setReview(null);
     setListError("");
@@ -603,32 +779,87 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     let batches = 0;
     let last: OrderProgress | null = null;
     try {
+      task.update("正在同步订单");
       // Bound one user action to avoid unbounded request loops/rate-limit storms.
       for (; batches < 20; batches++) {
         const current = await syncOrders(scope, controller.signal);
         controller.signal.throwIfAborted();
         saved += current.saved;
         last = current;
-        setCompletedBatches(batches + 1);
-        setProgress({ ...current, saved });
+        task.update("正在同步订单", undefined, "已处理 " + (batches + 1) + " 批 · 已保存 " + saved + " 笔");
         if (!current.has_more) break;
       }
-      setNotice(last?.has_more
+      const orderNote = last?.has_more
         ? "本轮已保存 " + saved + " 笔订单，达到 20 批安全上限。点击继续同步可从已保存位置接着处理。"
-        : "订单同步完成：本轮保存 " + saved + " 笔，已同步到当前搜索窗口末尾。");
+        : "订单同步完成：本轮保存 " + saved + " 笔，已同步到当前搜索窗口末尾。";
+      // Only explicit sync triggers this bounded pass, even when no order changed.
+      // The server selects stale active shipments independently of UI filters.
+      let logisticsNote = "";
+      let logisticsIncomplete = false;
+      let logisticsFailed = false;
+      try {
+        task.update("正在读取待更新物流");
+        const candidates = await listShipmentRefreshCandidates(scope, controller.signal);
+        controller.signal.throwIfAborted();
+        let done = 0, failed = 0, attempted = 0;
+        let stop = "";
+        for (const id of candidates.order_ids) {
+          controller.signal.throwIfAborted();
+          task.update("正在更新物流概要", attempted / candidates.order_ids.length,
+            "已处理 " + attempted + "/" + candidates.order_ids.length + " 笔");
+          attempted++;
+          try {
+            await refreshOrderLogistics(scope, id, "shipment", controller.signal);
+            controller.signal.throwIfAborted();
+            done++;
+          } catch (error) {
+            controller.signal.throwIfAborted();
+            failed++;
+            const status = error instanceof StoreRequestError ? error.status : 0;
+            const code = error instanceof StoreRequestError ? error.code : "";
+            if (shouldStopLogisticsBatch(status, code) || code === "order_auth_changed") {
+              stop = displayError(error);
+              break;
+            }
+          }
+        }
+        logisticsFailed = failed > 0 || Boolean(stop);
+        logisticsIncomplete = logisticsFailed || candidates.has_more;
+        logisticsNote = candidates.order_ids.length
+          ? " 物流概要更新 " + done + " 笔，未更新 " + (failed + candidates.order_ids.length - attempted) + " 笔。" +
+            (stop ? " 已停止：" + stop + "；不会自动重试。" : "") +
+            (candidates.has_more ? " 仍有待更新物流，后续可再次同步。" : "")
+          : " 当前没有到期的未完结物流需要刷新。";
+      } catch (error) {
+        controller.signal.throwIfAborted();
+        logisticsIncomplete = true;
+        logisticsFailed = true;
+        logisticsNote = " 物流未更新：" + displayError(error) + "。已保存的订单不受影响。";
+      }
+      controller.signal.throwIfAborted();
+      const needsFollowup = last?.has_more || logisticsIncomplete;
+      // A bounded normal pass is not an error. Keep its continuation hint
+      // in the single capsule; only actual failures need durable page detail.
+      if (logisticsFailed) setNotice(orderNote + logisticsNote);
+      task.finish(needsFollowup ? "warning" : "success",
+        needsFollowup ? "本轮同步结束，仍有待处理项" : "订单同步完成",
+        logisticsFailed ? undefined : "本轮保存 " + saved + " 笔。" +
+          (last?.has_more ? "订单尚未同步完，可继续同步。" : "") + logisticsNote);
       if (store?.status === "token_expired") void reloadStores();
     } catch (error) {
       if (controller.signal.aborted) {
+        task.finish("warning", "订单同步已停止");
         setNotice("同步已停止。请刷新后查看服务器上的已保存订单与进度。");
       } else if (error instanceof OrderRequestError && error.review) {
+        task.finish("warning", "订单详情待核实");
         setReview(error.review);
         const committed = error.progress?.saved ?? 0;
         saved += committed;
-        setProgress(error.progress ? { ...error.progress, saved } : null);
         setNotice("本轮已保存 " + saved + " 笔订单，有一笔详情异常，等待核实。");
       } else {
         const detail = error instanceof OrderRequestError
           ? "（HTTP " + error.status + " · " + error.code + "）" : "";
+        task.finish("error", "订单同步中断");
         setNotice("本轮已保存约 " + saved + " 笔。同步中断：" + displayError(error) + detail +
           "。如请求结果未知，请先刷新确认，不要连续重试。");
       }
@@ -648,10 +879,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     reviewAbort.current = controller;
     setActionBusy(true);
     try {
-      const result = await skipOrder(scope, review, controller.signal);
+      await skipOrder(scope, review, controller.signal);
       if (controller.signal.aborted) return;
       setReview(null);
-      setProgress(result);
       setNotice("已记录人工跳过订单 " + review.order_id + "；其他订单仍可正常同步。");
       loadRows();
     } catch (error) {
@@ -668,9 +898,8 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     reviewAbort.current = controller;
     setActionBusy(true);
     try {
-      const result = await resetOrderCursor(scope, syncState.next_offset, controller.signal);
+      await resetOrderCursor(scope, syncState.next_offset, controller.signal);
       if (controller.signal.aborted) return;
-      setProgress(result);
       setSyncState({ next_offset: 0, can_reset: false });
       setNotice("重扫游标已归零，不会删除已有订单或人工 Skip 审计。");
       loadRows();
@@ -703,6 +932,41 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
     if (activeQuery === input) loadRows();
     else setActiveQuery(input);
   };
+  const trackingURL = officialTrackingURL(detail?.shipment?.details?.tracking_url);
+  const trackingNumber = detail?.shipment?.tracking_number?.trim() || "";
+  const providerURL = trackingProvider === "track718" ? "https://www.track718.com/zh-CN" : "https://www.17track.net/zh-cn";
+  const openTracking = async (url: string, carrier: string, external: boolean, copyNumber = false) => {
+    if (!url) return;
+    setTrackingError("");
+    if (!external && !isTauri()) {
+      setTrackingError("当前运行环境无法打开客户端独立窗口，请选择在浏览器中打开。");
+      return;
+    }
+    if (copyNumber && trackingNumber) void copyTrackingNumber(trackingNumber);
+    if (!isTauri()) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    try {
+      await invoke("official_tracking", {url, carrier, external});
+    } catch (error) {
+      setTrackingError(typeof error === "string" ? error : "无法加载物流查询，请在浏览器中打开。");
+    }
+  };
+  const copyTrackingNumber = async (value: string) => {
+    const notify = feedback.notify({
+      scope: JSON.stringify(selectedRowScope ?? scope ?? feedbackScope), key: "copy-tracking-number",
+    });
+    try {
+      await navigator.clipboard.writeText(value);
+      if (mounted.current) notify("success", "已复制平台运单号");
+    } catch {
+      if (!mounted.current) return;
+      setNotice("复制失败，请手动选择平台运单号复制。");
+      notify("error", "运单号复制失败");
+    }
+  };
+
   const copy = (value: string) => {
     void navigator.clipboard.writeText(value).then(() => setNotice("已复制 " + value))
       .catch(() => setNotice("复制失败，请手动选择文字复制。"));
@@ -727,13 +991,13 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <button className="refresh-button" type="button" onClick={() => void reloadStores()}
             disabled={storeRefreshing || running}>{storeRefreshing ? "读取店铺中…" : "刷新店铺状态"}</button>
           <button className="refresh-button" type="button" onClick={loadRows} disabled={loading || running}>刷新订单</button>
-          <button className="refresh-button" type="button" disabled={!scope || Boolean(activeQuery) || imageBusy || loading || running}
-            onClick={() => void refreshPageImages()}>{imageBusy ? "补图中…" : "补全本页主图"}</button>
+          <button className="refresh-button" type="button" disabled={!visibleOrders.length || imageBusy || loading || running}
+            onClick={() => void refreshPageImages(true)}>{imageBusy ? "补图中…" : "补全本页主图"}</button>
           {running ? (
             <button type="button" className="orders-main-button orders-stop" onClick={() => syncAbort.current?.abort()}>停止同步</button>
           ) : (
             <button type="button" className="orders-main-button" onClick={() => void performSync()}
-              disabled={!canSync || actionBusy} title={!canSync ? disabledReason : undefined}>
+              disabled={!canSync || actionBusy} title={!canSync ? disabledReason : "同步所选店铺、站点及物流模式的服务端搜索窗口，不限于当前列表页"}>
               {installingUpdate ? "正在安装更新" : "同步订单"}</button>
           )}
         </div>
@@ -790,13 +1054,25 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {filter.label}
           </button>)}
           <span className="orders-tabs-meta">本页 {page.items.length} 笔 · 每页 {PAGE_SIZE} 笔</span>
-          <button type="button" className="orders-sla-update" disabled={!scope || Boolean(activeQuery) || slaBusy || running || loading || installingUpdate ||
+          <details className="orders-manual-check">
+            <summary>手动核验{logisticsAction ? " · " + slaProgress : ""}</summary>
+            <div className="orders-manual-actions">
+          <button type="button" className="orders-sla-update" disabled={!scope || Boolean(activeQuery) || Boolean(logisticsAction) || running || loading || installingUpdate ||
               scope?.logistic.toLowerCase() === "fulfillment" || scope?.logistic.toLowerCase() === "fulfilment" ||
               (store?.status !== "connected" && store?.status !== "token_expired")}
             title="按本页有 Shipment ID 的订单逐笔读取官方 SLA，最多 20 笔，不自动重复"
-            onClick={() => void refreshPageDispatchSLA()}>
-            {slaBusy ? "读取发货截止 " + slaProgress : "更新本页发货截止"}
+            onClick={() => void refreshPageLogistics("sla")}>
+            {logisticsAction === "sla" ? "读取发货截止 " + slaProgress : "更新本页发货截止"}
           </button>
+          <button type="button" className="orders-sla-update"
+            disabled={Boolean(logisticsAction) || running || loading || installingUpdate || !page.items.some(order => Boolean(order.shipment_id))}
+            onClick={() => void refreshPageLogistics("shipment")}>
+            {logisticsAction === "shipment" ? "读取物流 " + slaProgress : "更新本页物流"}
+          </button>
+            {syncState?.can_reset && !review && !running &&
+              <button type="button" className="orders-sla-update" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
+            </div>
+          </details>
         </div>
         <div className="orders-procurement-toolbar" role="group" aria-label="1688采购关联筛选">
           <strong>采购</strong>
@@ -812,16 +1088,10 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
           <span>按数据库关联状态筛选 · 不代表厂家已发货</span>
         </div>
 
-        {running && <div className="orders-notice" role="status">
-          正在同步：已完成 {completedBatches} 批，本次已保存 {progress?.saved ?? 0} 笔。
-          最近一批处理 {progress?.processed ?? 0} 个搜索结果组；单次操作最多 20 批。
-        </div>}
-        {(notice || syncState?.can_reset) && <div className="orders-notice" role="status">
-          <span>{notice || "当前存在可重新扫描的服务器同步窗口。"}</span>
+        {notice && <div className="orders-notice" role="status">
+          <span>{notice}</span>
           <div className="orders-notice-actions">
-            {syncState?.can_reset && !review && !running &&
-              <button type="button" disabled={actionBusy} onClick={() => void performReset()}>重扫当前窗口</button>}
-            {notice && <button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button>}
+            <button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>关闭</button>
           </div>
         </div>}
         {review && <div className="orders-review" role="alert">
@@ -842,7 +1112,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             <div className="orders-table-scroll">
               <table className="orders-table">
                 <thead><tr>
-                  <th>订单信息</th><th>商品标题 / 规格</th><th>销售金额</th><th>订单状态</th><th>采购 / 平台物流</th><th>发货倒计时</th><th>下单时间</th><th>操作</th>
+                  <th>订单信息</th><th>商品标题 / 规格</th><th>销售金额</th><th>订单状态</th><th>采购 / 物流运单</th><th>发货倒计时</th><th>下单时间</th><th>操作</th>
                 </tr></thead>
                 <tbody>
                   {loading && page.items.length === 0 && <tr><td colSpan={8} className="orders-table-empty">正在读取订单…</td></tr>}
@@ -852,8 +1122,9 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       orderRecordKey(order, scope) === [selectedRowScope?.storeId ?? scope?.storeId ?? "",
                         selectedRowScope?.site ?? scope?.site ?? "",
                         selectedRowScope?.logistic ?? scope?.logistic ?? "", selectedId].join("|") ? "selected" : ""}>
-                    <td><button type="button" className="orders-id" onClick={() =>
-                        openOrder(order.order_id, orderRecordScope(order, scope))}>{order.order_id}</button>
+                    <td><button type="button" className="orders-id" title={order.pack_id ? "销售订单号" : "内部 Order ID"} onClick={() =>
+                        openOrder(order.order_id, orderRecordScope(order, scope))}>{order.pack_id || order.order_id}</button>
+                      {order.pack_id && <small className="orders-subline">内部 Order ID：{order.order_id}</small>}
                       <span className="orders-subline">{(
                         stores.find((item) => item.id === (order.store_id ?? scope?.storeId))?.nickname ||
                         store?.nickname || "店铺").trim().slice(0, 12)}（{
@@ -868,7 +1139,7 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                             translated={translatedTitles.get(order.order_items[0]?.title || "")} />
                           <span className="orders-product-meta">
                             {order.order_items.length > 1 ? order.order_items.length + " 个商品行 · " : ""}
-                            {orderCount(order)} 件 · {order.order_items[0]?.item_id || "商品 ID 未返回"}
+                            {orderCount(order)} · {order.order_items[0]?.item_id || "商品 ID 未返回"}
                           </span>
                           {orderVariationText(order.order_items[0]) && <span className="orders-product-spec"
                             title="官方订单尚未返回可读规格时，仅保留变体 ID">
@@ -877,16 +1148,16 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                         </div>
                       </div>
                     </td>
-                    <td className="orders-money-cell"><strong className="orders-money">{orderMoney(order.total_amount, order.currency_id)}</strong>
-                      <small title="净收益待官方结算费用数据，尚未核算">净收益：—</small>
-                      <small title="利润待实际采购成本、费用和汇率核算">利润：—</small>
+                    <td className="orders-money-cell"><strong className="orders-money" title={order.sales_amount_usd ? "精确金额 USD " + order.sales_amount_usd : undefined}>{orderUSD(order.sales_amount_usd)}</strong>
+                      <small title="净收益待官方结算费用数据，尚未核算">净收益：待核账</small>
+                      <small title="利润待实际采购成本、费用和汇率核算">利润：待核算</small>
                     </td>
-                    <td><span className={"orders-status " + safeOrderStatus(order.status)}>{displayOrderStatus(order)}</span>
-                      {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
+                    <td><span className={"orders-status " + safeOrderStatus(orderFulfillmentStatus(order))}>{displayOrderStatus(order)}</span>
                     </td>
                     <td className="orders-shipping-refs">
+                      {hasProcurement(order) && <small className="orders-purchase-badge">已采购</small>}
                       <span><small>采购运单</small>{order.purchase_tracking_number || "待填写"}</span>
-                      <span><small>平台运单</small>待官方读取</span>
+                      <span><small>平台运单</small>{order.shipment?.tracking_number || (order.shipment ? "平台未提供" : "尚未读取")}</span>
                     </td>
                     <td><DispatchCountdown order={order} now={clockNow}
                       logistic={order.logistic_type ?? scope?.logistic ?? ""} /></td>
@@ -913,13 +1184,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
 
           <dialog ref={detailDialogRef} className="orders-modal" aria-labelledby="orders-detail-title"
             onCancel={(event) => { event.preventDefault(); closeOrder(); }}
-            onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}
-            onClose={() => { if (selectedId) setSelectedId(""); setSelectedRowScope(null); }}>
+            onClick={(event) => { if (event.target === event.currentTarget) closeOrder(); }}>
             <div className="orders-detail" aria-label="订单详情">
               <header className="orders-detail-head"><div><small>订单详情 · {SITE_NAMES[selectedRowScope?.site ?? scope?.site ?? ""] ?? selectedRowScope?.site ?? scope?.site}</small>
-                <h2 id="orders-detail-title">{selectedId || "订单详情"}</h2></div>
+                <h2 id="orders-detail-title">{detail?.pack_id || selectedId || "订单详情"}</h2></div>
                 <div className="orders-detail-head-actions">
-                  <button type="button" className="orders-detail-refresh" disabled={refreshingOrder || running}
+                  <button type="button" className="orders-detail-refresh" disabled={refreshingOrder || running || Boolean(logisticsAction) || installingUpdate}
                     onClick={() => void refreshSelectedOrder()}>
                     {refreshingOrder ? "读取中…" : "更新订单状态"}
                   </button>
@@ -931,14 +1201,15 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
             {detailError && <p className="orders-alert" role="alert">{detailError}</p>}
             {detail && <>
               <div className="orders-detail-summary">
-                <span className={"orders-status " + safeOrderStatus(detail.status)}>{displayOrderStatus(detail)}</span>
+                <span className={"orders-status " + safeOrderStatus(orderFulfillmentStatus(detail))}>{displayOrderStatus(detail)}</span>
                 {hasProcurement(detail) && <small className="orders-purchase-badge">已采购</small>}
-                <strong>{orderMoney(detail.total_amount, detail.currency_id)}</strong>
+                <strong title={detail.sales_amount_usd ? "精确金额 USD " + detail.sales_amount_usd : undefined}>{orderUSD(detail.sales_amount_usd)}</strong>
                 <small>下单：{orderDate(detail.date_created)}</small>
                 <small>更新：{orderDate(detail.last_updated)}</small>
               </div>
               <section className="orders-detail-block">
-                <h3>商品清单 <small>{orderCount(detail)} 件</small></h3>
+                <h3>商品清单 <small>{orderCount(detail)}</small></h3>
+                {detail.order_items_review_required && <p className="orders-alert">存在无法确认是否重复的商品行。请更新订单状态后核实销售金额与件数，不自动删除商品行。</p>}
                 {detail.order_items.length === 0 && <p className="orders-muted">平台未返回商品明细。</p>}
                 {detail.order_items.map((line, i) =>
                   <div className="orders-line-item" key={line.item_id + ":" + (line.variation_id ?? "") + ":" + i}>
@@ -947,23 +1218,76 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                       <TranslatedOrderTitle title={line.title || line.item_id} translated={translatedTitles.get(line.title)} detail />
                       <small>商品 ID：{line.item_id}</small>
                       {line.variation_id && <small>变体 ID：{line.variation_id}</small>}
-                      <span>{orderMoney(line.unit_price, line.currency_id)} × {line.quantity}</span>
+                      <span title={line.currency_id === "USD" && line.unit_price ? "精确单价 USD " + line.unit_price : undefined}>{orderUSD(line.currency_id === "USD" ? line.unit_price : undefined)} × {line.quantity}</span>
                     </div>
                   </div>)}
               </section>
               <section className="orders-detail-block">
                 <h3>订单与物流</h3>
                 <dl className="orders-detail-fields">
-                  <dt>销售订单号</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd>
+                  <dt>{detail.pack_id ? "销售订单号" : "内部 Order ID"}</dt>
+                  <dd><button type="button" onClick={() => copy(detail.pack_id || detail.order_id)}>
+                    {detail.pack_id || detail.order_id}　复制</button></dd>
+                  {detail.pack_id && <><dt>内部 Order ID</dt><dd><button type="button" onClick={() => copy(detail.order_id)}>{detail.order_id}　复制</button></dd></>}
+                  {detail.shipment_id && <><dt>官方 Shipment ID</dt><dd>{detail.shipment_id}</dd></>}
+                  <dt>交易状态</dt><dd>{orderStatusLabel(detail.status)}</dd>
                   <dt>物流模式</dt><dd>{logisticLabel(selectedRowScope?.logistic ?? scope?.logistic)}</dd>
                   <dt>采购快递运单</dt><dd>{detail.purchase_tracking_number || "待填写"}</dd>
-                  <dt>平台运单号</dt><dd>待官方 Shipment 接口查询</dd>
+                  <dt>平台运单号</dt><dd>{detail.shipment?.tracking_number ? <button type="button" onClick={() => void copyTrackingNumber(trackingNumber)}>{detail.shipment.tracking_number}　复制</button> : (detail.shipment ? "平台未提供" : "尚未读取")}</dd>
+                  <dt>平台物流状态</dt><dd title={[detail.shipment?.status, detail.shipment?.substatus].filter(Boolean).join(" / ")}>
+                    {shipmentStatusLabel(detail.shipment)}</dd>
+                  {detail.shipment?.first_mile_carrier && <><dt>首程承运商</dt><dd>{detail.shipment.first_mile_carrier}</dd></>}
+                  <dt>官方承运商</dt><dd>{detail.shipment?.details
+                    ? (detail.shipment.details.carrier_name || "平台未提供") : "尚未读取"}</dd>
+                  <dt>第三方物流查询</dt><dd>
+                    {trackingNumber ? <div className="orders-tracking-actions">
+                      <select aria-label="物流查询平台" value={trackingProvider} onChange={e=>{setTrackingProvider(e.target.value==="17track"?"17track":"track718");setTrackingError("");}}>
+                        <option value="track718">Track718</option><option value="17track">17TRACK</option>
+                      </select>
+                      <button type="button" onClick={()=>void openTracking(providerURL,trackingProvider==="track718"?"Track718":"17TRACK",false,true)}>独立窗口查询</button>
+                      <button type="button" onClick={()=>void openTracking(providerURL,trackingProvider==="track718"?"Track718":"17TRACK",true,true)}>浏览器查询</button>
+                      <small>打开查询平台并复制运单号，粘贴后查询。</small>
+                    </div> : <small>平台未提供运单号</small>}
+                    {trackingURL && <>
+                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",false)}>官方承运商原始查询（备用）</button>{" "}
+                      <button type="button" onClick={()=>void openTracking(trackingURL,detail.shipment?.details?.carrier_name??"",true)}>官方地址浏览器打开（备用）</button>{" "}
+                      <button type="button" onClick={()=>copy(trackingURL)}>复制地址</button>
+                    </>}
+                    {trackingError && <small role="alert">{trackingError}</small>}
+                  </dd>
+                  <dt>官方实际发货</dt><dd>{detail.shipment?.shipped_at
+                    ? <time title="北京时间" dateTime={detail.shipment.shipped_at}>{orderDate(detail.shipment.shipped_at)}</time>
+                    : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
+                  <dt>{detail.shipment?.delivered_at && ["not_delivered", "cancelled"].includes(detail.shipment.status)
+                    ? "平台记录的历史签收时间" : "买家签收时间"}</dt><dd>{detail.shipment?.delivered_at
+                    ? <time title="北京时间" dateTime={detail.shipment.delivered_at}>{orderDate(detail.shipment.delivered_at)}</time>
+                    : (detail.shipment?.details ? "平台未提供时间" : "尚未读取详情")}</dd>
+                  <dt title="北京时间">物流最近核验</dt><dd>{detail.shipment ? orderDate(detail.shipment.checked_at) : "尚未读取"}</dd>
+                  {detail.shipment?.last_updated && <><dt title="北京时间">平台物流更新时间</dt><dd>{orderDate(detail.shipment.last_updated)}</dd></>}
                   <dt>官方发货截止</dt><dd title="北京时间">{dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).date}
                     {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint &&
                       <small> · {dispatchDeadlineLabel(detail, clockNow, selectedRowScope?.logistic ?? scope?.logistic).hint}</small>}</dd>
                 </dl>
-                <p className="orders-muted">平台运单及签收信息尚未读取，不会将内部物流记录或发货截止时间视为已发货、已签收。</p>
+                <button type="button" className="orders-table-action"
+                  disabled={!detail.shipment_id || refreshingOrder || running || Boolean(logisticsAction) || installingUpdate}
+                  onClick={() => void refreshSelectedOrder("shipment")}>更新平台物流</button>
               </section>
+              {detail.shipment?.details && <section className="orders-detail-block">
+                <h3>官方物流时间轴</h3>
+                {detail.shipment.details.checked_at && <p className="orders-muted" title="北京时间">详情最近核验：{orderDate(detail.shipment.details.checked_at)}
+                  {detail.shipment.checked_at && Date.parse(detail.shipment.checked_at) > Date.parse(detail.shipment.details.checked_at) && " · 概要已更新，详情可能较旧，可手动刷新"}</p>}
+                {detail.shipment.details.history?.length ? <ol className="orders-fulfillment-steps">
+                  {detail.shipment.details.history.map((event, index) => <li key={index}>
+                    <b>{shipmentStatusLabel(event)}</b>
+                    <small><time title="北京时间" dateTime={event.date}>{orderDate(event.date)}</time> · {event.status}
+                      {event.substatus && " / " + event.substatus}</small>
+                  </li>)}
+                </ol> : <p className="orders-muted">{detail.shipment.details.history
+                  ? "平台暂无物流事件。" : "平台未提供物流历史。"}</p>}
+              </section>}
+              <OrderProfitCard key={billingKey} rateLimit={billingCooldown.current}
+                order={detail} scope={selectedRowScope ?? scope}
+                disabled={running || Boolean(logisticsAction) || refreshingOrder || installingUpdate}/>
               <section className="orders-detail-block">
                 <div className="orders-detail-block-title">
                   <h3>采购</h3>
@@ -987,8 +1311,12 @@ function ScopedOrders({ scope, scopeKey, store, stores, storeError, statusFilter
                     </li>
                     <li><b>国内快递运输</b><small>厂家发货及国内物流状态待接入</small></li>
                     <li><b>货代仓库签收</b><small>货代仓入库状态待接入</small></li>
-                    <li><b>官方物流扫描交接</b><small>交接扫描与国际运输状态待接入</small></li>
-                    <li><b>海外买家签收</b><small>美客多 Shipment 配送状态待接入</small></li>
+                    <li><b>官方物流扫描交接</b><small>{detail.shipment?.shipped_at
+                      ? "官方发货：" + orderDate(detail.shipment.shipped_at)
+                      : (detail.shipment ? "平台状态：" + shipmentStatusLabel(detail.shipment) + "；交接扫描时间待核实" : "官方物流尚未读取")}</small></li>
+                    <li><b>海外买家签收</b><small>{detail.shipment?.status === "delivered"
+                      ? (detail.shipment.delivered_at ? orderDate(detail.shipment.delivered_at) : "平台确认已签收，未提供时间")
+                      : (detail.shipment ? "平台状态：" + shipmentStatusLabel(detail.shipment) + "；尚无签收确认" : "官方物流尚未读取")}</small></li>
                   </ol>
                   <span>货代仓签收、官方物流接收、买家签收是三个不同事件；当前没有实时状态数据时不显示为已完成。</span>
                 </div>

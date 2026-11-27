@@ -1,7 +1,8 @@
+import { useOperationFeedback } from "./operationFeedbackContext";
 import { useEffect, useRef, useState } from "react";
 import ListingFieldsEditor from "./ListingFieldsEditor";
 import { initialListingFields, listingTextCount, preferredTitle, validateListingFields, type ListingFields, type ListingSource } from "./listingFields";
-import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, saveWorkingDraft, type WorkingDraftInput } from "./collections";
+import { getWorkingDraft, isDraftConflict, isDraftConverted, isDraftRejected, isVariantUpgradeRequired, saveWorkingDraft, type WorkingDraftInput } from "./collections";
 
 type DraftFields = Pick<WorkingDraftInput, "title" | "description" | "notes"> & {listing_fields: ListingFields};
 type LoadState = "loading" | "ready" | "error";
@@ -20,9 +21,9 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   const [revision, setRevision] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [reload, setReload] = useState(0);
+  const feedback = useOperationFeedback();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const active = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -30,7 +31,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     active.current = controller;
     setLoadState("loading");
     setError("");
-    setNotice("");
     void getWorkingDraft(collectionId, controller.signal).then(({ draft }) => {
       if (controller.signal.aborted) return;
       const next = draft
@@ -65,9 +65,9 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   }, [touched,dirty,onDirtyChange]);
   const editable = !locked && loadState === "ready" && !saving;
   const titleCount = listingTextCount(fields.title);
-  const descriptionCount = charCount(fields.description);
+  const legacyDescriptionOversize = charCount(fields.description) > 20000;
   const notesCount = charCount(fields.notes);
-  const validation = descriptionCount > 20000 ? "商品描述不能超过 20000 字符"
+  const validation = legacyDescriptionOversize ? "历史描述超过 20000 字符，请先处理历史数据"
     : notesCount > 5000 ? "整理备注不能超过 5000 字符"
     : titleCount > 500 ? "商品标题不能超过 500 字符"
     : validateListingFields(fields.listing_fields, saved?.listing_fields.titles);
@@ -76,7 +76,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
   const change = (key: keyof DraftFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }));
     setTouched(true);
-    setNotice("");
   };
 
   const refreshDraft = () => {
@@ -91,9 +90,11 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     const controller = new AbortController();
     active.current?.abort();
     active.current = controller;
+    const task = feedback.task({ scope: String(collectionId), key: "working-draft-save" }, "正在保存工作稿");
+    const onAbort = () => task.finish("warning", "工作稿保存等待已结束");
+    controller.signal.addEventListener("abort", onAbort, { once: true });
     setSaving(true);
     setError("");
-    setNotice("");
     try {
       const { draft } = await saveWorkingDraft(collectionId, {
         ...fields, expected_revision: revision,
@@ -105,20 +106,24 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       setSaved(next);
       setTouched(false);
       setRevision(draft.revision);
-      setNotice("已保存到云端整理工作稿，关闭窗口后可恢复。");
+      task.finish("success", "工作稿已保存", "关闭窗口后可恢复");
     } catch (e) {
       if (!controller.signal.aborted) {
+        task.finish("error", "工作稿保存未完成");
         // A timed-out PUT may have committed. Never blindly retry the same revision.
         if (!isDraftRejected(e)) setLoadState("error");
         setError(isDraftConverted(e)
           ? "商品已在另一窗口转入产品箱，原工作稿停止编辑。请先复制当前修改，再到「工作台 → 产品箱」编辑商品。"
           : isDraftConflict(e)
           ? "工作稿已被其他窗口或上一次提交修改（409），本次没有覆盖服务器内容。请复制需要保留的文本，再重新加载。"
+          : isVariantUpgradeRequired(e)
+            ? "旧版变体编辑无法安全保存，请先复制未保存的修改，再升级支持新版变体字段的客户端。本次未写入。"
           : isDraftRejected(e)
             ? "服务器拒绝保存（请求格式或长度不符合要求），内容没有写入。请修改后重新保存。"
             : (e instanceof Error ? e.message : "保存失败") + "。保存状态未确认，请重新加载后再试。");
       }
     } finally {
+      controller.signal.removeEventListener("abort", onAbort);
       if (!controller.signal.aborted) setSaving(false);
     }
   };
@@ -133,13 +138,16 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
       aiProduct={{source_product_id:collectionId,expected_revision:revision}} aiSaved={saved?.listing_fields}
       onChange={listing_fields=>{
         setFields(v=>({...v,title:preferredTitle(listing_fields.titles),listing_fields}));
-        setTouched(true);setNotice("");
+        setTouched(true);
       }} />
-    <label>旧版整理描述（历史参考，非默认刊登）
-      <textarea rows={5} value={fields.description} readOnly={!editable}
-        onChange={(e) => change("description", e.target.value)} />
-      <small>{descriptionCount} / 20000 字符</small>
-    </label>
+    {legacyDescriptionOversize&&<details className="listing-fields-note">
+      <summary>历史描述过长 · 查看及处理（非刊登描述）</summary>
+      <textarea rows={4} readOnly value={fields.description} aria-label="超长历史描述，只读"/>
+      <p>请先复制需要保留的历史文本。正常历史描述不会显示或被删除。</p>
+      <button type="button" disabled={!editable} onClick={()=>{
+        if(window.confirm("确认清空超长历史描述？正式多语言商品描述不受影响。"))change("description","");
+      }}>清空超长历史描述</button>
+    </details>}
     <label>供应商 / 规格 / 包装等整理备注（仅内部使用，不直接刊登）
       <textarea rows={3} value={fields.notes} readOnly={!editable}
         onChange={(e) => change("notes", e.target.value)} />
@@ -147,7 +155,6 @@ export default function WorkingDraftEditor({ collectionId, sourceTitle, sourceDe
     </label>
     {loadState === "ready" && validation && <p className="working-draft-error" role="alert">{validation}</p>}
     {error && <p className="working-draft-error" role="alert">{error}</p>}
-    {notice && <p className="working-draft-success" role="status">{notice}</p>}
     {loadState === "error" && <button type="button" className="refresh-button"
       disabled={locked} onClick={refreshDraft}>重新加载工作稿</button>}
     <button type="button" className="primary-button" onClick={() => void save()}

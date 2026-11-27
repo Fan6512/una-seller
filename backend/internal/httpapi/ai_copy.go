@@ -443,8 +443,21 @@ func (a collectionAPI) aiCopyHandler(service *AICopyService) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if service == nil {
-			writeError(w, http.StatusServiceUnavailable, "AI 文案服务尚未配置")
+		resolved := service
+		if a.accounts != nil {
+			var err error
+			resolved, err = a.accounts.AI(ctx, owner)
+			if errors.Is(err, errAccountCredentialRebind) {
+				writeError(w, http.StatusConflict, "账号 AI Key 已因云端加密密钥变更而失效，请进入账号管理重新绑定")
+				return
+			}
+			if err != nil {
+				writeError(w, http.StatusServiceUnavailable, "无法读取当前账号 AI 配置")
+				return
+			}
+		}
+		if resolved == nil {
+			writeError(w, http.StatusServiceUnavailable, "当前账号尚未绑定 AI 服务")
 			return
 		}
 		contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -507,14 +520,14 @@ func (a collectionAPI) aiCopyHandler(service *AICopyService) http.HandlerFunc {
 			data = facts
 		}
 
-		release, ok := service.acquire(owner, time.Now())
+		release, ok := resolved.acquire(owner, time.Now())
 		if !ok {
 			w.Header().Set("Retry-After", "3")
 			writeError(w, http.StatusTooManyRequests, "AI 文案正在生成或请求过于频繁，请稍后重试")
 			return
 		}
 		defer release()
-		content, err := service.complete(ctx, prompt, data)
+		content, err := resolved.complete(ctx, prompt, data)
 		if r.Context().Err() != nil {
 			return
 		}

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -185,12 +186,25 @@ func (a storeAPI) orderTitleTranslations(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "provide up to 20 order references")
 		return
 	}
-	if a.translator == nil {
+	ctx, stop := context.WithTimeout(r.Context(), 6*time.Second)
+	defer stop()
+	translator := a.translator
+	if a.accounts != nil {
+		var err error
+		translator, err = a.accounts.Translation(ctx, owner)
+		if errors.Is(err, errAccountCredentialRebind) {
+			writeError(w, http.StatusConflict, "账号翻译 Key 已因云端加密密钥变更而失效，请进入账号管理重新绑定")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "无法读取当前账号翻译配置")
+			return
+		}
+	}
+	if translator == nil {
 		writeJSON(w, http.StatusOK, map[string]string{})
 		return
 	}
-	ctx, stop := context.WithTimeout(r.Context(), 6*time.Second)
-	defer stop()
 	seen := make(map[translationOrderRef]bool)
 	var titles []string
 	for _, ref := range refs {
@@ -199,7 +213,7 @@ func (a storeAPI) orderTitleTranslations(w http.ResponseWriter, r *http.Request)
 		}
 		seen[ref] = true
 		// Titles come only from a local order scoped to this owner and verified marketplace.
-		row, err := a.service.GetOrder(ctx, owner, ref.Store, meli.OrderScope{Site: ref.Site, Logistic: ref.Logistic}, ref.OrderID)
+		row, err := a.service.GetOrderSummary(ctx, owner, ref.Store, meli.OrderScope{Site: ref.Site, Logistic: ref.Logistic}, ref.OrderID)
 		if err != nil {
 			continue
 		}
@@ -213,7 +227,7 @@ func (a storeAPI) orderTitleTranslations(w http.ResponseWriter, r *http.Request)
 			break
 		}
 	}
-	writeJSON(w, http.StatusOK, a.translator.translate(ctx, "", titles))
+	writeJSON(w, http.StatusOK, translator.translate(ctx, "", titles))
 }
 
 func categoryTranslationSource(categoryID string) string {

@@ -13,12 +13,20 @@ on:
       - 'backend/**'
   workflow_dispatch:
     inputs:
+      check_only:
+        description: Compile and test the native desktop without packaging
+        type: boolean
+        default: false
       desktop_only:
         description: Build only the desktop installer
         type: boolean
         default: false
       signed_smoke:
         description: Build with an ephemeral key and loopback updater for testing
+        type: boolean
+        default: false
+      loopback_api:
+        description: Point the QA desktop at the isolated local API on port 8787
         type: boolean
         default: false
   push:
@@ -30,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}-${{ inputs.signed_smoke && 'signed-smoke' || 'default' }}
+  group: windows-desktop-${{ github.event_name == 'push' && 'release' || github.ref }}-${{ inputs.signed_smoke && 'signed-smoke' || 'default' }}${{ inputs.loopback_api && '-loopback-api' || '' }}${{ inputs.check_only && '-compile' || '' }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
@@ -53,8 +61,10 @@ jobs:
       !cancelled() &&
       (github.event_name != 'push' || needs.production-environment.result == 'success') &&
       (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    name: Windows Tauri x64 (NSIS)
+    name: ${{ inputs.check_only && 'Windows Tauri x64 compile and tests' || 'Windows Tauri x64 (NSIS)' }}
     environment: ${{ github.event_name == 'push' && 'desktop-production' || 'desktop-ci' }}
+    env:
+      VITE_API_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.loopback_api && 'http://127.0.0.1:8787' || '' }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -89,6 +99,39 @@ jobs:
             throw 'The release tag and all desktop version files must match.'
           }
 
+      # Build the API before any desktop dependency install or generated assets.
+      # A dirty checkout must fail QA rather than suppressing Go VCS metadata.
+      - name: Set up Go for local API
+        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke && !inputs.check_only
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - name: Build and verify clean local API for Windows
+        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke && !inputs.check_only
+        working-directory: backend
+        run: |
+          $revision = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $revision -cne $env:GITHUB_SHA) { throw 'Checkout revision does not match this workflow run.' }
+          $before = @(git status --porcelain=v1 --untracked-files=all)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect API source worktree.' }
+          if ($before.Count -ne 0) { $before | Write-Host; throw 'API source worktree is not clean.' }
+          $api = Join-Path $env:RUNNER_TEMP 'una-seller-api.exe'
+          go build -buildvcs=true -o $api ./cmd/api
+          if ($LASTEXITCODE -ne 0) { throw 'Local API build failed.' }
+          $after = @(git status --porcelain=v1 --untracked-files=all)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect API source after build.' }
+          if ($after.Count -ne 0) { $after | Write-Host; throw 'API build modified the source worktree.' }
+          $info = @(go version -m $api)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect API build metadata.' }
+          $info | Write-Host
+          if (-not ($info | Where-Object { $_ -cmatch ('^\s*build\s+vcs\.revision=' + [regex]::Escape($revision) + '\s*$') }) -or
+              -not ($info | Where-Object { $_ -cmatch '^\s*build\s+vcs\.modified=false\s*$' })) {
+            throw 'API build metadata must identify the checked-out revision and vcs.modified=false.'
+          }
+          Get-FileHash -LiteralPath $api -Algorithm SHA256 | Format-List
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -102,14 +145,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Compile and test native desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.check_only
+        run: |
+          npm run icons
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
       - name: Build test NSIS installer
-        if: github.event_name != 'push' && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.signed_smoke && !inputs.check_only
         env:
           VITE_UNA_SELLER_DEV_DIAGNOSTICS: '1'
         run: npm run tauri:build -- --bundles nsis -- --locked
 
       - name: Build signed NSIS installer
-        if: github.event_name == 'push' || inputs.signed_smoke
+        if: github.event_name == 'push' || (inputs.signed_smoke && !inputs.check_only)
         env:
           SIGNED_SMOKE: ${{ inputs.signed_smoke }}
           UPDATER_PUBLIC_KEY: ${{ github.event_name == 'push' && vars.TAURI_UPDATER_PUBLIC_KEY || '' }}
@@ -168,7 +220,7 @@ jobs:
           }
 
       - name: Upload isolated signed smoke artifacts
-        if: inputs.signed_smoke
+        if: inputs.signed_smoke && !inputs.check_only
         uses: actions/upload-artifact@v4
         with:
           name: una-seller-updater-smoke
@@ -185,20 +237,26 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Set up Go for local API
-        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: backend/go.mod
-          cache: false
+      - name: Record QA desktop build worktree changes
+        if: github.event_name != 'push' && !inputs.signed_smoke && !inputs.check_only
+        run: |
+          git status --porcelain=v1 --untracked-files=all
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect desktop build worktree.' }
+          git diff --stat HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect desktop build diff.' }
 
-      - name: Build local API for Windows
-        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke
-        working-directory: backend
-        run: go build -o ../apps/desktop/src-tauri/target/release/una-seller-api.exe ./cmd/api
+      - name: Stage verified local API
+        if: github.event_name != 'push' && !inputs.desktop_only && !inputs.signed_smoke && !inputs.check_only
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP 'una-seller-api.exe'
+          $destination = 'src-tauri/target/release/una-seller-api.exe'
+          Copy-Item -LiteralPath $source -Destination $destination -ErrorAction Stop
+          if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash) {
+            throw 'Staged API differs from the verified build.'
+          }
 
       - name: Upload Windows app, installer and local API
-        if: github.event_name != 'push' && !inputs.signed_smoke
+        if: github.event_name != 'push' && !inputs.signed_smoke && !inputs.check_only
         uses: actions/upload-artifact@v4
         with:
           name: una-seller-windows-x64

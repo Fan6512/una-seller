@@ -1,11 +1,16 @@
 import type { CollectionImage, CollectionVariant } from "./collections";
 
 export type ListingVariant = {
+  variant_id?: string;
+  available_quantity?: number | null;
   seller_sku: string;
   attributes: Record<string,string>;
   price: string;
   currency: string;
   image_urls: string[];
+  purchase_cost_cny?: string;
+  target_net_proceeds_usd?: string;
+  category_attributes?: CategoryAttributeValue[];
 };
 export type LocalizedTitles = { en: string; es: string; pt: string };
 export type LocalizedDescriptions = LocalizedTitles;
@@ -25,6 +30,8 @@ export type CategoryAttributeValue = {
 };
 
 export type ListingFields = {
+  variant_identity_version?: number;
+  available_quantity?: number | null;
   titles: LocalizedTitles;
   descriptions?: LocalizedDescriptions;
   description_translation?: {
@@ -42,6 +49,7 @@ export type ListingFields = {
   gtin: string;
   purchase_price: string;
   purchase_currency: string;
+  target_net_proceeds_usd?: string;
   weight_g: string;
   length_cm: string;
   width_cm: string;
@@ -61,22 +69,26 @@ export type ListingSource = {
 export function initialListingFields(saved?: Partial<ListingFields> | null, source?: ListingSource, capturedTitle = ""): ListingFields {
   const defaults: ListingFields = {
     titles: titlesFromSource(capturedTitle),
+    variant_identity_version:1,available_quantity:null,
     category_id:"",category_path:"",brand:"",model:"",
-    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"CNY",
+    seller_sku:"",gtin:"",purchase_price:"",purchase_currency:"CNY",target_net_proceeds_usd:"",
     weight_g:"",length_cm:"",width_cm:"",height_cm:"",
     bullet_points:source?.bullet_points.slice()??[],
     attributes:[],
     images:source?.images.map(x=>({...x}))??[],
     variants:source?.variants.map(v=>({
-      seller_sku:"",
+      seller_sku:"",variant_id:"",available_quantity:null,
       attributes:{...v.attributes},
       price:v.price??"",
       currency:v.currency??"",
       image_urls:v.image_urls.slice(),
+      purchase_cost_cny:"",
+      target_net_proceeds_usd:"",
+      category_attributes:[],
     }))??[],
   };
   if(!saved)return defaults;
-  const result:ListingFields={...defaults,...saved,
+  const result:ListingFields={...defaults,...saved,variant_identity_version:1,
     titles:saved.titles ? {...defaults.titles,...saved.titles} : defaults.titles};
   if (saved.descriptions) result.descriptions = { ...saved.descriptions };
   if (saved.description_translation) result.description_translation = { ...saved.description_translation };
@@ -86,7 +98,13 @@ export function initialListingFields(saved?: Partial<ListingFields> | null, sour
   result.attributes=saved.attributes?.map(a=>({...a}))??[];
   if (saved.category_attributes) result.category_attributes = saved.category_attributes.map(field => ({ ...field }));
   if(saved.images!==undefined)result.images=saved.images.map(x=>({...x}));
-  if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,attributes:{...v.attributes},image_urls:v.image_urls.slice()}));
+  if(saved.variants!==undefined)result.variants=saved.variants.map(v=>({...v,
+    variant_id:v.variant_id??"",available_quantity:v.available_quantity??null,
+    seller_sku:v.seller_sku??"",price:v.price??"",currency:v.currency??"",
+    attributes:{...v.attributes},image_urls:v.image_urls?.slice()??[],
+    purchase_cost_cny:v.purchase_cost_cny??"",target_net_proceeds_usd:v.target_net_proceeds_usd??"",
+    category_attributes:v.category_attributes?.map(a=>({...a}))??[],
+  }));
   return result;
 }
 export function detectTitleLanguage(title:string): TitleLanguage | "uncertain" {
@@ -115,7 +133,9 @@ const isMoney=(v:string)=>v===""||/^(0|[1-9][0-9]{0,15})(\.[0-9]{1,4})?$/.test(v
 const isDecimal=(v:string,max:number,integer:boolean)=>v===""||
   (new RegExp(integer?"^[0-9]+$":"^[0-9]+(?:\\.[0-9]+)?$").test(v)&&
     Number(v)>0&&Number(v)<=max);
+const validQuantity=(n:number|null|undefined)=>n==null||(Number.isInteger(n)&&n>=0&&n<=2147483647);
 export function validateListingFields(v:ListingFields, previousTitles?: LocalizedTitles):string {
+  if(!validQuantity(v.available_quantity)||v.variants?.some(x=>!validQuantity(x.available_quantity)))return "库存请输入非负整数，未填写与零库存不同";
   if(Object.values(v.titles).some(t=>listingTextCount(t)>500))return "单个语言标题不能超过 500 字符";
   for (const lang of ["es", "pt"] as const) {
     const title = v.titles[lang].normalize("NFC");
@@ -130,6 +150,7 @@ export function validateListingFields(v:ListingFields, previousTitles?: Localize
   if(v.category_id && !/^CBT[0-9]{1,15}$/.test(v.category_id))return "请填写 CBT 通用类目 ID，站点类目应在上传时选择";
   if(v.category_path.length>400||v.category_id.length>60||v.brand.length>120||
     v.model.length>120||v.seller_sku.length>120||v.gtin.length>50) return "类目或基础属性过长";
+  if(!isMoney(v.target_net_proceeds_usd??""))return "美元目标净收益格式不正确，最多保留四位小数";
   if(!isMoney(v.purchase_price))return "采购成本格式不正确，最多保留四位小数";
   if(v.purchase_currency && !/^[A-Z]{3}$/.test(v.purchase_currency))return "采购币种必须是 3 位大写字母（例如 CNY、USD）";
   if(!isDecimal(v.weight_g,1000000,true))return "重量请输入正整数，单位为克";
@@ -139,10 +160,16 @@ export function validateListingFields(v:ListingFields, previousTitles?: Localize
   if(v.images&&v.images.some(i=>!/^https:\/\/[^\s]+$/i.test(i.url)||i.url.length>2000))return "图片 URL 必须为有效 HTTPS 地址";
   if(v.images&&v.images.length>60)return "图片不能超过 60 张";
   if(v.variants&&v.variants.length>100)return "规格不能超过 100 项";
-  if(v.variants?.some(x=>!isMoney(x.price)||Array.from(x.seller_sku).length>120||
+  if(v.variants?.some(x=>!isMoney(x.price)||!isMoney(x.purchase_cost_cny??"")||!isMoney(x.target_net_proceeds_usd??"")||Array.from(x.seller_sku).length>120||
     (x.currency!==""&&!/^[A-Z]{3}$/.test(x.currency))||
-    Object.keys(x.attributes).length===0||
+    (Object.keys(x.attributes).length===0&&!(x.category_attributes??[]).some(a=>a.value.trim()))||
+    Object.keys(x.attributes).length>12||
     Object.entries(x.attributes).some(([k,val])=>!k||!val||Array.from(k).length>80||Array.from(val).length>200)||
+    (x.category_attributes?.length??0)>12||
+    (x.category_attributes??[]).some(a=>!/^CBT[0-9]{1,15}$/.test(a.category_id)||!/^[A-Z][A-Z0-9_]{0,79}$/.test(a.id)||
+      Array.from(a.value).length>500||(a.value_id?.length??0)>80||(a.unit_id?.length??0)>80||
+      (Boolean(a.value_id)&&!a.value.trim()))||
+    new Set((x.category_attributes??[]).map(a=>a.category_id+":"+a.id)).size!==(x.category_attributes?.length??0)||
     x.image_urls.length>30||x.image_urls.some(url=>!/^https:\/\/[^\s]+$/i.test(url)||url.length>2000))) {
     return "变体价格、币种（3 位大写字母）、SKU、属性或图片 URL 不符合要求";
   }

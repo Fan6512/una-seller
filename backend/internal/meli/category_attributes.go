@@ -107,6 +107,11 @@ func (s *Service) GetCBTCategoryRules(ctx context.Context, owner, category strin
 	if err != nil {
 		return CategoryRules{}, err
 	}
+	result, _ = s.readCBTTechnicalRequirements(readCtx, auth.AccessToken, result)
+	return result, nil
+}
+
+func (s *Service) readCBTTechnicalRequirements(ctx context.Context, token string, result CategoryRules) (CategoryRules, int) {
 	var spec struct {
 		Groups *[]struct {
 			Components []struct {
@@ -119,9 +124,10 @@ func (s *Service) GetCBTCategoryRules(ctx context.Context, owner, category strin
 			} `json:"components"`
 		} `json:"groups"`
 	}
-	if _, err := s.listingGET(readCtx, auth.AccessToken, "/categories/"+category+"/technical_specs/input", &spec, nil); err != nil || spec.Groups == nil {
+	status, err := s.listingGET(ctx, token, "/categories/"+result.CategoryID+"/technical_specs/input", &spec, nil)
+	if err != nil || spec.Groups == nil {
 		// Attribute form remains usable if the supplemental source is unavailable.
-		return result, nil
+		return result, status
 	}
 	result.TechnicalSpecsVerified = true
 	seen := make(map[string]bool)
@@ -151,5 +157,5 @@ func (s *Service) GetCBTCategoryRules(ctx context.Context, owner, category strin
 			}
 		}
 	}
-	return result, nil
+	return result, status
 }

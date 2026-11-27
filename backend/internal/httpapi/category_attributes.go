@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -35,9 +36,18 @@ func (a storeAPI) attachPublishedCategoryBreadcrumbs(page *meli.ListingPage) {
 	}
 }
 
-func (a storeAPI) writeCategoryRules(w http.ResponseWriter, r *http.Request, rules meli.CategoryRules) {
+func (a storeAPI) writeCategoryRules(w http.ResponseWriter, r *http.Request, owner string, rules meli.CategoryRules) {
 	rules.PathZH = a.categoryDictionary.Load().Localize(rules.Path)
-	if a.localizeCategoryAttributes != nil {
+	if a.accounts != nil {
+		translator, err := a.accounts.Translation(r.Context(), owner)
+		if errors.Is(err, errAccountCredentialRebind) {
+			log.Printf("account translation unavailable: credentials need rebind, owner=%s", owner)
+		} else if err != nil {
+			log.Printf("account translation unavailable: provider config read error, owner=%s", owner)
+		} else if translator != nil {
+			rules.Translations = translator.translate(r.Context(), categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules))
+		}
+	} else if a.localizeCategoryAttributes != nil {
 		rules.Translations = a.localizeCategoryAttributes(r.Context(), rules)
 	}
 	writeJSON(w, http.StatusOK, rules)
@@ -63,7 +73,7 @@ func (a storeAPI) cbtCategoryRules(w http.ResponseWriter, r *http.Request) {
 	var platform meli.ListingPlatformError
 	switch {
 	case err == nil:
-		a.writeCategoryRules(w, r, rules)
+		a.writeCategoryRules(w, r, owner, rules)
 	case errors.Is(err, meli.ErrCategoryInvalid):
 		writeError(w, http.StatusBadRequest, "invalid CBT category ID")
 	case errors.Is(err, meli.ErrCBTPredictorStore), errors.Is(err, meli.ErrReauthorizationRequired):
@@ -96,7 +106,7 @@ func (a storeAPI) categoryRules(w http.ResponseWriter, r *http.Request, owner, s
 	}
 	result, err := a.service.GetCategoryRules(r.Context(), owner, store, scope, category)
 	if err == nil {
-		a.writeCategoryRules(w, r, result)
+		a.writeCategoryRules(w, r, owner, result)
 		return
 	}
 	var platform meli.ListingPlatformError

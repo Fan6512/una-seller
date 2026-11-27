@@ -1,0 +1,40 @@
+.title-mode-options {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  margin: 0 0 14px;
+}
+.title-mode-options legend {
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.title-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-outline, #dbe1e8);
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--ui-surface, #fff);
+}
+.title-mode-option.is-selected {
+  border-color: var(--ui-accent, #275db4);
+  background: var(--ui-elevated, #f2f5f9);
+}
+.title-mode-option input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  accent-color: var(--ui-accent, #275db4);
+}
+.title-mode-option-note {
+  margin: 0 0 6px 38px;
+  color: var(--ui-muted, #687586);
+  font-size: 12px;
+  line-height: 1.6;
+}

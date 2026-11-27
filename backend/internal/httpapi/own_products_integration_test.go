@@ -75,21 +75,39 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	}
 	draftPath := "/api/v1/collections/" + source.ID + "/working-draft"
 	draftBody := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":0,
-"listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT123","category_path":"Beleza / Cuidados",
-"category_attributes":[{"category_id":"CBT123","id":"COLOR","value_id":"100","value":"Blue"},{"category_id":"CBT123","id":"CAPACITY","value":"1.5","unit_id":"l"}],
-"brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY",
+"listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT1055",
+"category_attributes":[{"category_id":"CBT1055","id":"IS_DUAL_SIM","value_id":"242085","value":"Yes"},{"category_id":"CBT1055","id":"PACKAGE_WEIGHT","value":"850","unit_id":"g"}],
+"brand":"Example Brand","seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY","target_net_proceeds_usd":"10.25",
 "weight_g":"850","length_cm":"20.5","width_cm":"15","height_cm":"5",
 "images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],
-"variants":[{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","image_urls":[]}]}}`
+"variants":[{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","purchase_cost_cny":"24.50","target_net_proceeds_usd":"11.25","category_attributes":[{"category_id":"CBT1055","id":"COLOR","value_id":"52049","value":"Black"},{"category_id":"CBT1055","id":"INTERNAL_MEMORY","value":"64","unit_id":"GB"}],"image_urls":["https://example.com/black.jpg","https://example.com/shared.jpg"]}]}}`
 	if w := call(owner, "PUT", draftPath, draftBody); w.Code != 200 {
 		t.Fatalf("draft %d %s", w.Code, w.Body.String())
+	}
+	legacyVariant := `{"seller_sku":"P-BLACK","attributes":{"颜色":"黑色"},"price":"89.90","currency":"BRL","image_urls":["https://example.com/black.jpg","https://example.com/shared.jpg"]}`
+	legacyDraft := `{"title":"Curated title","description":"Curated description","notes":"Internal supplier","expected_revision":1,
+"listing_fields":{"titles":{"en":"Curated English Title","es":"Título en español","pt":"Título em português"},"category_id":"CBT1055",
+"seller_sku":"P-001","purchase_price":"25.50","purchase_currency":"CNY","weight_g":"850","images":[{"url":"https://example.com/edited-main.jpg","type":"main"}],"variants":[` + legacyVariant + `]}}`
+	unsafeDraft := strings.Replace(strings.Replace(legacyDraft, "P-BLACK", "P-NEW", 1), "黑色", "蓝色", 1)
+	if w := call(owner, "PUT", draftPath, unsafeDraft); w.Code != 422 || !strings.Contains(w.Body.String(), "VARIANT_CLIENT_UPGRADE_REQUIRED") {
+		t.Fatalf("unsafe legacy draft edit should request upgrade: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(owner, "PUT", draftPath, legacyDraft); w.Code != 200 {
+		t.Fatalf("legacy draft write %d %s", w.Code, w.Body.String())
+	}
+	if w := call(owner, "GET", draftPath, ""); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"purchase_cost_cny":"24.50"`) ||
+		!strings.Contains(w.Body.String(), `"target_net_proceeds_usd":"10.25"`) ||
+		!strings.Contains(w.Body.String(), `"value_id":"52049"`) ||
+		!strings.Contains(w.Body.String(), `"unit_id":"GB"`) {
+		t.Fatalf("legacy draft write lost new fields: %d %s", w.Code, w.Body.String())
 	}
 	if w := call(owner, "POST", approvePath, `{"expected_revision":0}`); w.Code != 409 {
 		t.Fatalf("stale approval %d", w.Code)
 	}
 	approvals := make(chan *httptest.ResponseRecorder, 2)
 	for range 2 {
-		go func() { approvals <- call(owner, "POST", approvePath, `{"expected_revision":1}`) }()
+		go func() { approvals <- call(owner, "POST", approvePath, `{"expected_revision":2}`) }()
 	}
 	first, repeated := <-approvals, <-approvals
 	if repeated.Code == 201 {
@@ -115,22 +133,35 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		len(response.Product.Images) != 1 ||
 		response.Product.ListingFields.WeightG != "850" ||
 		response.Product.ListingFields.SellerSKU != "P-001" ||
-		response.Product.ListingFields.CategoryID != "CBT123" || response.Product.ListingFields.Titles.Spanish != "Título en español" ||
+		response.Product.ListingFields.CategoryID != "CBT1055" || response.Product.ListingFields.Titles.Spanish != "Título en español" ||
 		response.Product.ListingFields.Images == nil ||
 		len(*response.Product.ListingFields.Images) != 1 ||
 		response.Product.ListingFields.CategoryAttributes == nil ||
-		(*response.Product.ListingFields.CategoryAttributes)[0].ValueID != "100" ||
-		(*response.Product.ListingFields.CategoryAttributes)[1].UnitID != "l" {
+		(*response.Product.ListingFields.CategoryAttributes)[0].ValueID != "242085" ||
+		(*response.Product.ListingFields.CategoryAttributes)[1].UnitID != "g" ||
+		response.Product.ListingFields.TargetNetProceedsUSD == nil || *response.Product.ListingFields.TargetNetProceedsUSD != "10.25" ||
+		response.Product.ListingFields.Variants == nil || len(*response.Product.ListingFields.Variants) != 1 ||
+		(*response.Product.ListingFields.Variants)[0].PurchaseCostCNY == nil ||
+		*(*response.Product.ListingFields.Variants)[0].PurchaseCostCNY != "24.50" ||
+		(*response.Product.ListingFields.Variants)[0].TargetNetProceedsUSD == nil ||
+		*(*response.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" ||
+		(*response.Product.ListingFields.Variants)[0].Price != "89.90" ||
+		(*response.Product.ListingFields.Variants)[0].CategoryAttributes == nil ||
+		len(*(*response.Product.ListingFields.Variants)[0].CategoryAttributes) != 2 ||
+		(*(*response.Product.ListingFields.Variants)[0].CategoryAttributes)[0].ValueID != "52049" ||
+		(*(*response.Product.ListingFields.Variants)[0].CategoryAttributes)[0].Value != "Black" ||
+		(*(*response.Product.ListingFields.Variants)[0].CategoryAttributes)[1].UnitID != "GB" ||
+		len((*response.Product.ListingFields.Variants)[0].ImageURLs) != 2 {
 		t.Fatalf("wrong snapshot or listing fields: %#v", response.Product)
 	}
-	again := call(owner, "POST", approvePath, `{"expected_revision":1}`)
+	again := call(owner, "POST", approvePath, `{"expected_revision":2}`)
 	if again.Code != 200 || !strings.Contains(again.Body.String(), "already_approved") {
 		t.Fatalf("duplicate approval %d", again.Code)
 	}
 	// Converted working drafts are permanently read-only; users must edit
 	// app.own_products, never a stale working draft that will not be consumed.
 	if w := call(owner, "PUT", draftPath,
-		`{"title":"Invisible after approval","description":"wrong","notes":"wrong","expected_revision":1}`); w.Code != 409 || !strings.Contains(w.Body.String(), "read-only after product-box approval") {
+		`{"title":"Invisible after approval","description":"wrong","notes":"wrong","expected_revision":2}`); w.Code != 409 || !strings.Contains(w.Body.String(), "read-only after product-box approval") {
 		t.Fatalf("converted draft still writable: %d %s", w.Code, w.Body.String())
 	}
 	if w := call(other, "PUT", draftPath, draftBody); w.Code != 404 {
@@ -167,11 +198,16 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	if w := call(owner, "PUT", "/api/v1/products/"+id, `{"title":"Stale","description":"","notes":"","expected_revision":1}`); w.Code != 409 {
 		t.Fatalf("stale own edit %d", w.Code)
 	}
+	unsafeVariant := strings.Replace(strings.Replace(legacyVariant, "P-BLACK", "P-NEW", 1), "黑色", "蓝色", 1)
+	if w := call(owner, "PUT", "/api/v1/products/"+id,
+		`{"title":"Edited product","description":"Own description","notes":"Own notes","expected_revision":2,"listing_fields":{"variants":[`+unsafeVariant+`]}}`); w.Code != 422 || !strings.Contains(w.Body.String(), "VARIANT_CLIENT_UPGRADE_REQUIRED") {
+		t.Fatalf("unsafe legacy product edit should request upgrade: %d %s", w.Code, w.Body.String())
+	}
 	// The own-product editor can update merchant fields without changing source facts.
 	updated := call(owner, "PUT", "/api/v1/products/"+id,
 		`{"title":"Edited product","description":"Own description","notes":"Own notes","expected_revision":2,
 		"listing_fields":{"seller_sku":"P-002","weight_g":"1200","length_cm":"23","width_cm":"19","height_cm":"9",
-		"titles":{"en":"Edited English Title","es":"Otro título en español","pt":"Outro título em português"},"category_id":"CBT999"}}`)
+		"titles":{"en":"Edited English Title","es":"Otro título en español","pt":"Outro título em português"},"category_id":"CBT416197","variants":[`+legacyVariant+`]}}`)
 	if updated.Code != 200 {
 		t.Fatalf("listing fields edit %d %s", updated.Code, updated.Body.String())
 	}
@@ -183,7 +219,13 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	}
 	if editedResponse.Product.ListingFields.WeightG != "1200" ||
 		editedResponse.Product.ListingFields.SellerSKU != "P-002" ||
-		editedResponse.Product.ListingFields.CategoryID != "CBT999" || editedResponse.Product.ListingFields.Titles.Portuguese != "Outro título em português" {
+		editedResponse.Product.ListingFields.CategoryID != "CBT416197" || editedResponse.Product.ListingFields.Titles.Portuguese != "Outro título em português" ||
+		editedResponse.Product.ListingFields.TargetNetProceedsUSD == nil || *editedResponse.Product.ListingFields.TargetNetProceedsUSD != "10.25" ||
+		editedResponse.Product.ListingFields.Variants == nil || len(*editedResponse.Product.ListingFields.Variants) != 1 ||
+		(*editedResponse.Product.ListingFields.Variants)[0].TargetNetProceedsUSD == nil ||
+		*(*editedResponse.Product.ListingFields.Variants)[0].TargetNetProceedsUSD != "11.25" ||
+		!strings.Contains(updated.Body.String(), `"purchase_cost_cny":"24.50"`) ||
+		!strings.Contains(updated.Body.String(), `"value_id":"52049"`) {
 		t.Fatalf("merchant listing edit not persisted: %#v", editedResponse.Product.ListingFields)
 	}
 	if w := call(owner, "PUT", "/api/v1/products/"+id,
@@ -221,8 +263,9 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 		t.Fatalf("empty image override save %d %s", emptyImageEdit.Code, emptyImageEdit.Body.String())
 	}
 	readback := call(owner, "GET", "/api/v1/products/"+id, "")
-	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"value_id":"100"`) ||
-		!strings.Contains(readback.Body.String(), `"unit_id":"l"`) {
+	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"value_id":"242085"`) ||
+		!strings.Contains(readback.Body.String(), `"unit_id":"g"`) ||
+		!strings.Contains(readback.Body.String(), `"value_id":"52049"`) {
 		t.Fatalf("old editor or product readback lost official IDs: %d %s", readback.Code, readback.Body.String())
 	}
 	list = call(owner, "GET", "/api/v1/products", "")
@@ -246,5 +289,25 @@ func TestProductBoxPromoteSnapshotOwnerIsolationAndEdit(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("edited own product missing after image removal")
+	}
+	clearVariant := strings.TrimSuffix(legacyVariant, "}") + `,"purchase_cost_cny":"","target_net_proceeds_usd":"","category_attributes":[]}`
+	explicitClear := call(owner, "PUT", "/api/v1/products/"+id,
+		`{"title":"Edited English Title","description":"Own description","notes":"Own notes",
+		"expected_revision":4,"listing_fields":{"titles":{"en":"Edited English Title"},
+		"target_net_proceeds_usd":"","variants":[`+clearVariant+`]}}`)
+	if explicitClear.Code != 200 {
+		t.Fatalf("explicit amount and spec clear failed: %d %s", explicitClear.Code, explicitClear.Body.String())
+	}
+	p, err = db.GetOwnProduct(ctx, owner, id)
+	if err != nil || p.ListingFields.TargetNetProceedsUSD == nil || *p.ListingFields.TargetNetProceedsUSD != "" ||
+		p.ListingFields.Variants == nil || len(*p.ListingFields.Variants) != 1 {
+		t.Fatalf("explicit clear lost the variant or retained the product amount: %v", err)
+	}
+	cleared := (*p.ListingFields.Variants)[0]
+	if cleared.PurchaseCostCNY == nil || *cleared.PurchaseCostCNY != "" ||
+		cleared.TargetNetProceedsUSD == nil || *cleared.TargetNetProceedsUSD != "" ||
+		cleared.CategoryAttributes == nil || len(*cleared.CategoryAttributes) != 0 ||
+		cleared.Price != "89.90" || cleared.Currency != "BRL" || len(cleared.ImageURLs) != 2 {
+		t.Fatalf("explicit clear retained old fields or changed source values: %+v", cleared)
 	}
 }

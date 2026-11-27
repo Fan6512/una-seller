@@ -41,13 +41,14 @@
 .orders-filter-note { margin: 0; padding: 7px 15px; background: #f9fbfd; border-left: 1px solid var(--order-border);
   border-right: 1px solid var(--order-border); font-size: 11px; color: #7b8999; }
 .orders-tabs {
-  display: flex; align-items: center; gap: 4px; padding: 0 13px;
-  min-height: 46px; background: var(--order-surface);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 0 13px;
+  box-sizing: border-box; min-width: 0; min-height: 46px; background: var(--order-surface);
   border: 1px solid var(--order-border); border-top: 0;
 }
 .orders-tabs button {
   border: 0; border-bottom: 2px solid transparent; align-self: stretch;
-  padding: 0 16px; background: transparent; color: #697789; font-size: 13px; font-weight: 550;
+  flex: 0 0 auto; min-height: 38px; padding: 0 12px; white-space: nowrap;
+  background: transparent; color: #697789; font-size: 13px; font-weight: 550;
 }
 .orders-tabs button[aria-pressed="true"] { border-color: var(--order-primary); color: var(--order-primary); font-weight: 700; }
 .orders-tabs button:hover:not([aria-pressed="true"]) { background: #f7fafb; }
@@ -281,3 +282,13 @@
   .orders-notice, .orders-review { flex-direction: column; align-items: flex-start; }
   .orders-review-actions { justify-content: flex-start; }
 }
+
+.orders-tracking-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.orders-tracking-actions select { min-width: 0; max-width: 100%; padding: 5px; border: 1px solid var(--ui-outline); border-radius: 6px; background: var(--ui-surface); color: var(--ui-text); }
+.orders-tracking-actions small { flex: 1 1 100%; color: var(--ui-muted); }
+
+/* Rare recovery operations stay available without occupying the normal toolbar. */
+.orders-manual-check { flex: 0 1 auto; max-width: 100%; color: var(--order-muted); font-size: 12px; }
+.orders-manual-check > summary { cursor: pointer; padding: 8px 10px; white-space: nowrap; }
+.orders-manual-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 4px 8px; }
+.orders-manual-actions button.orders-sla-update { min-height: 30px; border: 1px solid var(--order-border); border-radius: 7px; background: var(--order-surface); color: var(--order-primary); font-size: 12px; }

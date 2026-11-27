@@ -17,7 +17,7 @@ func (s *Service) RefreshOrderPrimaryImage(ctx context.Context, owner, store str
 	if !validUUID(store) || !orderScopeValid(scope) || !orderNumber(id) {
 		return OrderRecord{}, ErrOrderNotFound
 	}
-	order, err := s.GetOrder(ctx, owner, store, scope, id)
+	order, err := s.GetOrderSummary(ctx, owner, store, scope, id)
 	if err != nil {
 		return OrderRecord{}, err
 	}
@@ -91,5 +91,5 @@ func (s *Service) RefreshOrderPrimaryImage(ctx context.Context, owner, store str
 	if tag.RowsAffected() == 0 {
 		return OrderRecord{}, ErrOrderAuthorizationChanged
 	}
-	return s.GetOrder(ctx, owner, store, scope, id)
+	return s.GetOrderSummary(ctx, owner, store, scope, id)
 }

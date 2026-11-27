@@ -15,7 +15,7 @@ while IFS= read -r path; do
     *) backend=true; desktop=true; extension=true ;;
   esac
   case "$path" in
-    backend/migrations/*|backend/internal/collections/*) persistence=true ;;
+    backend/migrations/*|backend/internal/collections/*|backend/internal/notifications/*|backend/internal/meli/order_notifications*|backend/internal/meli/order_coordination*|backend/internal/meli/order_write*|backend/internal/meli/order_shipment*|backend/internal/meli/orders.go|backend/internal/meli/order_billing*) persistence=true ;;
     .github/workflows/*|scripts/ci/*) backend=true; desktop=true; extension=true ;;
   esac
 done
