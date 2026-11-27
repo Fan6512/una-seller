@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Fan6512/una-seller/backend/internal/cbtcategory"
@@ -14,6 +15,10 @@ import (
 )
 
 func configuredTranslator() *httpapi.TranslationService {
+	switch strings.TrimSpace(os.Getenv("TRANSLATION_PROVIDER")) {
+	case "volcengine":
+		return httpapi.NewVolcengineTranslationService(os.Getenv("VOLCENGINE_TRANSLATE_ACCESS_KEY_ID"), os.Getenv("VOLCENGINE_TRANSLATE_SECRET_ACCESS_KEY"))
+	}
 	return httpapi.NewTranslationService(os.Getenv("TRANSLATION_PROVIDER"),
 		os.Getenv("AZURE_TRANSLATOR_KEY"), os.Getenv("AZURE_TRANSLATOR_REGION"),
 		os.Getenv("BAIDU_TRANSLATE_APP_ID"), os.Getenv("BAIDU_TRANSLATE_SECRET"))
@@ -39,7 +44,7 @@ func updateCBTCategories(args []string, dir string, translator *httpapi.Translat
 	if translator != nil {
 		translate = translator.TranslateCategoryBatch
 	}
-	result, err := cbtcategory.Update(ctx, dir, translate, *limit)
+	result, err := cbtcategory.Update(ctx, dir, translate, *limit, translator.CategoryBatchSize())
 	if err != nil {
 		return err
 	}

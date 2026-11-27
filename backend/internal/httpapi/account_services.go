@@ -165,6 +165,10 @@ func (s *AccountServices) validateAccountConfig(kind string, c accountServiceCon
 			if !accountSimpleID.MatchString(c.AppID) || c.Region != "" {
 				return errors.New("invalid Baidu APP ID")
 			}
+		case "volcengine":
+			if !accountSimpleID.MatchString(c.AppID) || c.Region != "" {
+				return errors.New("invalid Volcengine Access Key ID")
+			}
 		default:
 			return errors.New("unsupported translation provider")
 		}
@@ -328,7 +332,13 @@ func (s *AccountServices) Translation(ctx context.Context, owner string) (*Trans
 	if cached := s.translation[owner]; cached.revision == version {
 		return cached.service, nil
 	}
-	service := NewTranslationService(c.Provider, c.APIKey, c.Region, c.AppID, c.APIKey)
+	var service *TranslationService
+	if c.Provider == "volcengine" {
+		// The existing credential schema stores the public AK in app_id and the encrypted SK in api_key.
+		service = NewVolcengineTranslationService(c.AppID, c.APIKey)
+	} else {
+		service = NewTranslationService(c.Provider, c.APIKey, c.Region, c.AppID, c.APIKey)
+	}
 	if service == nil {
 		return nil, errors.New("invalid stored translation provider")
 	}
@@ -471,7 +481,7 @@ func (a collectionAPI) accountServiceConfigAction(s *AccountServices) http.Handl
 				}
 				out := service.translate(ctx, "en", []string{"product"})
 				if out["product"] == "" {
-					writeError(w, 502, "翻译连接测试失败")
+					writeError(w, 502, "翻译连接测试失败，请检查密钥、服务开通状态、余额或限流后重试")
 					return
 				}
 			}

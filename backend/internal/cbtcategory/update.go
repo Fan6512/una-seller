@@ -45,14 +45,14 @@ type progressRecord struct {
 	Skipped    map[string]string `json:"skipped,omitempty"`
 }
 
-func Update(ctx context.Context, dir string, translate TranslateBatch, maxBatches int) (Summary, error) {
+func Update(ctx context.Context, dir string, translate TranslateBatch, maxBatches int, maxTexts ...int) (Summary, error) {
 	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	return update(ctx, dir, client, DumpURL, translate, maxBatches)
+	return update(ctx, dir, client, DumpURL, translate, maxBatches, maxTexts...)
 }
 
-func update(ctx context.Context, dir string, client *http.Client, endpoint string, translate TranslateBatch, maxBatches int) (Summary, error) {
+func update(ctx context.Context, dir string, client *http.Client, endpoint string, translate TranslateBatch, maxBatches int, maxTexts ...int) (Summary, error) {
 	if strings.TrimSpace(dir) == "" || maxBatches < 0 {
 		return Summary{}, errors.New("configure a CBT dictionary directory and non-negative batch limit")
 	}
@@ -137,7 +137,7 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 		return summary, nil
 	}
 
-	batches := makeBatches(staged, overrides, failed)
+	batches := makeBatches(staged, overrides, failed, maxTexts...)
 	for _, batch := range batches {
 		if ctx.Err() != nil || maxBatches > 0 && summary.Batches >= maxBatches {
 			break
@@ -326,7 +326,11 @@ type translationInput struct {
 	ids      []string
 }
 
-func makeBatches(current snapshot, overrides map[string]string, failed map[string]bool) [][]translationInput {
+func makeBatches(current snapshot, overrides map[string]string, failed map[string]bool, maxTexts ...int) [][]translationInput {
+	limit := 120
+	if len(maxTexts) > 0 && maxTexts[0] > 0 && maxTexts[0] < limit {
+		limit = maxTexts[0]
+	}
 	names := make(map[string]int)
 	var ids []string
 	for id, item := range current.Categories {
@@ -381,7 +385,7 @@ func makeBatches(current snapshot, overrides map[string]string, failed map[strin
 	start, chars := 0, 0
 	for i, input := range inputs {
 		count := utf8.RuneCountInString(input.text) + 1
-		if i > start && (chars+count > 1001 || i-start >= 120) {
+		if i > start && (chars+count > 1001 || i-start >= limit) {
 			batches = append(batches, inputs[start:i])
 			start, chars = i, 0
 		}

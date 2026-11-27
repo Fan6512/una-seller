@@ -51,10 +51,10 @@ type TranslationService struct {
 	pending map[translationCacheKey]*translationFlight
 }
 
-func NewTranslationService(provider, azureKey, azureRegion, baiduAppID, baiduSecret string) *TranslationService {
+func NewTranslationService(provider, apiKey, azureRegion, baiduAppID, baiduSecret string) *TranslationService {
 	switch strings.TrimSpace(provider) {
 	case "", "azure":
-		return NewAzureTranslationService(azureKey, azureRegion)
+		return NewAzureTranslationService(apiKey, azureRegion)
 	case "baidu":
 		appID, secret := strings.TrimSpace(baiduAppID), strings.TrimSpace(baiduSecret)
 		if appID != "" && secret != "" {
@@ -75,6 +75,10 @@ func newTranslationService(name string, provider translationProvider) *Translati
 }
 
 func (s *TranslationService) translate(ctx context.Context, source string, texts []string) map[string]string {
+	return s.translateWithin(ctx, source, texts, 4*time.Second)
+}
+
+func (s *TranslationService) translateWithin(ctx context.Context, source string, texts []string, timeout time.Duration) map[string]string {
 	out := make(map[string]string)
 	if s == nil || len(texts) == 0 {
 		return out
@@ -85,7 +89,7 @@ func (s *TranslationService) translate(ctx context.Context, source string, texts
 		return out
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	waiting := make(map[string]*translationFlight)
@@ -244,9 +248,30 @@ func categoryTranslationSource(categoryID string) string {
 	return ""
 }
 
+// Category metadata may contain many official options. Give the 16-text
+// Volcengine batches a bounded larger budget without slowing order reads.
+func (s *TranslationService) translateCategoryRules(ctx context.Context, rules meli.CategoryRules) map[string]string {
+	timeout := 4 * time.Second
+	if s != nil && s.providerName == "volcengine" {
+		timeout = 10 * time.Second
+	}
+	return s.translateWithin(ctx, categoryTranslationSource(rules.CategoryID), categoryAttributeTranslationTexts(rules), timeout)
+}
+
 // TranslateCategoryBatch is for the offline CBT dictionary updater.
 func (s *TranslationService) TranslateCategoryBatch(ctx context.Context, texts []string) map[string]string {
+	if s != nil && s.providerName == "volcengine" {
+		return s.translateWithin(ctx, "en", texts, 30*time.Second)
+	}
 	return s.translate(ctx, "en", texts)
+}
+
+// CategoryBatchSize is the offline updater's maximum number of texts per request.
+func (s *TranslationService) CategoryBatchSize() int {
+	if s != nil && s.providerName == "volcengine" {
+		return 16
+	}
+	return 120
 }
 
 func categoryAttributeTranslationTexts(result meli.CategoryRules) []string {
