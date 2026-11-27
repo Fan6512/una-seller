@@ -16,21 +16,38 @@ import (
 
 const baiduLLMEndpoint = "https://fanyi-api.baidu.com/ait/api/aiTextTranslate"
 const LLMTrialLimit = 50000
+const llmReviewSourceLimit = 2000
+
+// The official reference parameter is separate from the source query.
+const llmCommerceReference = "你是熟悉 Mercado Libre 跨境电商商品分类的专业翻译人员。根据完整分类路径及父级行业语境，将英文分类名称翻译成中国电商卖家常用的简体中文。准确保留商品种类、配件关系、用途、适用对象、品牌、型号、数字及必要缩写；不要添加原文不存在的属性，不要逐字生硬直译或把多义词误译成其他商品。保持每一级分类及原有 | 分隔符，顺序和段数不变，仅输出完整分类路径的译文，不添加解释、编号或引号。"
+
+type llmReviewRequest struct {
+	AppID         string `json:"appid"`
+	From          string `json:"from"`
+	To            string `json:"to"`
+	Query         string `json:"q"`
+	ModelType     string `json:"model_type"`
+	Reference     string `json:"reference"`
+	NeedIntervene int    `json:"needIntervene"`
+}
 
 type llmReviewProvider struct {
 	appID, key, endpoint string
-	client               *http.Client
+	client              *http.Client
 }
 
-// The operator supplied the official Bearer/JSON example for this endpoint.
-// The response parser is intentionally strict pending a real sanitized response.
-// Do not send unverified optional instruction or model parameters.
+// The operator supplied the official Bearer/JSON parameter and response examples.
+// Explicitly select the LLM model. Custom terminology intervention stays off
+// until a service-specific terminology library is configured and verified.
 func (p llmReviewProvider) translate(ctx context.Context, dir, source string) (string, error) {
-	if strings.TrimSpace(source) == "" || utf8.RuneCountInString(source) > 500 ||
+	if strings.TrimSpace(source) == "" || !utf8.ValidString(source) || utf8.RuneCountInString(source) > llmReviewSourceLimit ||
 		strings.ContainsAny(source, "\r\n") {
 		return "", errors.New("unsafe LLM review source")
 	}
-	body, err := json.Marshal(map[string]string{"appid": p.appID, "from": "en", "to": "zh", "q": source})
+	body, err := json.Marshal(llmReviewRequest{
+		AppID: p.appID, From: "en", To: "zh", Query: source,
+		ModelType: "llm", Reference: llmCommerceReference, NeedIntervene: 0,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -69,9 +86,14 @@ func (p llmReviewProvider) translate(ctx context.Context, dir, source string) (s
 	}
 	code := strings.Trim(string(result.ErrorCode), "\"")
 	if code != "" && code != "0" && code != "52000" {
+		// Report only a bounded numeric error code; never log the raw body,
+		// error_msg, credentials, or upstream-controlled arbitrary text.
+		if len(code) <= 10 && strings.Trim(code, "0123456789") == "" {
+			return "", fmt.Errorf("LLM provider business error code=%s", code)
+		}
 		return "", errors.New("LLM provider business error")
 	}
-	if (result.From != "" && result.From != "en") || (result.To != "" && result.To != "zh") ||
+	if result.From != "en" || result.To != "zh" ||
 		len(result.Rows) != 1 || result.Rows[0].Source != source {
 		return "", errors.New("LLM response did not match the requested source")
 	}
