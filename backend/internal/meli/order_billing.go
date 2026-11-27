@@ -57,6 +57,7 @@ type BillingTax struct {
 	OriginalUSD string `json:"original_usd,omitempty"`
 	RefundedUSD string `json:"refunded_usd,omitempty"`
 }
+
 const billingShippingSingleSender = "single_sender_observed"
 const billingShippingAmbiguousSender = "ambiguous_sender_scope"
 
