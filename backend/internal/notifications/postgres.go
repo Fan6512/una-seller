@@ -27,16 +27,18 @@ type storeScope struct {
 
 // Lock candidate mappings through admission or the final scoped write. A known
 // but unavailable account is retryable; an unknown/ambiguous identity is not.
-func resolveScope(ctx context.Context, tx pgx.Tx, seller string) (storeScope, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT c.id::text, c.owner_user_id::text, c.seller_id,
-		       c.status='connected' AND c.marketplaces_status='verified'
+const scopeCandidatesSQL = `
+		SELECT c.id::text AS store_id, c.owner_user_id::text AS owner_id, c.seller_id AS parent_id,
+		       c.status='connected' AND c.marketplaces_status='verified' AS ready
 		FROM app.meli_store_connections c
 		WHERE (c.seller_id=$1 OR EXISTS (
 			SELECT 1 FROM jsonb_array_elements(c.marketplaces) m(value)
 			WHERE m.value->>'user_id'=$1
 		  ))
-		ORDER BY c.id LIMIT 2 FOR SHARE`, seller)
+		ORDER BY c.id LIMIT 2 FOR SHARE`
+
+func resolveScope(ctx context.Context, tx pgx.Tx, seller string) (storeScope, error) {
+	rows, err := tx.Query(ctx, scopeCandidatesSQL, seller)
 	if err != nil {
 		return storeScope{}, err
 	}
@@ -76,7 +78,12 @@ func (p PostgresInbox) Enqueue(ctx context.Context, e Event) (err error) {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err = p.enqueueInTxMeasured(ctx, tx, e, nil, nil, "webhook", trace); err != nil {
+	trace.next("admission")
+	if err = lockAdmission(ctx, tx, pgx.QueryExecModeExec); err != nil {
+		return err
+	}
+	trace.next("receipt_sql")
+	if err = enqueueReceipt(ctx, tx, e, "webhook", webhookReceiptSQL, pgx.QueryExecModeExec); err != nil {
 		return err
 	}
 	trace.next("commit")
@@ -101,19 +108,18 @@ func (p PostgresInbox) enqueueScoped(ctx context.Context, e Event, expected *sto
 }
 
 // Replay uses the same admission and generation update in its page transaction.
-func (p PostgresInbox) enqueueInTx(ctx context.Context, tx pgx.Tx, e Event, expected *storeScope, discovery *DiscoveryScope, provenance string) error {
-	return p.enqueueInTxMeasured(ctx, tx, e, expected, discovery, provenance, nil)
+func lockAdmission(ctx context.Context, tx pgx.Tx, mode pgx.QueryExecMode) error {
+	// Establish synchronous commit and serialize admission before the next
+	// statement takes its snapshot. The transaction holds the lock until it ends.
+	_, err := tx.Exec(ctx, `SELECT set_config('synchronous_commit','on',true), pg_advisory_xact_lock($1)`, mode, int64(queueAdmissionLock))
+	return err
 }
 
-func (p PostgresInbox) enqueueInTxMeasured(ctx context.Context, tx pgx.Tx, e Event, expected *storeScope, discovery *DiscoveryScope, provenance string, trace *ackTrace) error {
-	// Both transaction-local synchronous commit and the same admission lock
-	// must be established before reading authorization or capacity. Combine
-	// them in one database round trip; neither expression depends on the other.
-	trace.next("admission")
-	if _, err := tx.Exec(ctx, `SELECT set_config('synchronous_commit','on',true), pg_advisory_xact_lock($1)`, int64(queueAdmissionLock)); err != nil {
+func (p PostgresInbox) enqueueInTx(ctx context.Context, tx pgx.Tx, e Event, expected *storeScope, discovery *DiscoveryScope, provenance string) error {
+	mode := tx.Conn().Config().DefaultQueryExecMode
+	if err := lockAdmission(ctx, tx, mode); err != nil {
 		return err
 	}
-	trace.next("scope")
 	scope, err := resolveScope(ctx, tx, e.UserID)
 	if err != nil {
 		return err
@@ -183,55 +189,83 @@ func (p PostgresInbox) enqueueInTxMeasured(ctx context.Context, tx pgx.Tx, e Eve
 			}
 		}
 	}
-	trace.next("dedupe_capacity")
-	var duplicate, full bool
-	err = tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM app.meli_notification_inbox
-			WHERE store_id=$1 AND owner_user_id=$2 AND application_id=$3
-			  AND topic=$4 AND resource_id=$5 AND notification_user_id=$6
-			  AND event_key=$7
-		), EXISTS (
-			SELECT 1 FROM app.meli_notification_inbox OFFSET $9
+	return enqueueReceipt(ctx, tx, e, source, scopedReceiptSQL, mode, scope.storeID, scope.ownerID, scope.parentID)
+}
+
+// The live query locks candidate mappings, checks capacity, and writes the
+// receipt and job together. Its snapshot starts after admission is acquired.
+const webhookReceiptSQL = `WITH candidates AS MATERIALIZED (` + scopeCandidatesSQL + `)` + receiptSQL
+
+// Compensation and replay already resolved and locked their scope.
+const scopedReceiptSQL = `WITH candidates(store_id,owner_id,parent_id,ready) AS (
+	SELECT $9::text,$10::text,$11::text,true
+)` + receiptSQL
+
+const receiptSQL = `,
+	scope AS MATERIALIZED (
+		SELECT store_id::uuid, owner_id::uuid, parent_id FROM candidates
+		WHERE ready AND (SELECT count(*) FROM candidates)=1
+	), admission AS MATERIALIZED (
+		SELECT scope.*, EXISTS (
+			SELECT 1 FROM app.meli_notification_inbox i
+			WHERE i.store_id=scope.store_id AND i.owner_user_id=scope.owner_id AND i.application_id=$2
+			  AND i.topic=$3 AND i.resource_id=$4 AND i.notification_user_id=$1
+			  AND i.event_key=$5
+		) AS duplicate, EXISTS (
+			SELECT 1 FROM app.meli_notification_inbox OFFSET $8
 		) OR (EXISTS (
-			SELECT 1 FROM app.meli_notification_jobs OFFSET $9
+			SELECT 1 FROM app.meli_notification_jobs OFFSET $8
 		) AND NOT EXISTS (
-			SELECT 1 FROM app.meli_notification_jobs
-			WHERE store_id=$1 AND owner_user_id=$2 AND application_id=$3
-			  AND topic=$4 AND resource_id=$5 AND parent_seller_id=$8
-			  AND dead_at IS NULL
+			SELECT 1 FROM app.meli_notification_jobs j
+			WHERE j.store_id=scope.store_id AND j.owner_user_id=scope.owner_id AND j.application_id=$2
+			  AND j.topic=$3 AND j.resource_id=$4 AND j.parent_seller_id=scope.parent_id
+			  AND j.dead_at IS NULL
 			FOR UPDATE
-		))`, scope.storeID, scope.ownerID, e.ApplicationID, e.Topic,
-		e.ResourceID, e.UserID, e.Key, scope.parentID, queueCapacity-1).Scan(&duplicate, &full)
-	if err != nil {
-		return err
-	}
-	if duplicate {
-		return nil
-	}
-	if full {
-		return ErrCapacity
-	}
-	trace.next("write")
-	_, err = tx.Exec(ctx, `
-		WITH receipt AS (
-			INSERT INTO app.meli_notification_inbox
-			    (store_id,owner_user_id,parent_seller_id,application_id,topic,resource_id,
-			     notification_user_id,event_key,source_received_at,source)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-			RETURNING store_id,owner_user_id,parent_seller_id,application_id,topic,
-			          resource_id,notification_user_id
-		)
+		)) AS at_capacity
+		FROM scope
+	), receipt AS (
+		INSERT INTO app.meli_notification_inbox
+		    (store_id,owner_user_id,parent_seller_id,application_id,topic,resource_id,
+		     notification_user_id,event_key,source_received_at,source)
+		SELECT store_id,owner_id,parent_id,$2,$3,$4,$1,$5,$6::timestamptz,$7
+		FROM admission WHERE NOT duplicate AND NOT at_capacity
+		RETURNING store_id,owner_user_id,parent_seller_id,application_id,topic,
+		          resource_id,notification_user_id
+	), job AS (
 		INSERT INTO app.meli_notification_jobs AS j
 		    (store_id,owner_user_id,parent_seller_id,application_id,topic,resource_id,notification_user_id)
 		SELECT * FROM receipt
 		ON CONFLICT (store_id,owner_user_id,parent_seller_id,application_id,topic,resource_id)
 		WHERE dead_at IS NULL
 		DO UPDATE SET generation=j.generation+1, notification_user_id=EXCLUDED.notification_user_id,
-		    attempts=0, pending_since=clock_timestamp(), last_failure=NULL`,
-		scope.storeID, scope.ownerID, scope.parentID, e.ApplicationID, e.Topic,
-		e.ResourceID, e.UserID, e.Key, e.ReceivedAt, source)
-	return err
+		    attempts=0, pending_since=clock_timestamp(), last_failure=NULL
+	)
+	SELECT CASE
+		WHEN (SELECT count(*) FROM candidates)<>1 THEN 'scope_rejected'
+		WHEN NOT EXISTS (SELECT 1 FROM scope) THEN 'scope_unavailable'
+		WHEN EXISTS (SELECT 1 FROM admission WHERE NOT duplicate AND at_capacity) THEN 'capacity'
+		ELSE 'accepted'
+	END`
+
+func enqueueReceipt(ctx context.Context, tx pgx.Tx, e Event, source, query string, mode pgx.QueryExecMode, scope ...any) error {
+	args := append([]any{mode, e.UserID, e.ApplicationID, e.Topic, e.ResourceID,
+		e.Key, e.ReceivedAt, source, queueCapacity - 1}, scope...)
+	var status string
+	if err := tx.QueryRow(ctx, query, args...).Scan(&status); err != nil {
+		return err
+	}
+	switch status {
+	case "scope_rejected":
+		return ErrScope
+	case "scope_unavailable":
+		return ErrScopeUnavailable
+	case "capacity":
+		return ErrCapacity
+	case "accepted":
+		return nil
+	default:
+		return errors.New("unknown notification admission result")
+	}
 }
 
 type QueueStats struct {
