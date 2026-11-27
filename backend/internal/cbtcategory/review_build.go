@@ -2,8 +2,8 @@ package cbtcategory
 
 import (
 	"context"
-	"encoding/json"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
