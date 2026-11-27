@@ -3,6 +3,7 @@ package cbtcategory
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,14 +11,16 @@ import (
 	"unicode/utf8"
 )
 
-// TranslationPlan estimates remaining logical batches from the local dump.
+// TranslationPlan estimates remaining logical batches from the local snapshot.
 // It does not fetch a dump, call a provider, modify the journal or publish.
 type TranslationPlan struct {
-	Version     version `json:"version"`
-	Inputs      int     `json:"inputs"`
-	Batches     int     `json:"batches"`
-	SourceChars int     `json:"source_chars"`
-	Skipped     int     `json:"skipped_inputs"`
+	Version          version `json:"version"`
+	SnapshotSource   string  `json:"snapshot_source"`
+	MaxTextsPerBatch int     `json:"max_texts_per_batch"`
+	Inputs           int     `json:"inputs"`
+	Batches          int     `json:"batches"`
+	SourceChars      int     `json:"source_chars"`
+	Skipped          int     `json:"skipped_inputs"`
 }
 
 func Plan(dir string, maxTexts int) (TranslationPlan, error) {
@@ -26,11 +29,13 @@ func Plan(dir string, maxTexts int) (TranslationPlan, error) {
 	}
 	lock, err := lockUpdate(filepath.Join(dir, "update.lock"))
 	if err != nil {
-		return TranslationPlan{}, err
+		return TranslationPlan{}, fmt.Errorf("could not acquire CBT dictionary writer lock: %w", err)
 	}
 	defer lock.Close()
+	source := stagingFile
 	staged, err := loadSnapshot(filepath.Join(dir, stagingFile))
 	if errors.Is(err, os.ErrNotExist) {
+		source = activeFile
 		staged, err = loadSnapshot(filepath.Join(dir, activeFile))
 	}
 	if err != nil {
@@ -56,11 +61,16 @@ func Plan(dir string, maxTexts int) (TranslationPlan, error) {
 		return TranslationPlan{}, err
 	}
 	applyCategoryGlossary(&staged, overrides, failed)
-	return summarizePlan(staged, overrides, failed, maxTexts), nil
+	result := summarizePlan(staged, overrides, failed, maxTexts)
+	result.SnapshotSource = source
+	return result, nil
 }
 
 func summarizePlan(staged snapshot, overrides map[string]string, failed map[string]bool, maxTexts int) TranslationPlan {
-	out := TranslationPlan{Version: staged.Version}
+	if maxTexts <= 0 || maxTexts > 120 {
+		maxTexts = 120
+	}
+	out := TranslationPlan{Version: staged.Version, MaxTextsPerBatch: maxTexts}
 	for _, batch := range makeBatches(staged, overrides, failed, maxTexts) {
 		var texts []string
 		for _, input := range batch {

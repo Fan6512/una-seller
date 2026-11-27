@@ -84,6 +84,16 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 	}
 	activeSummary := summarize(active, overrides, nil)
 	if active.Version == latest && activeSummary.Unprocessed == 0 && activeSummary.Skipped == 0 {
+		// A new deterministic correction can update an already complete
+		// snapshot without calling the provider or waiting for a new dump.
+		if applyCategoryGlossary(&active, overrides, nil) {
+			if err = saveJSON(dir, activeFile, active); err != nil {
+				return activeSummary, err
+			}
+			activeSummary = summarize(active, overrides, nil)
+			activeSummary.State, activeSummary.Published = "published", true
+			return activeSummary, nil
+		}
 		activeSummary.State = "unchanged"
 		return activeSummary, nil
 	}

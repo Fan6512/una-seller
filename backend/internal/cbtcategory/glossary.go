@@ -14,18 +14,21 @@ var categoryTerms = map[string]struct {
 	"VCRs":                   {"录像机", ""},
 }
 
-func applyCategoryGlossary(staged *snapshot, overrides map[string]string, failed map[string]bool) {
+func applyCategoryGlossary(staged *snapshot, overrides map[string]string, failed map[string]bool) bool {
+	changed := false
 	for id, item := range staged.Categories {
 		if item.Status != "enabled" || overrides[pathKey(item.Path)] != "" {
 			continue
 		}
 		term, ok := categoryTerms[item.Name]
-		if !ok || (item.Zh != "" && item.Zh != item.Name && item.Zh != term.bad) {
+		if !ok || item.Zh == term.label || (item.Zh != "" && item.Zh != item.Name && item.Zh != term.bad) {
 			continue
 		}
+		changed = true
 		item.Zh = term.label
 		staged.Categories[id] = item
 		delete(failed, id)
 		delete(staged.Skipped, id)
 	}
+	return changed
 }

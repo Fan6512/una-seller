@@ -444,3 +444,39 @@ func TestCategoryContextGlossaryAndPlan(t *testing.T) {
 		t.Fatalf("budget plan differs from batch input: %+v", plan)
 	}
 }
+
+func TestCompletedDictionaryAppliesGlossaryWithoutProvider(t *testing.T) {
+	server, latest := fixtureServer(t)
+	dir := t.TempDir()
+	path := []PathNode{{ID: "CBT800", Name: "Space Heaters"}}
+	tree := map[string]dumpNode{"CBT800": fixtureNode(path, nil, "enabled")}
+	current := generatedVersion(t, version1, tree)
+	latest.Store(current)
+	active, err := readDump(bytes.NewReader(current.body), current.version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := active.Categories["CBT800"]
+	item.Zh = "太空加热器"
+	active.Categories[item.ID] = item
+	if err := saveJSON(dir, activeFile, active); err != nil {
+		t.Fatal(err)
+	}
+	never := func(context.Context, []string) map[string]string {
+		t.Fatal("complete dictionary correction must not call provider")
+		return nil
+	}
+	for _, wantPublished := range []bool{true, false} {
+		result, err := update(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all", never, 0)
+		if err != nil || result.Published != wantPublished {
+			t.Fatalf("unexpected correction result: %+v err=%v", result, err)
+		}
+	}
+	if got := NewReader(dir).Load().Localize(path); !slices.Equal(got, []string{"取暖器"}) {
+		t.Fatalf("corrected active dictionary not visible: %v", got)
+	}
+	plan, err := Plan(dir, 16)
+	if err != nil || plan.MaxTextsPerBatch != 16 || plan.SnapshotSource != activeFile || plan.Version != current.version || plan.SourceChars != 0 {
+		t.Fatalf("unexpected plan metadata: %+v err=%v", plan, err)
+	}
+}
