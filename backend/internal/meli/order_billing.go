@@ -347,6 +347,13 @@ func (s *Service) PreviewOrderBilling(ctx context.Context, owner, store string, 
 // Diagnostic callers pass persist=false to avoid updating financial snapshots.
 func (s *Service) readOrderBilling(ctx context.Context, owner, store string, scope OrderScope,
 	ids []string, persist bool) (BillingPreviewPage, error) {
+	return s.readOrderBillingMode(ctx, owner, store, scope, ids, persist, true)
+}
+
+// Collector batches fetch Billing once; shipment costs are checked separately
+// for each eligible order. Manual previews retain their existing behavior.
+func (s *Service) readOrderBillingMode(ctx context.Context, owner, store string, scope OrderScope,
+	ids []string, persist, includeShipping bool) (BillingPreviewPage, error) {
 	if !validUUID(store) || !orderScopeValid(scope) || !billingIDsValid(ids) {
 		return BillingPreviewPage{}, ErrOrderBillingInvalid
 	}
@@ -401,7 +408,7 @@ func (s *Service) readOrderBilling(ctx context.Context, owner, store string, sco
 	if err != nil {
 		return BillingPreviewPage{}, ErrOrderInvalidResponse
 	}
-	if len(ids) == 1 && page.Items[0].Available && orderSLAShipmentID.MatchString(shipment) {
+	if includeShipping && len(ids) == 1 && page.Items[0].Available && orderSLAShipmentID.MatchString(shipment) {
 		item := &page.Items[0]
 		shipping := &BillingShipping{}
 		shipping.SellerChargeUSD, shipping.SellerChargeDetailID = billingShippingDebit(item.Charges, shipment)
