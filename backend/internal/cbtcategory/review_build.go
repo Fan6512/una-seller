@@ -2,6 +2,7 @@ package cbtcategory
 
 import (
 	"context"
+	"encoding/json"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 const llmBuildDeferredFile = "llm-build-deferred.json"
 const llmBuildPendingFile = "llm-build-pending.json"
+const llmBuildReceiptsFile = "llm-build-receipts.jsonl"
 const LLMBuildMaxRows = 200
 
 type buildDeferred struct {
@@ -24,18 +26,59 @@ type buildDeferred struct {
 
 type LLMBuildPlan struct {
 	ReviewPlan
-	Deferred    int  `json:"deferred_english"`
-	Usage       int  `json:"usage_chars"`
-	Budget      int  `json:"budget_chars"`
-	BudgetFits  bool `json:"budget_fits"`
-	Pending     bool `json:"pending_attempt"`
+	Deferred   int  `json:"deferred_english"`
+	Usage      int  `json:"usage_chars"`
+	Budget     int  `json:"budget_chars"`
+	BudgetFits bool `json:"budget_fits"`
+	Pending    bool `json:"pending_attempt"`
 }
 
 type LLMBuildResult struct {
 	LLMTrialResult
-	RemainingSourceChars int  `json:"remaining_source_chars_before"`
-	Deferred             int  `json:"deferred_english"`
-	Budget               int  `json:"budget_chars"`
+	RemainingSourceChars int `json:"remaining_source_chars_before"`
+	Deferred             int `json:"deferred_english"`
+	Budget               int `json:"budget_chars"`
+}
+
+type buildReceipt struct {
+	Version     version         `json:"version"`
+	UsageBefore int             `json:"usage_before_chars"`
+	Attempt     LLMTrialAttempt `json:"attempt"`
+}
+
+func buildPending(dir string) (bool, error) {
+	_, err := os.Stat(filepath.Join(dir, llmBuildPendingFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// A complete durable receipt precedes removal of the pending marker.
+// A torn tail must be archived and inspected by the operator, not appended to.
+func appendBuildReceipt(dir string, receipt buildReceipt) error {
+	f, err := os.OpenFile(filepath.Join(dir, llmBuildReceiptsFile), os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+			return err
+		}
+		if last[0] != '\n' {
+			return errors.New("incomplete LLM build receipt tail")
+		}
+	}
+	if err := json.NewEncoder(f).Encode(receipt); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 func sourceHash(source string) string {
@@ -101,11 +144,10 @@ func buildPlanLocked(dir, seed string, budget int, export bool) (LLMBuildPlan, s
 	}
 	out.Usage, out.Budget = state.Chars, budget
 	out.BudgetFits = state.Chars <= budget && plan.SourceChars <= budget-state.Chars
-	_, err = os.Stat(filepath.Join(dir, llmBuildPendingFile))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	out.Pending, err = buildPending(dir)
+	if err != nil {
 		return out, s, nil, deferred, err
 	}
-	out.Pending = err == nil
 	return out, s, completed, deferred, nil
 }
 
@@ -197,11 +239,8 @@ func runLLMBuild(ctx context.Context, dir, seed string, maxRows int, p llmReview
 		}
 		// Write intent before reserving/sending. A crash or unknown response
 		// blocks automatic retry until an operator reconciles and archives it.
-		if err := saveJSON(dir, llmBuildPendingFile, struct {
-			Version     version         `json:"version"`
-			UsageBefore int             `json:"usage_before_chars"`
-			Attempt     LLMTrialAttempt `json:"attempt"`
-		}{s.Version, state.Chars, attempt}); err != nil {
+		receipt := buildReceipt{Version: s.Version, UsageBefore: state.Chars, Attempt: attempt}
+		if err := saveJSON(dir, llmBuildPendingFile, receipt); err != nil {
 			return out, err
 		}
 		label, reserved, err := p.translate(ctx, dir, row.Source)
@@ -240,6 +279,10 @@ func runLLMBuild(ctx context.Context, dir, seed string, maxRows int, p llmReview
 			return out, fmt.Errorf("LLM build row %s: %w", row.ID, err)
 		}
 		out.Attempts = append(out.Attempts, attempt)
+		receipt.Attempt = attempt
+		if err := appendBuildReceipt(dir, receipt); err != nil {
+			return out, err
+		}
 		if err := os.Remove(filepath.Join(dir, llmBuildPendingFile)); err != nil {
 			return out, err
 		}

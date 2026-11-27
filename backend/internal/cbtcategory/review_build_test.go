@@ -74,12 +74,29 @@ func TestLLMBuildCheckpointAndDeferred(t *testing.T) {
 	if err != nil || next.Selected != plan.Selected-2 || next.Deferred != 1 || next.Pending || calls != 2 {
 		t.Fatalf("bad resumed plan %+v %v", next, err)
 	}
+	journal, err := os.ReadFile(filepath.Join(dir, llmBuildReceiptsFile))
+	if err != nil || bytes.Count(journal, []byte("\n")) != 2 || !bytes.Contains(journal, []byte("deferred_english")) {
+		t.Fatalf("missing durable receipts: %s %v", journal, err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, llmBuildPendingFile), []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runLLMBuild(context.Background(), dir, "fixed", 1, p); err == nil || calls != 2 {
 		t.Fatal("unresolved attempt did not block requests")
 	}
+	trial := p
+	trial.limit = LLMTrialLimit
+	if _, err := runLLMTrial(context.Background(), dir, "all", "fixed", 1, true, trial); err == nil || !strings.Contains(err.Error(), "pending attempt") || calls != 2 {
+		t.Fatalf("trial bypassed pending attempt: %v", err)
+	}
+	runLock, err := LockFile(filepath.Join(dir, "llm-review-run.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReconcileLLMUsage(dir, 60000); err == nil {
+		t.Error("reconciliation raced active run")
+	}
+	_ = runLock.Close()
 	after, err := os.ReadFile(filepath.Join(dir, activeFile))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("build modified active dictionary")
