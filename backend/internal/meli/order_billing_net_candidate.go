@@ -25,6 +25,13 @@ type billingExpectedNetEvidence struct {
 // still needs a verified source contract. Do not pass the result to the
 // confirmed-profit path or expose it as actual settlement.
 func billingExpectedNetCandidate(e billingExpectedNetEvidence) (string, bool) {
+	return billingNetArithmetic(e, false)
+}
+
+// billingNetArithmetic is shared only with the explicitly labelled estimate
+// path. allowUnknownShipment is private; callers must first prove that the
+// official membership read was denied, not that it returned a different order.
+func billingNetArithmetic(e billingExpectedNetEvidence, allowUnknownShipment bool) (string, bool) {
 	b := e.Billing
 	oneOrder := func(ids []string) bool {
 		return len(ids) == 1 && ids[0] == e.OrderID
@@ -32,7 +39,7 @@ func billingExpectedNetCandidate(e billingExpectedNetEvidence) (string, bool) {
 	if (e.Scope.Site != "MLB" && e.Scope.Site != "MLM") || e.Scope.Logistic != "remote" ||
 		e.Status != "paid" || !billingIDsValid([]string{e.OrderID}) ||
 		!billingIDsValid([]string{e.PackID}) || !orderSLAShipmentID.MatchString(e.ShipmentID) ||
-		!oneOrder(e.PackOrders) || !oneOrder(e.ShipmentOrders) ||
+		!oneOrder(e.PackOrders) || (!oneOrder(e.ShipmentOrders) && !(allowUnknownShipment && e.ShipmentOrders == nil)) ||
 		!b.Available || b.OrderID != e.OrderID || b.CheckedAt == nil || b.CheckedAt.Equal(time.Time{}) ||
 		len(b.Payments) != 1 || b.Payments[0].Status != "approved" ||
 		(b.Payments[0].MoneyReleaseStatus != "pending" && b.Payments[0].MoneyReleaseStatus != "released") ||
