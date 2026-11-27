@@ -80,6 +80,9 @@ var dailyUSDCNYRatesSQL string
 //go:embed 0024_order_expected_profit.sql
 var orderExpectedProfitSQL string
 
+//go:embed 0025_order_billing_estimates.sql
+var orderBillingEstimatesSQL string
+
 // Apply is explicit (the API never migrates automatically). The SQL is idempotent.
 func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	conn, err := db.Acquire(ctx)
@@ -182,6 +185,10 @@ func Apply(ctx context.Context, db *pgxpool.Pool) error {
 	_, err = conn.Conn().PgConn().Exec(ctx, orderExpectedProfitSQL).ReadAll()
 	if err != nil {
 		return fmt.Errorf("apply order expected profit schema: %w", err)
+	}
+	_, err = conn.Conn().PgConn().Exec(ctx, orderBillingEstimatesSQL).ReadAll()
+	if err != nil {
+		return fmt.Errorf("apply order billing estimate schema: %w", err)
 	}
 	return nil
 }
