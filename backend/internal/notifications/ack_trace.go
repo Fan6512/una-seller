@@ -7,6 +7,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Only fixed phase names, sanitized error classes and durations are emitted.
@@ -33,6 +35,7 @@ func (t *ackTrace) next(stage string) {
 }
 
 func ackFailureClass(err error) string {
+	var postgres *pgconn.PgError
 	switch {
 	case err == nil:
 		return "committed"
@@ -40,6 +43,12 @@ func ackFailureClass(err error) string {
 		return "deadline"
 	case errors.Is(err, context.Canceled):
 		return "cancelled"
+	case pgconn.Timeout(err):
+		return "driver_timeout"
+	case errors.As(err, &postgres) && postgres.Code == "57014":
+		// query_canceled may be a statement timeout or an explicit cancel;
+		// it does not by itself prove the request deadline was exceeded.
+		return "query_cancelled"
 	case errors.Is(err, ErrScope):
 		return "scope_rejected"
 	case errors.Is(err, ErrScopeUnavailable):
