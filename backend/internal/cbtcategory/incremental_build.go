@@ -87,36 +87,43 @@ type IncrementalAssembleReport struct {
 	DeferredEnglish  int               `json:"deferred_english"`
 }
 
-func verifyIncrementalReceipts(dir string) error {
+func readIncrementalReceipts(dir string) ([]incrementalReceipt, error) {
 	path := filepath.Join(dir, incrementalReceiptsFile)
 	raw, err := readIncrementalFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(raw) == 0 || raw[len(raw)-1] != '\n' {
-		return errors.New("incremental receipt journal has an incomplete tail; archive and inspect before continuing")
+		return nil, errors.New("incremental receipt journal has an incomplete tail; archive and inspect before continuing")
 	}
 	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
 	scanner.Buffer(make([]byte, 4096), 1<<20)
+	receipts := make([]incrementalReceipt, 0)
 	for scanner.Scan() {
 		var receipt incrementalReceipt
 		if json.Unmarshal(scanner.Bytes(), &receipt) != nil ||
 			!idPattern.MatchString(receipt.ID) || !validReleaseHash(receipt.ActiveSHA256) ||
 			!validReleaseHash(receipt.SourceSHA256) || !validReleaseHash(receipt.ManifestSHA256) ||
 			!validReleaseHash(receipt.SourceSHA256Row) || receipt.SourceChars <= 0 ||
-			receipt.ReservedChars < 0 || receipt.UsageBefore < 0 ||
+			receipt.ReservedChars <= 0 || receipt.UsageBefore < 0 ||
 			(receipt.Outcome != "stored" && receipt.Outcome != "deferred_english") ||
 			receipt.CompletedAt.IsZero() {
-			return errors.New("incremental receipt journal is invalid; archive and inspect before continuing")
+			return nil, errors.New("incremental receipt journal is invalid; archive and inspect before continuing")
 		}
+		receipts = append(receipts, receipt)
 	}
 	if err := scanner.Err(); err != nil {
-		return errors.New("incremental receipt journal could not be read")
+		return nil, errors.New("incremental receipt journal could not be read")
 	}
-	return nil
+	return receipts, nil
+}
+
+func verifyIncrementalReceipts(dir string) error {
+	_, err := readIncrementalReceipts(dir)
+	return err
 }
 
 func appendIncrementalReceipt(dir string, receipt incrementalReceipt) error {
