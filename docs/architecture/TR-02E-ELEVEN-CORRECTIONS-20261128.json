@@ -1,0 +1,168 @@
+[
+  {
+    "id": "CBT400500",
+    "path_names": [
+      "Health and Health Supplies",
+      "Health Care",
+      "Pharmacy",
+      "Sexual Wellness",
+      "Vaginal Moisturizers"
+    ],
+    "original_label": "阴道润滑剂",
+    "corrected_zh": "阴道保湿剂",
+    "reason": "Vaginal Moisturizers 误译为润滑剂",
+    "path_key": "a7de62f8c574a9e79edbd9830ee4a4ca0eb29b473d6d9bc040c8ce4450e1a7bc",
+    "listing_allowed": true,
+    "has_children": false
+  },
+  {
+    "id": "CBT194355",
+    "path_names": [
+      "Food and Drinks",
+      "Pantry",
+      "Instant Foods",
+      "Premixes",
+      "Savory Baking Mixes"
+    ],
+    "original_label": "香料烘焙混合粉",
+    "corrected_zh": "咸味烘焙混合粉",
+    "reason": "Savory 误译为香料",
+    "path_key": "91bd9d71c019ed8d28bc1e8db4753d764cefae58816d6f0870cb3467f34828a7",
+    "listing_allowed": true,
+    "has_children": false
+  },
+  {
+    "id": "CBT392009",
+    "path_names": [
+      "Appliances",
+      "Small Appliances",
+      "Kitchen Appliances",
+      "Spare Parts & Accessories",
+      "For Mixers & Processors"
+    ],
+    "original_label": "适用于搅拌机和处理器",
+    "corrected_zh": "适用于搅拌机和料理机",
+    "reason": "Processors 误译为处理器(CPU)",
+    "path_key": "354735fc189d66e9e186d397d5d6cd98e4b2fbf582085b88d16216c1237ca96f",
+    "listing_allowed": false,
+    "has_children": true
+  },
+  {
+    "id": "CBT388720",
+    "path_names": [
+      "Home, Furniture and Garden",
+      "Home Care & Laundry",
+      "Cleaning Accessories",
+      "Buckets, Washbowls & Tubs"
+    ],
+    "original_label": "水桶、洗脸盆和浴缸",
+    "corrected_zh": "水桶、洗脸盆和洗衣盆",
+    "reason": "Tubs 在洗衣场景误译为浴缸",
+    "path_key": "bee0990a0136c07066132f83b274ee8d08763f625812e071576db7e05b5aee53",
+    "listing_allowed": true,
+    "has_children": false
+  },
+  {
+    "id": "CBT434353",
+    "path_names": [
+      "Cell Phones and Phones",
+      "Smartwatches and Accessories",
+      "Netting"
+    ],
+    "original_label": "网线",
+    "corrected_zh": "网织表带",
+    "reason": "Netting 误译为网线",
+    "path_key": "0c96028e933bfc4591e10c41eb70718c202d263c06f11a2e7dd941e316b91339",
+    "listing_allowed": true,
+    "has_children": false
+  },
+  {
+    "id": "CBT417821",
+    "path_names": [
+      "Sports and Fitness",
+      "Aerobics & Fitness",
+      "Yoga & Pilates Training",
+      "Zafus"
+    ],
+    "original_label": "瑜伽垫",
+    "corrected_zh": "禅坐垫",
+    "reason": "Zafus 误译为瑜伽垫",
+    "path_key": "486d2d57ec7a703288f140ed591eb6bb71216b82c3bcbc06c6b12bf1ea674740",
+    "listing_allowed": true,
+    "has_children": false
+  },
+  {
+    "id": "CBT74074",
+    "path_names": [
+      "Consoles and Video Games",
+      "Console Accessories",
+      "PS2 - PlayStation 2",
+      "Skins"
+    ],
+    "original_label": "外壳",
+    "corrected_zh": "机身贴膜",
+    "reason": "Skins 误译为外壳",
+    "path_key": "59f058b5e39a46745b55603f443d3f7cb613139fa6bf3c5269d71307bf717ed9",
+    "listing_allowed": true,
+    "has_children": false
+  },
+  {
+    "id": "CBT408041",
+    "path_names": [
+      "Health and Health Supplies",
+      "Health Care",
+      "Breathing Treatment Devices",
+      "Inhaler Spacers"
+    ],
+    "original_label": "吸入器隔离器",
+    "corrected_zh": "吸入器储雾罐",
+    "reason": "Spacer 误译为隔离器",
+    "path_key": "c4eb5c59b83b25fac072ef87cf4a1c4ec71b7b5bd9b91afe7f0a4f744449c1a7",
+    "listing_allowed": true,
+    "has_children": false
+  },
+  {
+    "id": "CBT458077",
+    "path_names": [
+      "Vehicle Accessories",
+      "Car & Truck Replacement Parts",
+      "Steering & Suspension",
+      "Alignment Cambers"
+    ],
+    "original_label": "定位臂",
+    "corrected_zh": "外倾角调整件",
+    "reason": "Alignment Cambers 误译为定位臂",
+    "path_key": "c629709acf2ea271e96292bf010fe34ec6804c0df20d484c728c586912bbf9c1",
+    "listing_allowed": false,
+    "has_children": true
+  },
+  {
+    "id": "CBT1147",
+    "path_names": [
+      "Consoles and Video Games",
+      "Console Accessories",
+      "For SEGA",
+      "Sega Genesis / Mega Drive"
+    ],
+    "original_label": "Sega Genesis / Mega Drive",
+    "corrected_zh": "世嘉 Genesis / Mega Drive",
+    "reason": "英文回退，补中文厂商名",
+    "path_key": "4cc3fbdacd1f6e7fff9b7b622db233b8e1fd0564afabb07e2af6a02b7f29f57e",
+    "listing_allowed": false,
+    "has_children": true
+  },
+  {
+    "id": "CBT38188",
+    "path_names": [
+      "Cameras and Accessories",
+      "Cables",
+      "USB"
+    ],
+    "original_label": "USB",
+    "corrected_zh": "USB 线缆",
+    "reason": "英文回退，补中文类别词",
+    "path_key": "c8eebca93561b932edd397bb3837ffd1678420bd2c885b7ac2a777a67d3bbad8",
+    "listing_allowed": true,
+    "has_children": false
+  }
+]

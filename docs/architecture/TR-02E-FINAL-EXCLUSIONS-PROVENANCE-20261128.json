@@ -1,0 +1,60 @@
+{
+  "created_at": "2026-11-28",
+  "purpose": "TR-02E final offline assemble exclusion set",
+  "seed": "tr02e-final-v1",
+  "total_unique": 1214,
+  "sha256": "44538e7c09ca4bacf3926f511591161fd1b482a2d8e912ee8e2d240546124231",
+  "file": "/var/lib/una-seller/cbt-review/tr02e-final-exclusions-20261128.json",
+  "sources": {
+    "prior544": {
+      "count": 544,
+      "unique_contribution": 331
+    },
+    "first200_build": {
+      "count": 200,
+      "unique_contribution": 171
+    },
+    "second200_plan": {
+      "count": 200,
+      "unique_contribution": 0
+    },
+    "second200_csv": {
+      "count": 200,
+      "unique_contribution": 0
+    },
+    "first_round_csv200": {
+      "count": 200,
+      "unique_contribution": 0
+    },
+    "final300": {
+      "count": 300,
+      "unique_contribution": 0
+    },
+    "known309": {
+      "count": 309,
+      "unique_contribution": 0
+    },
+    "fix24": {
+      "count": 24,
+      "unique_contribution": 0
+    }
+  },
+  "overlaps": {
+    "first200_build_with_prior544": 13,
+    "first200_build_with_final300": 7,
+    "first200_build_with_second200": 0,
+    "second200_with_final300": 10,
+    "final300_with_prior544": 0,
+    "fix24_in_first200_build": 9,
+    "fix24_in_final300": 15
+  },
+  "notes": [
+    "prior544 = /var/lib/una-seller/cbt-review/prior-reviewed-ids-20261127.json (2026-11-27, 544 unique)",
+    "first200_build = first 200 receipts of TR-02E full build (usage 27144->41051), matches report 6.1",
+    "second200_plan = plan-200-independent-v2.json (TR-02D second round independent sample)",
+    "final300 = TR-02E-QUALITY-300-20261128.csv (independent 300, seed 20261128)",
+    "known309 = TR-02E-REVIEWED-IDS-KNOWN-20261128.json (300 final + 9 first-batch error IDs)",
+    "final300 overlaps second200_plan by 10 IDs; not fully independent from the TR-02D second round - disclosed, not claimed independent",
+    "302 machine translations from ordinary full run were never manually reviewed and are deliberately not excluded"
+  ]
+}

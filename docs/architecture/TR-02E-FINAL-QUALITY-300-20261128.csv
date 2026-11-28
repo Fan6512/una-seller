@@ -1,0 +1,301 @@
+n,id,top,path,original,candidate,origin,original_ok,note,suggested,final_label
+1,CBT380658,"Electronics, Audio and Video","Electronics, Audio and Video > Electronic Components > Circuit Boards",Circuit Boards,电路板,llm,1,,,电路板
+2,CBT430415,Cameras and Accessories,Cameras and Accessories > Drones & Accessories > Accessories & Spare Parts > Motors,Motors,电机,llm,1,,,电机
+3,CBT417706,Cell Phones and Phones,Cell Phones and Phones > Smartwatches and Accessories > Batteries,Batteries,电池,llm,1,,,电池
+4,CBT429133,Animals and Pets,Animals and Pets > Dogs > Wheelchairs,Wheelchairs,轮椅,llm,1,,,轮椅
+5,CBT12254,Games and Toys,Games and Toys > Parlor Games > Ping Pong > Tables,Tables,球桌,llm,1,,,球桌
+6,CBT16365,Consoles and Video Games,Consoles and Video Games > Console Accessories > For Nintendo > Nintendo DS > Other,Other,其他,llm,1,,,其他
+7,CBT4611,Musical Instruments,Musical Instruments > String Instruments,String Instruments,弦乐器,llm,1,,,弦乐器
+8,CBT414012,Beauty and Personal Care,"Beauty and Personal Care > Foot, Hand & Nail Care > Nail Art > Stampers",Stampers,印章,llm,1,,,印章
+9,CBT1978,Sports and Fitness,Sports and Fitness > Wakeboarding & Water Skiing,Wakeboarding & Water Skiing,滑水板与滑水,llm,1,,,滑水板与滑水
+10,CBT430717,Antiques and Collectibles,Antiques and Collectibles > Antiques > Home Appliances > Ovens,Ovens,烤箱,llm,1,,,烤箱
+11,CBT455754,"Art, Craft and School Supplies","Art, Craft and School Supplies > Office Products > Commercial and Office > Desk Organization > Others",Others,其他,llm,1,,,其他
+12,CBT417868,Babies,Babies > Maternity Products > Maternity Clothing,Maternity Clothing,孕妇装,llm,1,,,孕妇装
+13,CBT431842,Food and Drinks,Food and Drinks > Pantry > Pastry and Baking > Baking > Shredded Coconut,Shredded Coconut,椰丝,llm,1,,,椰丝
+14,CBT67460,Clothing and Accessories,Clothing and Accessories > Sports Apparel > Hats,Hats,帽子,llm,1,,,帽子
+15,CBT454865,Industries and Offices,Industries and Offices > Medical Equipment > Laboratory Equipment > Dropper Bottles,Dropper Bottles,滴管瓶,llm,1,,,滴管瓶
+16,CBT30196,Construction,Construction > Electrical > Cables & Accessories,Cables & Accessories,电缆及配件,llm,1,,,电缆及配件
+17,CBT373653,"Home, Furniture and Garden","Home, Furniture and Garden > Gardens & Outdoors > Gardening and Accesories > Garden Tools > Gardening Tools > Shears",Shears,剪刀,llm,1,,,剪刀
+18,CBT417708,Computers,Computers > Printing > Printing Supplies > Thermal Ribbons,Thermal Ribbons,热敏色带,llm,1,,,热敏色带
+19,CBT414026,Other categories,Other categories > Esotericism > Runes,Runes,符文,llm,1,,,符文
+20,CBT437168,Jewels and Watches,Jewels and Watches > Piercings,Piercings,穿刺饰品,llm,1,,,穿刺饰品
+21,CBT455204,Tools,Tools > Testers & Measuring Equipment > Pressure Meters,Pressure Meters,压力表,llm,1,,,压力表
+22,CBT400500,Health and Health Supplies,Health and Health Supplies > Health Care > Pharmacy > Sexual Wellness > Vaginal Moisturizers,Vaginal Moisturizers,阴道润滑剂,llm,0,moisturizer 误译为润滑剂,阴道保湿剂,阴道保湿剂
+23,CBT370810,Vehicle Accessories,Vehicle Accessories > Vehicle Safety > Car Safety Kits,Car Safety Kits,汽车安全套件,llm,1,,,汽车安全套件
+24,CBT455153,Appliances,Appliances > Small Appliances > Kitchen Appliances > Spare Parts & Accessories > For Mixers & Processors > Bowls,Bowls,搅拌碗,llm,1,,,搅拌碗
+25,CBT457504,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Party Souvenirs > Air Fresheners",Air Fresheners,空气清新剂,llm,1,,,空气清新剂
+26,CBT32228,"Electronics, Audio and Video","Electronics, Audio and Video > Audio > DJ Equipment & Accessories > Lights & Effects > Stage Laser Lights",Stage Laser Lights,舞台激光灯,llm,1,,,舞台激光灯
+27,CBT431278,Cameras and Accessories,Cameras and Accessories > Camera Accessories > Studio & Lighting > Flashes & Accessories > Camera Adapter Rings,Camera Adapter Rings,相机转接环,llm,1,,,相机转接环
+28,CBT429731,Cell Phones and Phones,Cell Phones and Phones > Wired and Wireless Phones > Phones,Phones,电话,llm,1,,,电话
+29,CBT81618,Animals and Pets,Animals and Pets > Rabbits > Rabbits,Rabbits,兔子,llm,1,,,兔子
+30,CBT418287,Games and Toys,Games and Toys > Arts & Crafts > Easels & Boards > Desks & Board Desks,Desks & Board Desks,桌子与板桌,llm,1,,,桌子与板桌
+31,CBT421101,Consoles and Video Games,Consoles and Video Games > Console Accessories > For SEGA > Sega Genesis / Mega Drive > Power Supplies,Power Supplies,电源供应器,llm,1,,,电源供应器
+32,CBT417651,Musical Instruments,Musical Instruments > Wind Instruments > Accessories > Mouthpieces,Mouthpieces,吹嘴,llm,1,,,吹嘴
+33,CBT455813,Beauty and Personal Care,Beauty and Personal Care > Beauty Treatments > Supplies > Conductive Gels,Conductive Gels,导电凝胶,llm,1,,,导电凝胶
+34,CBT371405,Sports and Fitness,Sports and Fitness > Cycling > Accessories > Tools > Tool Kits,Tool Kits,工具套装,llm,1,,,工具套装
+35,CBT31738,Antiques and Collectibles,Antiques and Collectibles > Antiques > Key Rings,Key Rings,钥匙扣,llm,1,,,钥匙扣
+36,CBT95409,"Art, Craft and School Supplies","Art, Craft and School Supplies > Sewing Notions > Sewing & Embroidery > Pins",Pins,针,llm,1,,,针
+37,CBT417641,Babies,Babies > Baby Care & Hygiene > Baby Cologne,Baby Cologne,婴儿古龙水,llm,1,,,婴儿古龙水
+38,CBT194355,Food and Drinks,Food and Drinks > Pantry > Instant Foods > Premixes > Savory Baking Mixes,Savory Baking Mixes,香料烘焙混合粉,llm,0,savory 误译为香料,咸味烘焙混合粉,咸味烘焙混合粉
+39,CBT95482,Clothing and Accessories,Clothing and Accessories > Work & School Clothing > Uniforms & Work Clothes > Scrubs,Scrubs,手术衣,llm,1,,,手术衣
+40,CBT456995,Industries and Offices,Industries and Offices > Farming > Beekeeping > Working Tools > Sets of Wrenches,Sets of Wrenches,扳手套装,llm,1,,,扳手套装
+41,CBT391077,Construction,Construction > Flooring & Coverings > Baseboards,Baseboards,踢脚板,llm,1,,,踢脚板
+42,CBT373511,"Home, Furniture and Garden","Home, Furniture and Garden > Gardens & Outdoors > Swimming Pools > Decoration and Comfort > Pool Ladders",Pool Ladders,泳池梯,llm,1,,,泳池梯
+43,CBT430790,Computers,Computers > Connectivity & Networks > Tools > Crimping Pliers,Crimping Pliers,压线钳,llm,1,,,压线钳
+44,CBT457940,Other categories,Other categories > Tattoo Supplies > Test Categories,Test Categories,测试类别,llm,1,,,测试类别
+45,CBT431681,Jewels and Watches,Jewels and Watches > Watch Repair Parts > Batteries,Batteries,电池,llm,1,,,电池
+46,CBT5229,Tools,Tools > Electric Tools > Cutting > Angle Grinders,Angle Grinders,角磨机,llm,1,,,角磨机
+47,CBT435259,Health and Health Supplies,Health and Health Supplies > Medical Equipment > Medical Furniture > Hospital Beds & Mattresses,Hospital Beds & Mattresses,病床及床垫,llm,1,,,病床及床垫
+48,CBT456939,Vehicle Accessories,Vehicle Accessories > Heavy Line Replacement Parts > Injection > Injector Pipes,Injector Pipes,喷油器管,llm,1,,,喷油器管
+49,CBT455117,Appliances,Appliances > Small Appliances > Home Appliances > Spare Parts & Accessories > For Vacuum Cleaners > Nozzles,Nozzles,吸嘴,llm,1,,,吸嘴
+50,CBT417986,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Party Decoration > Balloons & Accessories > Balloon Sticks",Balloon Sticks,气球棒,llm,1,,,气球棒
+51,CBT71600,"Electronics, Audio and Video","Electronics, Audio and Video > Audio > Drivers, Diaphragms and Horns","Drivers, Diaphragms and Horns",驱动器、振膜和喇叭,llm,1,,,驱动器、振膜和喇叭
+52,CBT412430,Cameras and Accessories,Cameras and Accessories > Camera Accessories > Stands & Stabilizers,Stands & Stabilizers,支架与稳定器,llm,1,,,支架与稳定器
+53,CBT433156,Cell Phones and Phones,Cell Phones and Phones > Spare Parts > Charging Plates,Charging Plates,充电板,llm,1,,,充电板
+54,CBT434375,Animals and Pets,Animals and Pets > Horses > Grooming & Care > Horse Clippers & Trimmers,Horse Clippers & Trimmers,马用剪毛器和修剪器,llm,1,,,马用剪毛器和修剪器
+55,CBT7971,Games and Toys,Games and Toys > Hobbies > Model Building > Plane Model Building > Other,Other,其他,llm,1,,,其他
+56,CBT439965,Consoles and Video Games,Consoles and Video Games > Console Accessories > For PlayStation > PS4 - PlayStation 4 > Interactive Figures,Interactive Figures,互动人偶,llm,1,,,互动人偶
+57,CBT458009,Musical Instruments,Musical Instruments > Drums & Percussion > Accessories > Brushes,Brushes,鼓刷,llm,1,,,鼓刷
+58,CBT393383,Beauty and Personal Care,Beauty and Personal Care > Hair Removal > Depilatory Wax,Depilatory Wax,脱毛蜡,llm,1,,,脱毛蜡
+59,CBT424839,Sports and Fitness,Sports and Fitness > Hockey > Clothing & Footwear > Socks,Socks,袜子,llm,1,,,袜子
+60,CBT441114,Antiques and Collectibles,Antiques and Collectibles > Coins & Bills > Numismatic Albums,Numismatic Albums,钱币收藏册,llm,1,,,钱币收藏册
+61,CBT95408,"Art, Craft and School Supplies","Art, Craft and School Supplies > Sewing Notions > Sequins",Sequins,亮片,llm,1,,,亮片
+62,CBT409384,Babies,Babies > Breastfeeding & Feeding > Baby Bottles & Accessories > Baby Bottle Accessories > Bottle Nipples,Bottle Nipples,奶嘴,llm,1,,,奶嘴
+63,CBT455798,Food and Drinks,Food and Drinks > Pantry > Rice Legumes and Seeds > Textured Soy,Textured Soy,豆制品,llm,1,,,豆制品
+64,CBT412588,Clothing and Accessories,"Clothing and Accessories > Luggage, Bags & Purses > Luggage & Travel Gear > Travel Gear > Suitcase Covers",Suitcase Covers,行李箱套,llm,1,,,行李箱套
+65,CBT457711,Industries and Offices,Industries and Offices > Farming > Machinery Replacement Parts > HVAC > Air Conditioner Compressors,Air Conditioner Compressors,空调压缩机,llm,1,,,空调压缩机
+66,CBT413516,Construction,Construction > Construction Work Materials > Framing > Lime,Lime,石灰,llm,1,,,石灰
+67,CBT404785,"Home, Furniture and Garden","Home, Furniture and Garden > Kitchen & Housewares > Storage & Organization > Condiments Storage > Spice Racks",Spice Racks,调料架,llm,1,,,调料架
+68,CBT430895,Computers,Computers > PC Components > Floppy Disk Emulators,Floppy Disk Emulators,软盘模拟器,llm,1,,,软盘模拟器
+69,CBT412493,Other categories,Other categories > Adults > Sex Toys > BDSM > Whips,Whips,皮鞭,llm,1,,,皮鞭
+70,CBT430494,Jewels and Watches,Jewels and Watches > Jewelry & Bijou > Anklets,Anklets,脚链,llm,1,,,脚链
+71,CBT455024,Tools,Tools > Industrial > Replacement Parts > Gearboxes and Gearmotors,Gearboxes and Gearmotors,齿轮箱和齿轮电机,llm,1,,,齿轮箱和齿轮电机
+72,CBT4608,Health and Health Supplies,Health and Health Supplies > Health Care > Blood Pressure Monitors,Blood Pressure Monitors,血压计,llm,1,,,血压计
+73,CBT456393,Vehicle Accessories,Vehicle Accessories > Truck Accessories > Interior Accessories > Instruments > Gauges > Fuel Gauge,Fuel Gauge,油表,llm,1,,,油表
+74,CBT413690,Appliances,Appliances > Washing Machines & Dryers > Spare Parts & Accessories > For Washing Machines & Dryers > Switchers > Pressure Switches,Pressure Switches,压力开关,llm,1,,,压力开关
+75,CBT457415,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Costumes and Cosplay > Earrings",Earrings,耳环,llm,1,,,耳环
+76,CBT49334,"Electronics, Audio and Video","Electronics, Audio and Video > Remote Controls > For TVs",For TVs,电视机用,llm,1,,,电视机用
+77,CBT430354,Cameras and Accessories,Cameras and Accessories > Camera Accessories > Bags & Camera Care,Bags & Camera Care,相机包与相机护理,llm,1,,,相机包与相机护理
+78,CBT39196,Cell Phones and Phones,Cell Phones and Phones > Walkie Talkies&Radio Frequency > Accessories > Remote Speaker Microphones,Remote Speaker Microphones,远程扬声器麦克风,llm,1,,,远程扬声器麦克风
+79,CBT437349,Animals and Pets,Animals and Pets > Rodents > Shampoos,Shampoos,洗发水,llm,1,,,洗发水
+80,CBT457507,Games and Toys,Games and Toys > Dolls & Action Figures > Collection Displays,Collection Displays,收藏展示,llm,1,,,收藏展示
+81,CBT72931,Consoles and Video Games,Consoles and Video Games > Consoles Replacement Parts > For PlayStation > Laser Lens,Laser Lens,激光镜头,llm,1,,,激光镜头
+82,CBT435175,Musical Instruments,Musical Instruments > DJ Equipment & Accessories > DJ Accessories > Direct Boxes,Direct Boxes,直通箱,llm,1,,,直通箱
+83,CBT448176,Beauty and Personal Care,Beauty and Personal Care > Personal Care > Oral Care > Teeth Whitening > Teeth Whitening Syringes,Teeth Whitening Syringes,牙齿美白注射器,llm,1,,,牙齿美白注射器
+84,CBT4281,Sports and Fitness,"Sports and Fitness > Tennis, Paddle & Squash > Equipment > Balls",Balls,球类,llm,1,,,球类
+85,CBT47385,Antiques and Collectibles,Antiques and Collectibles > Antiques > Reliquaries,Reliquaries,圣物匣,llm,1,,,圣物匣
+86,CBT455716,"Art, Craft and School Supplies","Art, Craft and School Supplies > Art and Handicrafts > Resin Crafts > Resins",Resins,树脂,llm,1,,,树脂
+87,CBT5360,Babies,Babies > Breastfeeding & Feeding,Breastfeeding & Feeding,母乳喂养与喂养,llm,1,,,母乳喂养与喂养
+88,CBT189612,Food and Drinks,Food and Drinks > Beverages > White Spirits and Liquors > Gin,Gin,杜松子酒,llm,1,,,杜松子酒
+89,CBT120356,Clothing and Accessories,"Clothing and Accessories > Luggage, Bags & Purses > Other",Other,其他,llm,1,,,其他
+90,CBT456965,Industries and Offices,Industries and Offices > Farming > Working Tools > Electric Tools > Angle Grinders,Angle Grinders,角磨机,llm,1,,,角磨机
+91,CBT48890,Construction,Construction > Electrical > Motors,Motors,电机,llm,1,,,电机
+92,CBT454693,"Home, Furniture and Garden","Home, Furniture and Garden > Home Furniture > Kitchen Furniture & Faucets > Kitchen Furnishing > Others",Others,其他,llm,1,,,其他
+93,CBT416524,Computers,Computers > Connectivity & Networks > Tools > Fiber Optic Installation > Fiber Optic Power Meters,Fiber Optic Power Meters,光纤功率计,llm,1,,,光纤功率计
+94,CBT417336,Other categories,Other categories > Tattoo Supplies > Coil Machines,Coil Machines,线圈机,llm,1,,,线圈机
+95,CBT431676,Jewels and Watches,Jewels and Watches > Jewelry Displays & Boxes,Jewelry Displays & Boxes,珠宝展示架和珠宝盒,llm,1,,,珠宝展示架和珠宝盒
+96,CBT372003,Tools,Tools > Hand Tools > Hammers,Hammers,锤子,llm,1,,,锤子
+97,CBT457937,Health and Health Supplies,Health and Health Supplies > Medical Equipment > Monitoring Equipment > Digital Body Fat Calipers,Digital Body Fat Calipers,数字式人体脂肪测量仪,llm,1,,,数字式人体脂肪测量仪
+98,CBT458132,Vehicle Accessories,Vehicle Accessories > Car & Truck Replacement Parts > Steering & Suspension > Steering Knuckles,Steering Knuckles,转向节,llm,1,,,转向节
+99,CBT455093,Appliances,Appliances > Washing Machines & Dryers > Spare Parts & Accessories > For Dishwasher > Drain Pumps,Drain Pumps,排水泵,llm,1,,,排水泵
+100,CBT435284,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Foams, Streamers & Confetti","Foams, Streamers & Confetti",泡沫、彩带和彩色纸屑,llm,1,,,泡沫、彩带和彩色纸屑
+101,CBT92108,"Electronics, Audio and Video","Electronics, Audio and Video > Video > Blu-Ray Players",Blu-Ray Players,蓝光播放器,llm,1,,,蓝光播放器
+102,CBT430403,Cameras and Accessories,Cameras and Accessories > Drones & Accessories,Drones & Accessories,无人机及配件,llm,1,,,无人机及配件
+103,CBT431967,Cell Phones and Phones,Cell Phones and Phones > Cell Phone Accessories > Display Separators,Display Separators,显示屏分离器,llm,1,,,显示屏分离器
+104,CBT458049,Animals and Pets,Animals and Pets > Pet Footwear,Pet Footwear,宠物鞋类,llm,1,,,宠物鞋类
+105,CBT94939,Games and Toys,Games and Toys > Card & Board Games > Poker > Poker Sets,Poker Sets,扑克牌套装,llm,1,,,扑克牌套装
+106,CBT417952,Consoles and Video Games,Consoles and Video Games > Console Accessories > For PlayStation > PS Vita - PlayStation Vita > Cases & Bags,Cases & Bags,保护套与包,llm,1,,,保护套与包
+107,CBT435216,Musical Instruments,"Musical Instruments > DJ Equipment & Accessories > Lights & Effects > Effects - Fog, Snow & Confetti > Snow Machines",Snow Machines,雪花机,llm,1,,,雪花机
+108,CBT400927,Beauty and Personal Care,Beauty and Personal Care > Hair Salon Listings > Hair Salon Accessories > Training Heads,Training Heads,训练头,llm,1,,,训练头
+109,CBT429289,Sports and Fitness,Sports and Fitness > Cycling > Replacement Parts > Component Groups,Component Groups,部件组,llm,1,,,部件组
+110,CBT2296,Antiques and Collectibles,Antiques and Collectibles > Military > Uniforms,Uniforms,制服,llm,1,,,制服
+111,CBT95421,"Art, Craft and School Supplies","Art, Craft and School Supplies > Sewing Notions > Fabric Rolls",Fabric Rolls,布卷,llm,1,,,布卷
+112,CBT430998,Babies,Babies > Maternity Products > Baby Journals,Baby Journals,婴儿日记本,llm,1,,,婴儿日记本
+113,CBT456080,Food and Drinks,Food and Drinks > Prepared Foods > Breakfast and Snacks > Shakes and Smoothies,Shakes and Smoothies,奶昔和冰沙,llm,1,,,奶昔和冰沙
+114,CBT120352,Clothing and Accessories,"Clothing and Accessories > Luggage, Bags & Purses > Briefcases",Briefcases,公文包,llm,1,,,公文包
+115,CBT416558,Industries and Offices,Industries and Offices > Packaging & Logistics > Tape Dispensers,Tape Dispensers,胶带座,llm,1,,,胶带座
+116,CBT435499,Construction,Construction > Plumbing > Tanks > Tank Filters,Tank Filters,储罐过滤器,llm,1,,,储罐过滤器
+117,CBT435529,"Home, Furniture and Garden","Home, Furniture and Garden > Gardens & Outdoors > Swimming Pools > Cleaning & Maintenance > Cleaning Accessories > Floating Chlorine Dispensers",Floating Chlorine Dispensers,浮式氯气释放器,llm,1,,,浮式氯气释放器
+118,CBT447780,Computers,Computers > PC Gaming Accessories > VR Lenses,VR Lenses,VR眼镜,llm,1,,,VR眼镜
+119,CBT459576,Other categories,Other categories > Tattoo Supplies > Test Categories > All in One Test,All in One Test,一站式测试,llm,1,,,一站式测试
+120,CBT431041,Jewels and Watches,Jewels and Watches > Jewelry & Bijou > Ring Watches,Ring Watches,戒指手表,llm,1,,,戒指手表
+121,CBT412672,Tools,Tools > Industrial > Loading & Unloading > Block & Tackle > Manual Block & Tackle,Manual Block & Tackle,手动滑车与滑车组,llm,1,,,手动滑车与滑车组
+122,CBT435076,Health and Health Supplies,Health and Health Supplies > Medical Equipment > Oxygen Therapy,Oxygen Therapy,氧气疗法,llm,1,,,氧气疗法
+123,CBT430399,Vehicle Accessories,Vehicle Accessories > Nautical Parts > Engines & Parts > Ignition Coils,Ignition Coils,点火线圈,llm,1,,,点火线圈
+124,CBT392009,Appliances,Appliances > Small Appliances > Kitchen Appliances > Spare Parts & Accessories > For Mixers & Processors,For Mixers & Processors,适用于搅拌机和处理器,llm,0,processors 误译为处理器(CPU),适用于搅拌机和料理机,适用于搅拌机和料理机
+125,CBT430978,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Party Novelties > Party Wig, Beard and Moustache","Party Wig, Beard and Moustache",派对假发、胡须和八字胡,llm,1,,,派对假发、胡须和八字胡
+126,CBT455491,"Electronics, Audio and Video","Electronics, Audio and Video > Electronic Components > Passives > Others",Others,其他,llm,1,,,其他
+127,CBT430360,Cameras and Accessories,Cameras and Accessories > Camera Accessories > Chargers & Batteries,Chargers & Batteries,充电器与电池,llm,1,,,充电器与电池
+128,CBT432437,Cell Phones and Phones,"Cell Phones and Phones > Cell Phone Accessories > Housings, Cases and Protectors","Housings, Cases and Protectors",手机壳、保护套和保护膜,llm,1,,,手机壳、保护套和保护膜
+129,CBT74390,Animals and Pets,Animals and Pets > Fish > Fish Tanks & Accessories > Fish Tank Spare Parts > Fish Tank Covers,Fish Tank Covers,鱼缸盖,llm,1,,,鱼缸盖
+130,CBT433105,Games and Toys,Games and Toys > Playground & Outdoor Games > Kites & Accessories,Kites & Accessories,风筝及配件,llm,1,,,风筝及配件
+131,CBT417297,Consoles and Video Games,Consoles and Video Games > Pinballs & Arcade > Machines,Machines,机器,llm,1,,,机器
+132,CBT434806,Musical Instruments,Musical Instruments > Wind Instruments > Accessories > Bags & Cases > For Trumpets,For Trumpets,小号配件,llm,1,,,小号配件
+133,CBT455807,Beauty and Personal Care,Beauty and Personal Care > Beauty Treatments > Body Beauty Equipment > Vacutherapy > Other,Other,其他,llm,1,,,其他
+134,CBT9907,Sports and Fitness,Sports and Fitness > Cycling > Accessories > Transportation & Storage > Mochilas de Ciclismo,Mochilas de Ciclismo,自行车背包,llm,1,,,自行车背包
+135,CBT11232,Antiques and Collectibles,Antiques and Collectibles > Antiques > Home Appliances > Stoves,Stoves,灶具,llm,1,,,灶具
+136,CBT95467,"Art, Craft and School Supplies","Art, Craft and School Supplies > Sewing Notions > Needles > Sewing",Sewing,缝纫,llm,1,,,缝纫
+137,CBT6548,Babies,Babies > Baby Room > Baby Bed Clothes,Baby Bed Clothes,婴儿床上用品,llm,1,,,婴儿床上用品
+138,CBT194478,Food and Drinks,Food and Drinks > Pantry > Flavorings and Syrups > Others,Others,其他,llm,1,,,其他
+139,CBT417943,Clothing and Accessories,Clothing and Accessories > Work & School Clothing > Uniforms & Work Clothes,Uniforms & Work Clothes,制服与工作服,llm,1,,,制服与工作服
+140,CBT454805,Industries and Offices,Industries and Offices > Medical Equipment > Education & Training > Other,Other,其他,llm,1,,,其他
+141,CBT413206,Construction,Construction > Construction Work Materials > Dry Building > Expanded Polystyrene,Expanded Polystyrene,发泡聚苯乙烯,llm,1,,,发泡聚苯乙烯
+142,CBT388720,"Home, Furniture and Garden","Home, Furniture and Garden > Home Care & Laundry > Cleaning Accessories > Buckets, Washbowls & Tubs","Buckets, Washbowls & Tubs",水桶、洗脸盆和浴缸,llm,0,tubs 在洗衣场景误译为浴缸,水桶、洗脸盆和洗衣盆,水桶、洗脸盆和洗衣盆
+143,CBT14407,Computers,Computers > Monitors & Accessories > Monitors,Monitors,显示器,llm,1,,,显示器
+144,CBT73691,Other categories,Other categories > Adults > Sex Toys > Male Masturbators,Male Masturbators,男性自慰器,llm,1,,,男性自慰器
+145,CBT4559,Jewels and Watches,Jewels and Watches > Jewelry & Bijou > Bracelets,Bracelets,手链,llm,1,,,手链
+146,CBT443025,Tools,Tools > Electric Tools > Cutting > Saws > Others,Others,其他,llm,1,,,其他
+147,CBT435260,Health and Health Supplies,Health and Health Supplies > Medical Equipment > Medical Furniture > Hospital Beds & Mattresses > Other,Other,其他,llm,1,,,其他
+148,CBT456602,Vehicle Accessories,Vehicle Accessories > Heavy Line Replacement Parts > Cabin Parts > Shift Levers > Others,Others,其他,llm,1,,,其他
+149,CBT398577,Appliances,Appliances > Refrigerators & Freezers > Spare Parts & Accessories > Door Seal,Door Seal,门封条,llm,1,,,门封条
+150,CBT413649,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Disposable Party Tableware > Napkins",Napkins,餐巾,llm,1,,,餐巾
+151,CBT2855,"Electronics, Audio and Video","Electronics, Audio and Video > Audio > Recorders > Journalist Recorders",Journalist Recorders,新闻记者用录音机,llm,1,,,新闻记者用录音机
+152,CBT2893,Cameras and Accessories,Cameras and Accessories > Lenses & Filters > Lens Filters,Lens Filters,镜头滤镜,llm,1,,,镜头滤镜
+153,CBT434353,Cell Phones and Phones,Cell Phones and Phones > Smartwatches and Accessories > Netting,Netting,网线,llm,0,netting 误译为网线,网织表带,网织表带
+154,CBT459697,Animals and Pets,Animals and Pets > Pet Eye Cleansers,Pet Eye Cleansers,宠物洗眼液,llm,1,,,宠物洗眼液
+155,CBT1818,Games and Toys,Games and Toys > Dolls & Action Figures > Toy Soldiers,Toy Soldiers,玩具士兵,llm,1,,,玩具士兵
+156,CBT43195,Consoles and Video Games,Consoles and Video Games > Console Accessories > For Nintendo > Nintendo Wii > Power Supply & Adapters,Power Supply & Adapters,电源及适配器,llm,1,,,电源及适配器
+157,CBT434919,Musical Instruments,Musical Instruments > Recording Studio > Studio Monitors,Studio Monitors,录音室监听器,llm,1,,,录音室监听器
+158,CBT417260,Beauty and Personal Care,Beauty and Personal Care > Hair Salon Listings > Hair Salon Accessories > Hair Dryer Diffusers,Hair Dryer Diffusers,吹风机扩散器,llm,1,,,吹风机扩散器
+159,CBT459657,Sports and Fitness,"Sports and Fitness > Camping, Hunting & Fishing > Camping Equipment > Camping carts",Camping carts,露营车,llm,1,,,露营车
+160,CBT6098,Antiques and Collectibles,Antiques and Collectibles > Antiques > Cans,Cans,罐,llm,1,,,罐
+161,CBT400982,"Art, Craft and School Supplies","Art, Craft and School Supplies > Sewing Notions > Fabric Labels",Fabric Labels,布料标签,llm,1,,,布料标签
+162,CBT417866,Babies,Babies > Maternity Products > Nipple Shields,Nipple Shields,乳头防护罩,llm,1,,,乳头防护罩
+163,CBT455419,Food and Drinks,Food and Drinks > Fresh > Dairy,Dairy,乳制品,llm,1,,,乳制品
+164,CBT39976,Clothing and Accessories,Clothing and Accessories > Baby Clothes & Shoes > Dresses,Dresses,连衣裙,llm,1,,,连衣裙
+165,CBT457704,Industries and Offices,Industries and Offices > Farming > Machinery Replacement Parts > Steering & Suspension > Others,Others,其他,llm,1,,,其他
+166,CBT376663,Construction,Construction > Construction Work Materials > Fasteners > Bolts,Bolts,螺栓,llm,1,,,螺栓
+167,CBT429072,"Home, Furniture and Garden","Home, Furniture and Garden > Gardens & Outdoors > Gardening and Accesories > Garden Tools > Replacement Parts > Mower Housings",Mower Housings,割草机外壳,llm,1,,,割草机外壳
+168,CBT430794,Computers,Computers > Connectivity & Networks > Network Cables & Accessories,Network Cables & Accessories,网络线缆及配件,llm,1,,,网络线缆及配件
+169,CBT459238,Other categories,Other categories > Wind Deflectors,Wind Deflectors,挡风板,llm,1,,,挡风板
+170,CBT433758,Jewels and Watches,Jewels and Watches > Watch Repair Parts > Tool Kits,Tool Kits,工具套装,llm,1,,,工具套装
+171,CBT455281,Tools,"Tools > Electric Tools > Sanding, Grinding & Polishing > Others",Others,其他,llm,1,,,其他
+172,CBT455040,Health and Health Supplies,Health and Health Supplies > Health Care > Incontinence Protection,Incontinence Protection,失禁防护,llm,1,,,失禁防护
+173,CBT374222,Vehicle Accessories,Vehicle Accessories > Car & Truck Replacement Parts > Windows & Seals > Window Regulators > Electric,Electric,电动,llm,1,,,电动
+174,CBT459695,Appliances,Appliances > Cooking > Spare Parts & Accessories > For Ranges & Ovens > Timers,Timers,定时器,llm,1,,,定时器
+175,CBT457421,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Costumes and Cosplay > Skirts",Skirts,裙子,llm,1,,,裙子
+176,CBT44388,"Electronics, Audio and Video","Electronics, Audio and Video > Audio & Video Accessories > Adapters",Adapters,适配器,llm,1,,,适配器
+177,CBT4701,Cameras and Accessories,Cameras and Accessories > Camera Accessories > Bags & Camera Care > Bags & Cases,Bags & Cases,包与相机箱,llm,1,,,包与相机箱
+178,CBT5338,Cell Phones and Phones,Cell Phones and Phones > Cell Phone Accessories > Data Cables,Data Cables,数据线,llm,1,,,数据线
+179,CBT434839,Animals and Pets,Animals and Pets > Fish > Fish Tanks & Accessories > Water Temperature Control > Other,Other,其他,llm,1,,,其他
+180,CBT455436,Games and Toys,Games and Toys > Kids’ Ride-On Vehicles > Scooters > Electric Scooters,Electric Scooters,电动滑板车,llm,1,,,电动滑板车
+181,CBT1147,Consoles and Video Games,Consoles and Video Games > Console Accessories > For SEGA > Sega Genesis / Mega Drive,Sega Genesis / Mega Drive,Sega Genesis / Mega Drive,deferred_english,0,英文回退，非中文译文,世嘉 Genesis / Mega Drive,世嘉 Genesis / Mega Drive
+182,CBT6812,Musical Instruments,Musical Instruments > Wind Instruments > Clarinets,Clarinets,单簧管,llm,1,,,单簧管
+183,CBT392402,Beauty and Personal Care,Beauty and Personal Care > Skin Care > Sun Skin Care > After-Sun,After-Sun,晒后护理,llm,1,,,晒后护理
+184,CBT417821,Sports and Fitness,Sports and Fitness > Aerobics & Fitness > Yoga & Pilates Training > Zafus,Zafus,瑜伽垫,llm,0,zafu 误译为瑜伽垫,禅坐垫,禅坐垫
+185,CBT1367,Antiques and Collectibles,Antiques and Collectibles,Antiques and Collectibles,古董与收藏品,llm,1,,,古董与收藏品
+186,CBT433011,"Art, Craft and School Supplies","Art, Craft and School Supplies > Sewing Notions > Snap Pressing Machines",Snap Pressing Machines,压扣机,llm,1,,,压扣机
+187,CBT127671,Babies,Babies > Baby Toys & Games > Rocking Chairs & Jumpers > Rocking Chairs,Rocking Chairs,摇椅,llm,1,,,摇椅
+188,CBT1423,Food and Drinks,Food and Drinks > Pantry,Pantry,食品储藏室,llm,1,,,食品储藏室
+189,CBT110761,Clothing and Accessories,"Clothing and Accessories > Luggage, Bags & Purses","Luggage, Bags & Purses",行李箱、包及钱包,llm,1,,,行李箱、包及钱包
+190,CBT85122,Industries and Offices,Industries and Offices > Commercial Equipment > Charge and Control > Barcode Scanners,Barcode Scanners,条码扫描器,llm,1,,,条码扫描器
+191,CBT429327,Construction,Construction > Flooring & Coverings > Stone Cladding,Stone Cladding,石材幕墙,llm,1,,,石材幕墙
+192,CBT430511,"Home, Furniture and Garden","Home, Furniture and Garden > Gardens & Outdoors > Irrigation > Hoses and Accesories > Hose Connectors",Hose Connectors,软管接头,llm,1,,,软管接头
+193,CBT1656,Computers,Computers > Monitors & Accessories,Monitors & Accessories,显示器及配件,llm,1,,,显示器及配件
+194,CBT413671,Other categories,Other categories > Adults > Cosmetics & Personal Care > Body Paint,Body Paint,人体彩绘,llm,1,,,人体彩绘
+195,CBT429296,Jewels and Watches,Jewels and Watches > Watches > Pocket Watches,Pocket Watches,怀表,llm,1,,,怀表
+196,CBT435149,Tools,Tools > Garden Tools > Lawn Mowers > Electric,Electric,电动,llm,1,,,电动
+197,CBT434749,Health and Health Supplies,Health and Health Supplies > Health Care > Breathing Treatment Devices > Nasal Aspirators,Nasal Aspirators,吸鼻器,llm,1,,,吸鼻器
+198,CBT456401,Vehicle Accessories,Vehicle Accessories > Heavy Line Replacement Parts > Frames > Others,Others,其他,llm,1,,,其他
+199,CBT455653,Appliances,Appliances > Washing Machines & Dryers > Spare Parts & Accessories > For Washing Machines & Dryers > Feet Levelers,Feet Levelers,脚垫,llm,1,,,脚垫
+200,CBT457484,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Party Equipment > Machine Spare Parts > Thermostats and Heaters",Thermostats and Heaters,温控器与加热器,llm,1,,,温控器与加热器
+201,CBT91746,"Electronics, Audio and Video","Electronics, Audio and Video > Audio > DJ Equipment & Accessories > DJ Mixers",DJ Mixers,DJ混音器,llm,1,,,DJ混音器
+202,CBT413637,Cameras and Accessories,Cameras and Accessories > Camera Accessories > Viewfinders,Viewfinders,取景器,llm,1,,,取景器
+203,CBT436014,Cell Phones and Phones,Cell Phones and Phones > Cell Phone Accessories > Adaptors > Bluetooth,Bluetooth,蓝牙,llm,1,,,蓝牙
+204,CBT457310,Animals and Pets,Animals and Pets > Birds > Toy Balls,Toy Balls,玩具球,llm,1,,,玩具球
+205,CBT409419,Games and Toys,Games and Toys > Dolls & Action Figures > Accessories > Doll Clothing,Doll Clothing,玩偶服装,llm,1,,,玩偶服装
+206,CBT190775,Consoles and Video Games,Consoles and Video Games > Console Accessories > For Nintendo > Nintendo 2DS > Other,Other,其他,llm,1,,,其他
+207,CBT435191,Musical Instruments,Musical Instruments > DJ Equipment & Accessories > DJ Players,DJ Players,DJ播放器,llm,1,,,DJ播放器
+208,CBT412506,Beauty and Personal Care,"Beauty and Personal Care > Foot, Hand & Nail Care > Tools > Nail Clippers",Nail Clippers,指甲钳,llm,1,,,指甲钳
+209,CBT1309,Sports and Fitness,Sports and Fitness > Basketball,Basketball,篮球,llm,1,,,篮球
+210,CBT381962,Antiques and Collectibles,Antiques and Collectibles > Antiques > Home Appliances > Antique Televisions,Antique Televisions,古董电视,llm,1,,,古董电视
+211,CBT412587,"Art, Craft and School Supplies","Art, Craft and School Supplies > Office Products > School > Geometry > Compasses",Compasses,圆规,llm,1,,,圆规
+212,CBT417942,Babies,Babies > Baby Room > Baby Door Hangers,Baby Door Hangers,婴儿门挂,llm,1,,,婴儿门挂
+213,CBT433481,Food and Drinks,Food and Drinks > Pantry > Nori Seaweed,Nori Seaweed,紫菜,llm,1,,,紫菜
+214,CBT455893,Clothing and Accessories,Clothing and Accessories > Footwear > Shoe Covers,Shoe Covers,鞋套,llm,1,,,鞋套
+215,CBT442429,Industries and Offices,Industries and Offices > Farming > Livestock Production > Animal Nutrition Supplies > Concentrated Feeds,Concentrated Feeds,浓缩饲料,llm,1,,,浓缩饲料
+216,CBT454709,Construction,Construction > Bathrooms & Restrooms > Bathroom Furniture > Bathroom Vanities,Bathroom Vanities,浴室柜,llm,1,,,浴室柜
+217,CBT443825,"Home, Furniture and Garden","Home, Furniture and Garden > Bathrooms > Bathtubs > With Hydromassage",With Hydromassage,带水疗按摩功能,llm,1,,,带水疗按摩功能
+218,CBT418042,Computers,Computers > Monitors & Accessories > TV and Monitor Riser Stands,TV and Monitor Riser Stands,电视和显示器升降支架,llm,1,,,电视和显示器升降支架
+219,CBT458423,Other categories,Other categories > Tattoo Supplies > Test Categories > Windshield wipersTest > Test Front rubber,Test Front rubber,前雨刮橡胶测试,llm,1,,,前雨刮橡胶测试
+220,CBT9291,Jewels and Watches,Jewels and Watches > Watches > Wall Clocks,Wall Clocks,挂钟,llm,1,,,挂钟
+221,CBT411910,Tools,Tools > Garden Tools > Gardening Tools > Shovels,Shovels,铲子,llm,1,,,铲子
+222,CBT417734,Health and Health Supplies,Health and Health Supplies > Medical Equipment > Education & Training > CPR Dummies,CPR Dummies,心肺复苏模拟人,llm,1,,,心肺复苏模拟人
+223,CBT388622,Vehicle Accessories,Vehicle Accessories > Motorcycle Replacement Parts > Engine > Crankcase,Crankcase,曲轴箱,llm,1,,,曲轴箱
+224,CBT417848,Appliances,Appliances > Air Conditioning > Spare Parts & Accessories > For Fans > Fan Capacitors,Fan Capacitors,风扇电容,llm,1,,,风扇电容
+225,CBT455860,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Costumes and Cosplay > Shields",Shields,盾牌,llm,1,,,盾牌
+226,CBT44393,"Electronics, Audio and Video","Electronics, Audio and Video > Audio > Recording Studio > Studio Monitors",Studio Monitors,录音室监听音箱,llm,1,,,录音室监听音箱
+227,CBT412362,Cameras and Accessories,Cameras and Accessories > Camera Accessories > Microphones,Microphones,麦克风,llm,1,,,麦克风
+228,CBT67097,Cell Phones and Phones,Cell Phones and Phones > Cell Phone Accessories > Signal Amplifiers,Signal Amplifiers,信号放大器,llm,1,,,信号放大器
+229,CBT434794,Animals and Pets,Animals and Pets > Cats > Beds & Houses > Beds,Beds,猫床,llm,1,,,猫床
+230,CBT432873,Games and Toys,Games and Toys > Hobbies,Hobbies,爱好,llm,1,,,爱好
+231,CBT439072,Consoles and Video Games,Consoles and Video Games > Console Accessories > For PlayStation > PS4 - PlayStation 4 > Audio and Video Gear,Audio and Video Gear,音频和视频设备,llm,1,,,音频和视频设备
+232,CBT413390,Musical Instruments,Musical Instruments > Drums & Percussion > Accessories > Snare Drum Wires,Snare Drum Wires,小鼓弦,llm,1,,,小鼓弦
+233,CBT413175,Beauty and Personal Care,Beauty and Personal Care > Personal Care > Cotton Swabs,Cotton Swabs,棉签,llm,1,,,棉签
+234,CBT430682,Sports and Fitness,Sports and Fitness > Martial Arts & Boxing > Clothing > Shoes & Boots,Shoes & Boots,鞋靴,llm,1,,,鞋靴
+235,CBT47275,Antiques and Collectibles,Antiques and Collectibles > Antiques > Antique Keys & Locks > Key & Lock Kits,Key & Lock Kits,钥匙与锁具套装,llm,1,,,钥匙与锁具套装
+236,CBT69564,"Art, Craft and School Supplies","Art, Craft and School Supplies > Office Products > Commercial and Office > School and Office Staplers",School and Office Staplers,学校与办公用订书机,llm,1,,,学校与办公用订书机
+237,CBT418195,Babies,"Babies > Strollers, Car Seats & Walking > Stroller Accessories > Stroller Organizer",Stroller Organizer,婴儿推车收纳袋,llm,1,,,婴儿推车收纳袋
+238,CBT455931,Food and Drinks,Food and Drinks > Prepared Foods > Appetizers and Sides > Others,Others,其他,llm,1,,,其他
+239,CBT39979,Clothing and Accessories,Clothing and Accessories > Baby Clothes & Shoes > Swimsuits,Swimsuits,泳衣,llm,1,,,泳衣
+240,CBT456924,Industries and Offices,Industries and Offices > Farming > Beekeeping > Beekeeper Suit > Beekeeping Veils,Beekeeping Veils,养蜂面罩,llm,1,,,养蜂面罩
+241,CBT321150,Construction,Construction > Openings > Shutters,Shutters,百叶窗,llm,1,,,百叶窗
+242,CBT429729,"Home, Furniture and Garden","Home, Furniture and Garden > Home Furniture > Chairs, Couches & Stools > Couches & Sofas",Couches & Sofas,沙发,llm,1,,,沙发
+243,CBT1692,Computers,Computers > PC Components > Cards > Motherboards,Motherboards,主板,llm,1,,,主板
+244,CBT413655,Other categories,Other categories > Adults > Sex Toys > Anal Douches,Anal Douches,肛门冲洗器,llm,1,,,肛门冲洗器
+245,CBT1431,Jewels and Watches,Jewels and Watches > Jewelry & Bijou,Jewelry & Bijou,珠宝首饰,llm,1,,,珠宝首饰
+246,CBT455037,Tools,Tools > Industrial > Mortisers,Mortisers,榫孔钻,llm,1,,,榫孔钻
+247,CBT409322,Health and Health Supplies,Health and Health Supplies > Health Care > Pharmacy > Sexual Wellness > Other,Other,其他,llm,1,,,其他
+248,CBT459167,Vehicle Accessories,Vehicle Accessories > Car & Truck Accessories > Exterior Accessories > Trailers,Trailers,拖车,llm,1,,,拖车
+249,CBT412077,Appliances,Appliances > Air Conditioning > Portable Air Conditioners,Portable Air Conditioners,便携式空调,llm,1,,,便携式空调
+250,CBT413565,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Party Decoration > Balloons & Accessories > Balloon Air Pumps",Balloon Air Pumps,气球充气泵,llm,1,,,气球充气泵
+251,CBT73557,"Electronics, Audio and Video","Electronics, Audio and Video > Audio > Turntables & Accessories > Turntable Needles",Turntable Needles,唱针,llm,1,,,唱针
+252,CBT38188,Cameras and Accessories,Cameras and Accessories > Cables > USB,USB,USB,deferred_english,0,英文回退，非中文译文,USB 线缆,USB 线缆
+253,CBT2910,Cell Phones and Phones,Cell Phones and Phones > Walkie Talkies&Radio Frequency > Accessories,Accessories,配件,llm,1,,,配件
+254,CBT457545,Animals and Pets,Animals and Pets > Cats > Apparel & Accessories > Dresses,Dresses,连衣裙,llm,1,,,连衣裙
+255,CBT429188,Games and Toys,Games and Toys > Kids’ Work Toys > Toy Home Appliances > Microwave Ovens,Microwave Ovens,微波炉,llm,1,,,微波炉
+256,CBT74074,Consoles and Video Games,Consoles and Video Games > Console Accessories > PS2 - PlayStation 2 > Skins,Skins,外壳,llm,0,skins 误译为外壳,机身贴膜,机身贴膜
+257,CBT29307,Musical Instruments,Musical Instruments > Wind Instruments > Trombones,Trombones,长号,llm,1,,,长号
+258,CBT417111,Beauty and Personal Care,"Beauty and Personal Care > Foot, Hand & Nail Care > Hand & Foot Treatments > Hand & Foot Creams & Lotions",Hand & Foot Creams & Lotions,手部及足部霜乳,llm,1,,,手部及足部霜乳
+259,CBT47808,Sports and Fitness,"Sports and Fitness > Camping, Hunting & Fishing > Camping Accessories > Gas Cylinders",Gas Cylinders,气瓶,llm,1,,,气瓶
+260,CBT417837,Antiques and Collectibles,Antiques and Collectibles > Antiques > Typewriters & Typewriter Supp. > Supplies,Supplies,配件,llm,1,,,配件
+261,CBT388337,"Art, Craft and School Supplies","Art, Craft and School Supplies > Office Products > Commercial and Office > Binding > Other",Other,其他,llm,1,,,其他
+262,CBT417873,Babies,Babies > Maternity Products > Maternity Clothing > Dresses,Dresses,连衣裙,llm,1,,,连衣裙
+263,CBT1427,Food and Drinks,Food and Drinks > Pantry > Infusions,Infusions,冲泡饮品,llm,1,,,冲泡饮品
+264,CBT414611,Clothing and Accessories,Clothing and Accessories > Work & School Clothing > Tactical Accessories > Patches & Emblems,Patches & Emblems,徽章与贴片,llm,1,,,徽章与贴片
+265,CBT457056,Industries and Offices,Industries and Offices > Farming > Livestock Production > Others,Others,其他,llm,1,,,其他
+266,CBT430742,Construction,Construction > Plumbing > Tanks > Floating Switches,Floating Switches,浮控开关,llm,1,,,浮控开关
+267,CBT30063,"Home, Furniture and Garden","Home, Furniture and Garden > Home & Home Decor Textiles > Bedding > Bedspreads",Bedspreads,床罩,llm,1,,,床罩
+268,CBT72722,Computers,Computers > Readers & Scanners > Fingerprint Scanners,Fingerprint Scanners,指纹扫描器,llm,1,,,指纹扫描器
+269,CBT431927,Other categories,Other categories > Tattoo Supplies > Machine Coils,Machine Coils,机器线圈,llm,1,,,机器线圈
+270,CBT404419,Jewels and Watches,Jewels and Watches > Jewelry Supplies,Jewelry Supplies,珠宝用品,llm,1,,,珠宝用品
+271,CBT455022,Tools,Tools > Industrial > Forming > Punching Machines,Punching Machines,冲压机,llm,1,,,冲压机
+272,CBT409361,Health and Health Supplies,Health and Health Supplies > Medical Equipment > Dental Equipment > Dental Chairs,Dental Chairs,牙科椅,llm,1,,,牙科椅
+273,CBT458468,Vehicle Accessories,Vehicle Accessories > Car & Truck Replacement Parts > Interior Parts > Seats,Seats,座椅,llm,1,,,座椅
+274,CBT455719,Appliances,Appliances > Air Conditioning > Textile Ducts,Textile Ducts,布艺风管,llm,1,,,布艺风管
+275,CBT457506,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Party Souvenirs > Pins & Brooches",Pins & Brooches,徽章与胸针,llm,1,,,徽章与胸针
+276,CBT3697,"Electronics, Audio and Video","Electronics, Audio and Video > Audio > Headphones",Headphones,耳机,llm,1,,,耳机
+277,CBT430419,Cameras and Accessories,Cameras and Accessories > Drones & Accessories > Drones,Drones,无人机,llm,1,,,无人机
+278,CBT3502,Cell Phones and Phones,Cell Phones and Phones > Cell Phone Accessories,Cell Phone Accessories,手机配件,llm,1,,,手机配件
+279,CBT429314,Animals and Pets,Animals and Pets > Bugs > Beetles,Beetles,甲虫,llm,1,,,甲虫
+280,CBT433052,Games and Toys,Games and Toys > Toy Guns & Launchers > Accessories & Ammunition > Vests,Vests,背心,llm,1,,,背心
+281,CBT121994,Consoles and Video Games,Consoles and Video Games > Console Accessories > For Xbox > Xbox One > Controllers > Guitars,Guitars,吉他,llm,1,,,吉他
+282,CBT413714,Musical Instruments,Musical Instruments > Drums & Percussion > Tamborims,Tamborims,鼓,llm,1,,,鼓
+283,CBT389336,Beauty and Personal Care,Beauty and Personal Care > Makeup > Makeup Bags,Makeup Bags,化妆包,llm,1,,,化妆包
+284,CBT2557,Sports and Fitness,Sports and Fitness > Windsurfing > Boards,Boards,板,llm,1,,,板
+285,CBT1805,Antiques and Collectibles,Antiques and Collectibles > Military,Military,军事,llm,1,,,军事
+286,CBT73697,"Art, Craft and School Supplies","Art, Craft and School Supplies > Office Products > Art & Painting > Canvas Stretchers",Canvas Stretchers,画布绷架,llm,1,,,画布绷架
+287,CBT6551,Babies,"Babies > Baby Clothing & Shoes > T-Shirts, Tanks & Polos","T-Shirts, Tanks & Polos",T恤、背心及Polo衫,llm,1,,,T恤、背心及Polo衫
+288,CBT1417,Food and Drinks,Food and Drinks > Others,Others,其他,llm,1,,,其他
+289,CBT432002,Clothing and Accessories,Clothing and Accessories > Sports Apparel > Sports Bags,Sports Bags,运动包,llm,1,,,运动包
+290,CBT454860,Industries and Offices,Industries and Offices > Medical Equipment > Laboratory Equipment > Laboratory Scales,Laboratory Scales,实验室天平,llm,1,,,实验室天平
+291,CBT420161,Construction,Construction > Electrical > Switches & Outlets > Outlets & Plugs > Plug Adapters,Plug Adapters,插头转换器,llm,1,,,插头转换器
+292,CBT74540,"Home, Furniture and Garden","Home, Furniture and Garden > Kitchen & Housewares > Kitchenware > Can Openers",Can Openers,开罐器,llm,1,,,开罐器
+293,CBT430345,Computers,Computers > Printing > Spare Parts > Electronic Components > Logic Boards,Logic Boards,主板,llm,1,,,主板
+294,CBT40990,Other categories,Other categories > Esotericism > Charms,Charms,符咒,llm,1,,,符咒
+295,CBT436820,Jewels and Watches,Jewels and Watches > Watch Repair Parts > Watch Display Boxes,Watch Display Boxes,手表展示盒,llm,1,,,手表展示盒
+296,CBT372122,Tools,Tools > Boxes & Organizers > Workbenches,Workbenches,工作台,llm,1,,,工作台
+297,CBT408041,Health and Health Supplies,Health and Health Supplies > Health Care > Breathing Treatment Devices > Inhaler Spacers,Inhaler Spacers,吸入器隔离器,llm,0,spacer 误译为隔离器,吸入器储雾罐,吸入器储雾罐
+298,CBT458077,Vehicle Accessories,Vehicle Accessories > Car & Truck Replacement Parts > Steering & Suspension > Alignment Cambers,Alignment Cambers,定位臂,llm,0,alignment camber 误译为定位臂,外倾角调整件,外倾角调整件
+299,CBT455710,Appliances,Appliances > Air Conditioning > Spare Parts & Accessories > For Fans > Pedestal Fan Bases,Pedestal Fan Bases,风扇底座,llm,1,,,风扇底座
+300,CBT457419,"Souvenirs, Favours and Parties","Souvenirs, Favours and Parties > Costumes and Cosplay > Necklaces",Necklaces,项链,llm,1,,,项链
