@@ -72,13 +72,16 @@ func configuredTranslator() *httpapi.TranslationService {
 }
 
 func updateCBTCategories(args []string, dir string, translator *httpapi.TranslationService) error {
+	if len(args) > 0 && args[0] == "incremental" {
+		return incrementalCBTCategories(args[1:], dir)
+	}
 	if len(args) > 0 && (args[0] == "publish" || args[0] == "rollback") {
 		return releaseCBTCategories(args, dir)
 	}
 	if len(args) > 0 && args[0] == "review" {
 		return reviewCBTCategories(args[1:], dir)
 	}
-	const usage = "usage: api cbt-categories update [-max-batches N] [-plan [-plan-batch-size N]] or review"
+	const usage = "usage: api cbt-categories update [-max-batches N] [-plan [-plan-batch-size N]] | review | incremental {plan|build|assemble|publish|rollback}"
 	if len(args) == 0 || args[0] != "update" {
 		return errors.New(usage)
 	}
@@ -250,4 +253,88 @@ func releaseCBTCategories(args []string, dir string) error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func incrementalCBTCategories(args []string, dir string) error {
+	if len(args) == 0 {
+		return errors.New("usage: api cbt-categories incremental {plan|build|assemble|publish|rollback}")
+	}
+	switch args[0] {
+	case "plan":
+		if len(args) != 1 {
+			return errors.New("incremental plan takes no arguments")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		result, err := cbtcategory.PlanIncremental(ctx, dir)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	case "build":
+		command := flag.NewFlagSet("cbt-categories incremental build", flag.ContinueOnError)
+		maxRows := command.Int("max-rows", cbtcategory.LLMBuildMaxRows, "translate at most 1-200 remaining delta rows")
+		budget := command.Int("budget", 0, "explicit cumulative LLM character cap, at most 900000")
+		if err := command.Parse(args[1:]); err != nil {
+			return err
+		}
+		if command.NArg() != 0 || *maxRows <= 0 || *maxRows > cbtcategory.LLMBuildMaxRows ||
+			*budget <= 0 || *budget > cbtcategory.LLMReviewHardLimit {
+			return errors.New("incremental build requires -max-rows 1..200 and -budget 1..900000")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		result, err := cbtcategory.RunIncrementalBuild(ctx, dir, *maxRows, *budget,
+			firstEnv("BAIDU_LLM_APP_ID", "BAIDU_TRANSLATION_APP_ID"), os.Getenv("BAIDU_LLM_API_KEY"))
+		if outputErr := json.NewEncoder(os.Stdout).Encode(result); outputErr != nil {
+			return outputErr
+		}
+		return err
+	case "assemble":
+		if len(args) != 1 {
+			return errors.New("incremental assemble takes no arguments")
+		}
+		result, err := cbtcategory.AssembleIncremental(dir)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	case "publish":
+		command := flag.NewFlagSet("cbt-categories incremental publish", flag.ContinueOnError)
+		apply := command.Bool("apply", false, "explicitly replace active.json; default is a read-only dry-run")
+		active := command.String("active-sha256", "", "expected active snapshot SHA256")
+		approval := command.String("approval", "llm-incremental-approval.json", "operator-approved incremental approval JSON")
+		approvalHash := command.String("approval-sha256", "", "exact approved JSON SHA256")
+		if err := command.Parse(args[1:]); err != nil {
+			return err
+		}
+		if command.NArg() != 0 {
+			return errors.New("invalid incremental publish arguments")
+		}
+		result, err := cbtcategory.PublishIncremental(dir, cbtcategory.IncrementalPublishInput{
+			ApprovalPath: *approval, ApprovalSHA256: *approvalHash, ActiveSHA256: *active,
+		}, *apply)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	case "rollback":
+		command := flag.NewFlagSet("cbt-categories incremental rollback", flag.ContinueOnError)
+		apply := command.Bool("apply", false, "explicitly restore active.json; default is a read-only dry-run")
+		active := command.String("active-sha256", "", "expected current active snapshot SHA256")
+		backup := command.String("backup-sha256", "", "content-addressed backup SHA256 to restore")
+		if err := command.Parse(args[1:]); err != nil {
+			return err
+		}
+		if command.NArg() != 0 {
+			return errors.New("invalid incremental rollback arguments")
+		}
+		result, err := cbtcategory.RollbackIncremental(dir, *active, *backup, *apply)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	default:
+		return errors.New("usage: api cbt-categories incremental {plan|build|assemble|publish|rollback}")
+	}
 }

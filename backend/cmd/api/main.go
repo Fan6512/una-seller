@@ -57,7 +57,7 @@ func main() {
 	replayCommand := len(os.Args) > 1 && os.Args[1] == "missed-feeds-replay"
 	billingProbeCommand := len(os.Args) > 1 && os.Args[1] == "billing-probe"
 	if len(os.Args) > 1 && !replayCommand && !billingProbeCommand {
-		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N] | cbt-categories review | missed-feeds-replay OWNER_UUID STORE_UUID TOPIC | billing-probe OWNER_UUID STORE_UUID SITE LOGISTIC PACK_ID]")
+		log.Fatal("usage: api [migrate | cbt-categories update [-max-batches N] | cbt-categories review | cbt-categories incremental {plan|build|assemble|publish|rollback} | missed-feeds-replay OWNER_UUID STORE_UUID TOPIC | billing-probe OWNER_UUID STORE_UUID SITE LOGISTIC PACK_ID]")
 	}
 	if os.Getenv("UNA_SELLER_CLOUD") == "1" && (dsn == "" || supabaseURL == "" || publishableKey == "") {
 		log.Fatal("cloud API requires DATABASE_URL, SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY")
