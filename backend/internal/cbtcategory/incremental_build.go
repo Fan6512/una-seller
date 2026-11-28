@@ -42,7 +42,6 @@ type incrementalPending struct {
 	ManifestSHA256  string    `json:"manifest_sha256"`
 	ID              string    `json:"id"`
 	SourceSHA256Row string    `json:"row_source_sha256"`
-	ResultSHA256    string    `json:"result_sha256"`
 	SourceChars     int       `json:"source_chars"`
 	UsageBefore     int       `json:"usage_before_chars"`
 	StartedAt       time.Time `json:"started_at"`
