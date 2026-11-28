@@ -187,41 +187,40 @@ func loadIncrementalPlanLocked(dir string) (snapshot, []byte, snapshot, incremen
 	if _, err := compareIncrementalVersions(active.Version, source.Version); err != nil {
 		return empty, nil, empty, incrementalManifest{}, "", err
 	}
-	if err := validateIncrementalManifest(source, manifest); err != nil {
+	overrideRaw, overrideErr := readIncrementalFile(filepath.Join(dir, overrideFile))
+	if overrideErr != nil && !errors.Is(overrideErr, os.ErrNotExist) {
+		return empty, nil, empty, incrementalManifest{}, "", overrideErr
+	}
+	if manifest.OverridesSHA256 != incrementalHash(overrideRaw) {
+		return empty, nil, empty, incrementalManifest{}, "", errors.New("manual override file changed after incremental plan; run incremental plan again")
+	}
+	overrides, err := loadOverrides(filepath.Join(dir, overrideFile))
+	if err != nil {
 		return empty, nil, empty, incrementalManifest{}, "", err
+	}
+	if err := validateIncrementalManifest(active, source, manifest, overrides); err != nil {
+		return empty, nil, empty, incrementalManifest{}, "", err
+	}
+	usage, err := loadLLMUsage(dir)
+	if err != nil || usage.Chars < manifest.UsageChars || usage.Chars > LLMReviewHardLimit {
+		return empty, nil, empty, incrementalManifest{}, "", errors.New("cumulative LLM usage is missing, decreased or exceeds the hard limit")
 	}
 	return active, activeRaw, source, manifest, manifestHash, nil
 }
 
-func validateIncrementalManifest(source snapshot, manifest incrementalManifest) error {
-	if manifest.SourceVersion != source.Version || manifest.Rows == nil && manifest.Counts.ReviewRequired != 0 ||
-		manifest.SourceChars < 0 || manifest.UsageChars < 0 {
+func validateIncrementalManifest(active, source snapshot, manifest incrementalManifest, overrides map[string]string) error {
+	if manifest.SourceVersion != source.Version || manifest.ActiveVersion != active.Version ||
+		manifest.SourceChars < 0 || manifest.UsageChars < 0 || manifest.OverridesSHA256 == "" {
 		return errors.New("invalid incremental manifest metadata")
 	}
-	seen := make(map[string]bool, len(manifest.Rows))
-	sourceChars := 0
-	for _, row := range manifest.Rows {
-		item, ok := source.Categories[row.ID]
-		if !ok || seen[row.ID] || !idPattern.MatchString(row.ID) ||
-			!slices.Equal(row.Path, item.Path) || row.Original != item.Name ||
-			row.Source != reviewSource(item.Path, true) || row.SourceSHA256 != sourceHash(row.Source) ||
-			(row.Kind != "added" && row.Kind != "changed_path" && row.Kind != "metadata_changed") ||
-			item.Status != "enabled" {
-			return fmt.Errorf("invalid incremental manifest row %s", row.ID)
-		}
-		seen[row.ID] = true
-		if row.NeedsTranslation {
-			if row.Origin != "pending" || !safeReviewSource(row.Source) {
-				return fmt.Errorf("invalid incremental translation row %s", row.ID)
-			}
-			sourceChars += utf8.RuneCountInString(row.Source)
-		} else if row.Origin != "manual" && row.Origin != "glossary" && row.Origin != "existing" {
-			return fmt.Errorf("invalid incremental non-translation row %s", row.ID)
-		}
-	}
-	if len(seen) != manifest.Counts.ReviewRequired || sourceChars != manifest.SourceChars ||
-		manifest.Counts.TranslationNeeded != countIncrementalTranslations(manifest.Rows) {
-		return errors.New("incremental manifest counts do not match its rows")
+	expected := buildIncrementalManifest(active, source, manifest.ActiveSHA256, overrides)
+	expected.SourceSHA256 = manifest.SourceSHA256
+	expected.OverridesSHA256 = manifest.OverridesSHA256
+	expected.UsageChars = manifest.UsageChars
+	expected.BudgetRemaining = max(0, LLMReviewHardLimit-manifest.UsageChars)
+	expected.BudgetFits = expected.SourceChars <= expected.BudgetRemaining
+	if !reflect.DeepEqual(expected, manifest) {
+		return errors.New("incremental manifest does not match the frozen official source, active snapshot and overrides")
 	}
 	return nil
 }
@@ -642,7 +641,7 @@ func AssembleIncremental(dir string) (IncrementalAssembleReport, error) {
 	for _, row := range manifest.Rows {
 		item := target.Categories[row.ID]
 		label := item.Zh
-		fallback := label == ""
+		fallback := label == "" || label == item.Name
 		if fallback {
 			label = item.Name
 		}
