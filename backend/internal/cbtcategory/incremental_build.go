@@ -243,13 +243,13 @@ func countIncrementalTranslations(rows []incrementalRow) int {
 	return count
 }
 
-func loadIncrementalBuildState(dir string, activeHash, sourceHash, manifestHash string, manifest incrementalManifest) (incrementalCandidateSet, incrementalDeferredSet, error) {
+func loadIncrementalBuildState(dir string, activeHash, sourceSnapshotHash, manifestHash string, manifest incrementalManifest) (incrementalCandidateSet, incrementalDeferredSet, error) {
 	candidates := incrementalCandidateSet{
-		ActiveSHA256: activeHash, SourceSHA256: sourceHash, ManifestSHA256: manifestHash,
+		ActiveSHA256: activeHash, SourceSHA256: sourceSnapshotHash, ManifestSHA256: manifestHash,
 		Rows: make(map[string]incrementalCandidateRow),
 	}
 	deferred := incrementalDeferredSet{
-		ActiveSHA256: activeHash, SourceSHA256: sourceHash, ManifestSHA256: manifestHash,
+		ActiveSHA256: activeHash, SourceSHA256: sourceSnapshotHash, ManifestSHA256: manifestHash,
 		Rows: make(map[string]string),
 	}
 	candidateRaw, err := readIncrementalFile(filepath.Join(dir, incrementalCandidatesFile))
@@ -309,7 +309,7 @@ func loadIncrementalBuildState(dir string, activeHash, sourceHash, manifestHash 
 			continue
 		}
 		sourceRow, ok := allowed[receipt.ID]
-		if !ok || receipt.ActiveSHA256 != activeHash || receipt.SourceSHA256 != sourceHash ||
+		if !ok || receipt.ActiveSHA256 != activeHash || receipt.SourceSHA256 != sourceSnapshotHash ||
 			receipt.SourceSHA256Row != sourceRow.SourceSHA256 ||
 			receipt.SourceChars != utf8.RuneCountInString(sourceRow.Source) ||
 			receipt.ReservedChars != receipt.SourceChars ||
