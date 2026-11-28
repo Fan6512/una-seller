@@ -159,7 +159,7 @@ func AssembleLLMCandidate(dir, seed string, sample int, exclusions map[string]bo
 	var exclusionBytes strings.Builder
 	for _, id := range ids {
 		exclusionBytes.WriteString(id)
-		exclusionBytes.WriteByte('\\n')
+		exclusionBytes.WriteByte('\n')
 	}
 	exclusionHash := sha256.Sum256([]byte(exclusionBytes.String()))
 	out.ExclusionsSHA256 = fmt.Sprintf("%x", exclusionHash)
