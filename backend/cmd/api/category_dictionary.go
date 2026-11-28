@@ -255,7 +255,6 @@ func releaseCBTCategories(args []string, dir string) error {
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
 
-
 func incrementalCBTCategories(args []string, dir string) error {
 	if len(args) == 0 {
 		return errors.New("usage: api cbt-categories incremental {plan|build|assemble|publish|rollback}")
