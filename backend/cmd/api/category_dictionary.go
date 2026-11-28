@@ -125,12 +125,27 @@ func reviewCBTCategories(args []string, dir string) error {
 	input := command.String("import", "", "import validated candidate JSON into separate review file")
 	exclude := command.String("exclude-ids", "", "JSON array of previously reviewed IDs to exclude from plan/trial")
 	trial := command.Bool("trial", false, "explicitly run a capped LLM trial; requires separate LLM API key")
+	assemble := command.Bool("assemble", false, "assemble an offline release candidate and independent audit sample; never publish")
 	build := command.Bool("build", false, "explicit full-path candidate build, 1-200 rows per invocation")
 	buildPlan := command.Bool("build-plan", false, "read-only full remaining build budget and deferred state")
 	budget := command.Int("budget", 0, "explicit cumulative build cap, at most 900000")
 	reconcile := command.Int("reconcile-usage", -1, "explicit console usage; initializes or raises cumulative counter")
 	if err := command.Parse(args); err != nil {
 		return err
+	}
+	if *assemble {
+		if command.NArg() != 0 || *build || *buildPlan || *trial || *input != "" || *reconcile != -1 || *export || *scope != "all" || !*full || *budget != 0 || *sample != 300 || *exclude == "" || strings.TrimSpace(*seed) == "" {
+			return errors.New("assemble requires -full-path -sample 300 -exclude-ids FILE -seed SEED; no other review modes")
+		}
+		ids, err := cbtcategory.ReadReviewExclusions(*exclude)
+		if err != nil {
+			return err
+		}
+		result, err := cbtcategory.AssembleLLMCandidate(dir, *seed, *sample, ids)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 	if *build || *buildPlan {
 		if command.NArg() != 0 || (*build && *buildPlan) || *trial || *input != "" || *reconcile != -1 || *export || *exclude != "" || *scope != "all" || !*full || *budget <= 0 || *budget > cbtcategory.LLMReviewHardLimit || (*buildPlan && *sample != 0) || (*build && (*sample <= 0 || *sample > cbtcategory.LLMBuildMaxRows)) {
