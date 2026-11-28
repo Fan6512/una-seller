@@ -54,6 +54,7 @@ type incrementalReceipt struct {
 	ManifestSHA256  string    `json:"manifest_sha256"`
 	ID              string    `json:"id"`
 	SourceSHA256Row string    `json:"row_source_sha256"`
+	ResultSHA256    string    `json:"result_sha256"`
 	SourceChars     int       `json:"source_chars"`
 	ReservedChars   int       `json:"reserved_chars"`
 	UsageBefore     int       `json:"usage_before_chars"`
@@ -284,7 +285,7 @@ func loadIncrementalBuildState(dir string, activeHash, sourceHash, manifestHash 
 		sourceRow, ok := allowed[id]
 		item := category{ID: id, Name: sourceRow.Original}
 		if !ok || row.ID != id || row.SourceSHA256 != sourceRow.SourceSHA256 ||
-			!validReviewLanguage(row.Label, item) {
+			!validReviewLanguage(row.Label, item) || strings.ContainsAny(row.Label, "\\r\\n|｜") {
 			return candidates, deferred, fmt.Errorf("invalid or stale incremental candidate %s", id)
 		}
 	}
@@ -321,16 +322,18 @@ func loadIncrementalBuildState(dir string, activeHash, sourceHash, manifestHash 
 		lastReservedThrough = receipt.UsageBefore + receipt.ReservedChars
 		receiptByID[receipt.ID] = receipt
 	}
-	for id := range candidates.Rows {
+	for id, row := range candidates.Rows {
 		receipt, ok := receiptByID[id]
-		if !ok || receipt.Outcome != "stored" {
-			return candidates, deferred, fmt.Errorf("incremental candidate has no matching durable receipt: %s", id)
+		if !ok || receipt.Outcome != "stored" || receipt.ResultSHA256 != sourceHash(row.Label) {
+			return candidates, deferred, fmt.Errorf("incremental candidate has no matching durable result receipt: %s", id)
 		}
 	}
-	for id := range deferred.Rows {
+	for id, hash := range deferred.Rows {
 		receipt, ok := receiptByID[id]
-		if !ok || receipt.Outcome != "deferred_english" {
-			return candidates, deferred, fmt.Errorf("incremental deferred row has no matching durable receipt: %s", id)
+		sourceRow := allowed[id]
+		if !ok || receipt.Outcome != "deferred_english" || hash != sourceRow.SourceSHA256 ||
+			receipt.ResultSHA256 != sourceHash(sourceRow.Original) {
+			return candidates, deferred, fmt.Errorf("incremental deferred row has no matching durable result receipt: %s", id)
 		}
 	}
 	if len(receiptByID) != len(candidates.Rows)+len(deferred.Rows) {
