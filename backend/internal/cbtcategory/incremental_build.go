@@ -539,7 +539,11 @@ func validateIncrementalCandidateIdentity(active, source, candidate snapshot, ma
 					return fmt.Errorf("incremental candidate did not preserve %s label for %s", row.Origin, id)
 				}
 			case "existing":
-				if item.Zh != row.ExistingLabel {
+				if row.ExistingLabel == "" || row.ExistingLabel == official.Name {
+					if item.Zh != "" && item.Zh != official.Name {
+						return fmt.Errorf("incremental candidate changed an untranslated existing label for %s", id)
+					}
+				} else if item.Zh != row.ExistingLabel {
 					return fmt.Errorf("incremental candidate did not preserve existing label for %s", id)
 				}
 			case "pending":
