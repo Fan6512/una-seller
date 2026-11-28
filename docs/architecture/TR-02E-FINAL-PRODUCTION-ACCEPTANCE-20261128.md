@@ -12,9 +12,9 @@
 | 300 条复验 | **289/300（96.33%）**，11 条错误（9 条中文误译 + 2 条英文回退），全部逐条纠正并保留原始记录 |
 | 最终候选 | SHA-256 `b3b9f46d71ebda0f8e72ceaac4e60a908a541861a8a1af190dc57671c089cccb`，10,928/10,954 有效中文覆盖（99.76%），26 条英文回退 |
 | publish Dry-run | **PASS**，`applied=false`，`original_ok=289`、`audited=300`；active 未变、未写标记、未生成备份 |
-| 正式发布 | **未执行**，等待负责人单独批准 |
+| 正式发布 | **已执行**（2026-11-28 14:36 CST，负责人批准），`active.json` `be52b174…` → `b3b9f46d…` |
 
-生产词典仍为 `active.json` SHA-256 `be52b174…`，中文 0/10,954，未发布；普通翻译与 timer 保持禁用。
+生产词典已切换为 `active.json` SHA-256 `b3b9f46d…`，中文 10,928/10,954，26 条回退英文；`llm-release-managed.json` 已写入，普通 `update` 被拒；普通翻译与词典增量 timer 保持禁用。
 
 ## 1. 生产升级
 
@@ -203,8 +203,57 @@ Dry-run（未加 `-apply`）：
 
 后续与门禁：
 
-1. **正式发布须负责人单独批准**，并在批准时确认 approval.json 的 reviewer 署名与 SHA-256。
+1. ~~正式发布须负责人单独批准~~：已于 2026-11-28 14:36 CST 取得批准并执行，见第 7 节。
 2. `-apply` 必须在同一数据目录、同一审核材料下执行，仅替换 `active.json`；随后核对 Reader 热加载、真实客户端类目中文与官方 ID、匿名 401 与健康检查。
 3. 回滚只能使用新二进制的 `cbt-categories rollback`，不得使用旧二进制执行 `update`。
 4. 每日增量仍需单独开发，不得直接启用现有 updater 或 timer。
 5. 置信区间：289/300 点估计 96.33%，95% Wilson 区间约 93.6%–97.9%，仍为样本口径，不宣称总体统计认证。
+
+## 7. 正式发布执行回执（2026-11-28 14:36 CST）
+
+负责人于本会话明确批准后执行。审核材料与 Dry-run 完全一致，未修改任何文件：approval.json `db540e9f…`、候选 `b3b9f46d…`、冻结审查 `d1da436d…`、基线 `0845a519…`、排除清单 `44538e7c…`（工具口径 `ca1a5845…`）、24 条纠错 `3c0b48c6…`。
+
+```sh
+una-seller-api cbt-categories publish \
+  -active-sha256 be52b174c59f5ee41dfa4b702b3b638198a7176d8f30dcf7aa6130d4d37fc959 \
+  -approval /var/lib/una-seller/cbt-review/tr02e-approval-20261128.json \
+  -approval-sha256 db540e9f4564d08a9995f5d8af82005b07aaa16a6a96e4a19e955b32b809b93d \
+  -audit /var/lib/una-seller/cbt-review/llm-release-audit-frozen-20261128.json \
+  -baseline /var/lib/una-seller/cbt-review/llm-release-baseline-20261128.json \
+  -exclude-ids /var/lib/una-seller/cbt-review/tr02e-final-exclusions-20261128.json \
+  -corrections /var/lib/una-seller/cbt-review/TR-02E-TWENTY-FOUR-CORRECTIONS-20261128.json \
+  -apply
+```
+
+```json
+{"applied":true,
+ "before_sha256":"be52b174c59f5ee41dfa4b702b3b638198a7176d8f30dcf7aa6130d4d37fc959",
+ "after_sha256":"b3b9f46d71ebda0f8e72ceaac4e60a908a541861a8a1af190dc57671c089cccb",
+ "backup":"llm-release-backup-be52b174c59f5ee41dfa4b702b3b638198a7176d8f30dcf7aa6130d4d37fc959.json",
+ "original_ok":289,"audited":300}
+```
+
+发布后核验：
+
+| 项 | 结果 |
+| --- | --- |
+| `active.json` | SHA-256 `b3b9f46d…`（与候选逐字节一致） |
+| 备份 | `llm-release-backup-be52b174…json`，哈希 `be52b174…`，4,022,647 B |
+| managed 标记 | 已写入 `{"managed":true}`（17 B） |
+| 普通 `update` | 生产目录实测拒绝：`ordinary CBT dictionary updater disabled after managed LLM release`，129 ms（含 sudo/systemd 开销），普通额度保持 275,291 未变 |
+| 服务 | 14:36:56 CST 重启加载，PID 2252694、`NRestarts=0`、`ActiveState=active` |
+| 健康 | 本机 `/healthz` 200、公网 `/healthz` 200、匿名 `/api/v1/collections` 401 |
+| 词典加载 | `state=loaded translated=10927 version=2026-10-14T21:12:35.000Z` |
+| 未被改动 | 未重建桌面客户端、未改数据库、未启用词典增量 timer（仅原有 `una-seller-db-backup.timer`） |
+
+计数说明：候选内非空中文标签 10,928 条；启动状态按 `label != 官方英文名` 统计为 10,927，差额 1 条为 `CBT106855 PS Vita - PlayStation Vita`（译名与英文名相同）。26 条延期为官方英文回退。
+
+回滚（默认 dry-run，需另行批准才 `-apply`）：
+
+```sh
+una-seller-api cbt-categories rollback \
+  -active-sha256 b3b9f46d71ebda0f8e72ceaac4e60a908a541861a8a1af190dc57671c089cccb \
+  -backup-sha256 be52b174c59f5ee41dfa4b702b3b638198a7176d8f30dcf7aa6130d4d37fc959
+```
+
+未覆盖项：Reader 热加载与真实客户端类目中文显示需已登录 Bearer Token，本会话无生产用户令牌，未做客户端实机读取；已通过重启加载证明发布文件可被正常解析，热加载路径由同一 mtime 变更逻辑驱动。
