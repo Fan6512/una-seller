@@ -237,7 +237,6 @@ func TestIncrementalBuildBudgetAndPendingFailClosed(t *testing.T) {
 	}
 }
 
-
 func TestIncrementalPlanNoOpAndSameTimestampCollision(t *testing.T) {
 	dir := t.TempDir()
 	fixture := generatedVersion(t, version1, fixtureTree())
