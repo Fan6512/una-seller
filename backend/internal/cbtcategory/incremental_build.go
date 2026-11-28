@@ -532,16 +532,32 @@ func validateIncrementalCandidateIdentity(active, source, candidate snapshot, ma
 		}
 		old, existed := active.Categories[id]
 		row, hasRow := rows[id]
+		if hasRow {
+			switch row.Origin {
+			case "manual", "glossary":
+				if item.Zh != row.Label {
+					return fmt.Errorf("incremental candidate did not preserve %s label for %s", row.Origin, id)
+				}
+			case "existing":
+				if item.Zh != row.ExistingLabel {
+					return fmt.Errorf("incremental candidate did not preserve existing label for %s", id)
+				}
+			case "pending":
+				if item.Zh != "" && !validReviewLanguage(item.Zh, item) {
+					return fmt.Errorf("incremental candidate contains an invalid LLM label for %s", id)
+				}
+			default:
+				return fmt.Errorf("incremental candidate has an unknown translation origin for %s", id)
+			}
+		}
 		if existed && slices.Equal(old.Path, official.Path) {
 			if !hasRow || !row.NeedsTranslation {
 				if item.Zh != old.Zh {
 					return fmt.Errorf("incremental candidate overwrote unchanged translation for %s", id)
 				}
 			}
-		} else if official.Status == "enabled" && (hasRow || (existed && !slices.Equal(old.Path, official.Path))) {
-			if !hasRow && item.Zh != "" {
-				return fmt.Errorf("incremental candidate has untracked translation for %s", id)
-			}
+		} else if official.Status == "enabled" && !hasRow {
+			return fmt.Errorf("incremental candidate omitted an enabled delta row for %s", id)
 		}
 	}
 	for _, id := range manifest.RemovedIDs {
