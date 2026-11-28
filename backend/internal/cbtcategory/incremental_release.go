@@ -78,6 +78,57 @@ func PublishIncremental(dir string, input IncrementalPublishInput, apply bool) (
 	if len(review.Rows) != len(manifest.Rows) {
 		return out, errors.New("incremental review does not include every enabled delta row")
 	}
+	candidates, deferred, err := loadIncrementalBuildState(dir, manifest.ActiveSHA256, manifest.SourceSHA256, manifestHash, manifest)
+	if err != nil {
+		return out, err
+	}
+	remaining, _ := remainingIncrementalRows(manifest, candidates, deferred)
+	if len(remaining) != 0 {
+		return out, errors.New("incremental review cannot be published while translation rows remain")
+	}
+	manifestRows := make(map[string]incrementalRow, len(manifest.Rows))
+	for _, row := range manifest.Rows {
+		manifestRows[row.ID] = row
+	}
+	seenReview := make(map[string]bool, len(review.Rows))
+	for _, reviewRow := range review.Rows {
+		row, ok := manifestRows[reviewRow.ID]
+		item, found := candidate.Categories[reviewRow.ID]
+		if !ok || !found || seenReview[reviewRow.ID] ||
+			reviewRow.Kind != row.Kind || !slices.Equal(reviewRow.Path, row.Path) ||
+			reviewRow.Source != row.Source || reviewRow.SourceSHA256 != row.SourceSHA256 ||
+			reviewRow.Original != row.Original {
+			return out, fmt.Errorf("incremental review row does not match its manifest: %s", reviewRow.ID)
+		}
+		seenReview[reviewRow.ID] = true
+		expectedOrigin, expectedLabel := row.Origin, row.Label
+		if row.NeedsTranslation {
+			if translated, ok := candidates.Rows[row.ID]; ok {
+				expectedOrigin, expectedLabel = "llm", translated.Label
+			} else if deferred.Rows[row.ID] == row.SourceSHA256 {
+				expectedOrigin, expectedLabel = "deferred_english", item.Name
+			} else {
+				return out, fmt.Errorf("incremental review has no durable outcome for %s", row.ID)
+			}
+		} else if row.Origin == "existing" {
+			expectedLabel = row.ExistingLabel
+		}
+		fallback := expectedLabel == "" || expectedLabel == item.Name
+		if fallback {
+			expectedLabel = item.Name
+		}
+		if reviewRow.Origin != expectedOrigin || reviewRow.Candidate != expectedLabel ||
+			reviewRow.FallbackEnglish != fallback {
+			return out, fmt.Errorf("incremental review label or provenance mismatch: %s", row.ID)
+		}
+		if fallback {
+			if item.Zh != "" && item.Zh != item.Name {
+				return out, fmt.Errorf("incremental English fallback candidate is inconsistent: %s", row.ID)
+			}
+		} else if item.Zh != expectedLabel {
+			return out, fmt.Errorf("incremental candidate label differs from review: %s", row.ID)
+		}
+	}
 	if err := validateIncrementalCandidateIdentity(active, source, candidate, manifest); err != nil {
 		return out, err
 	}
