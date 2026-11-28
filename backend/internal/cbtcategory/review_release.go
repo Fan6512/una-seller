@@ -14,6 +14,21 @@ import (
 	"strings"
 )
 
+const llmReleaseManagedFile = "llm-release-managed.json"
+
+// Once a managed release is attempted, ordinary updates must fail closed.
+// This marker intentionally survives rollback and partial publication failures.
+func rejectOrdinaryUpdateAfterRelease(dir string) error {
+	_, err := os.Lstat(filepath.Join(dir, llmReleaseManagedFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return errors.New("ordinary CBT dictionary updater disabled after managed LLM release; use the reviewed incremental workflow")
+}
+
 type ReleasePublishInput struct {
 	Approval       string
 	ApprovalSHA256 string
@@ -284,6 +299,11 @@ func switchReleaseLocked(dir, expectedActive string, next []byte, out ReleaseSwi
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return out, err
 	} else if err := writeReleaseBytes(dir, out.Backup, current); err != nil {
+		return out, err
+	}
+	// Persist the guard before active can be replaced. If publication fails
+	// after this point, keep the guard in place until an operator investigates.
+	if err := writeReleaseBytes(dir, llmReleaseManagedFile, []byte("{\"managed\":true}\n")); err != nil {
 		return out, err
 	}
 	if err := writeReleaseBytes(dir, activeFile, next); err != nil {

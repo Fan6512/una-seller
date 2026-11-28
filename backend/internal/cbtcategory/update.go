@@ -64,6 +64,9 @@ func update(ctx context.Context, dir string, client *http.Client, endpoint strin
 		return Summary{}, fmt.Errorf("could not acquire CBT dictionary writer lock: %w", err)
 	}
 	defer lock.Close()
+	if err := rejectOrdinaryUpdateAfterRelease(dir); err != nil {
+		return Summary{}, err
+	}
 	active, err := loadSnapshot(filepath.Join(dir, activeFile))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Summary{}, err

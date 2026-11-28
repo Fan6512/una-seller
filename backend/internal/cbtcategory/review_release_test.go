@@ -2,6 +2,7 @@ package cbtcategory
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,12 +43,19 @@ func TestReleaseSwitchAndRollback(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, plan.Backup)); !os.IsNotExist(err) {
 		t.Fatal("dry-run wrote backup")
 	}
+	if _, err := os.Stat(filepath.Join(dir, llmReleaseManagedFile)); !os.IsNotExist(err) {
+		t.Fatal("dry-run enabled managed guard")
+	}
 	result, err := switchReleaseLocked(dir, releaseHash(before), next, ReleaseSwitchReport{}, true)
 	if err != nil || !result.Applied {
 		t.Fatalf("switch failed: %+v %v", result, err)
 	}
 	if raw, err := os.ReadFile(filepath.Join(dir, activeFile)); err != nil || !bytes.Equal(raw, next) {
 		t.Fatal("published bytes differ")
+	}
+	// No HTTP client is necessary: the legacy updater must stop before fetch.
+	if _, err := update(context.Background(), dir, nil, "", nil, 0); err == nil || err.Error() != "ordinary CBT dictionary updater disabled after managed LLM release; use the reviewed incremental workflow" {
+		t.Fatalf("legacy updater not blocked before fetch: %v", err)
 	}
 	if _, err := RollbackLLMRelease(dir, releaseHash(before), releaseHash(before), true); err == nil {
 		t.Fatal("stale rollback accepted")
@@ -58,6 +66,9 @@ func TestReleaseSwitchAndRollback(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(filepath.Join(dir, activeFile)); err != nil || !bytes.Equal(raw, before) {
 		t.Fatal("rollback bytes differ")
+	}
+	if err := rejectOrdinaryUpdateAfterRelease(dir); err == nil {
+		t.Fatal("rollback removed managed release guard")
 	}
 }
 
