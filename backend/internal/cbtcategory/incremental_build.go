@@ -251,25 +251,25 @@ func loadIncrementalBuildState(dir string, activeHash, sourceHash, manifestHash 
 		ActiveSHA256: activeHash, SourceSHA256: sourceHash, ManifestSHA256: manifestHash,
 		Rows: make(map[string]string),
 	}
-	candidatePath := filepath.Join(dir, incrementalCandidatesFile)
-	var savedCandidates incrementalCandidateSet
-	if err := readJSONFile(candidatePath, &savedCandidates); err == nil {
-		if savedCandidates.ActiveSHA256 != activeHash || savedCandidates.SourceSHA256 != sourceHash ||
-			savedCandidates.ManifestSHA256 != manifestHash || savedCandidates.Rows == nil {
+	candidateRaw, err := readIncrementalFile(filepath.Join(dir, incrementalCandidatesFile))
+	if err == nil {
+		var saved incrementalCandidateSet
+		if json.Unmarshal(candidateRaw, &saved) != nil || saved.ActiveSHA256 != activeHash ||
+			saved.SourceSHA256 != sourceHash || saved.ManifestSHA256 != manifestHash || saved.Rows == nil {
 			return candidates, deferred, errors.New("incremental candidates do not match the current plan")
 		}
-		candidates = savedCandidates
+		candidates = saved
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return candidates, deferred, err
 	}
-	deferredPath := filepath.Join(dir, incrementalDeferredFile)
-	var savedDeferred incrementalDeferredSet
-	if err := readJSONFile(deferredPath, &savedDeferred); err == nil {
-		if savedDeferred.ActiveSHA256 != activeHash || savedDeferred.SourceSHA256 != sourceHash ||
-			savedDeferred.ManifestSHA256 != manifestHash || savedDeferred.Rows == nil {
+	deferredRaw, err := readIncrementalFile(filepath.Join(dir, incrementalDeferredFile))
+	if err == nil {
+		var saved incrementalDeferredSet
+		if json.Unmarshal(deferredRaw, &saved) != nil || saved.ActiveSHA256 != activeHash ||
+			saved.SourceSHA256 != sourceHash || saved.ManifestSHA256 != manifestHash || saved.Rows == nil {
 			return candidates, deferred, errors.New("incremental deferred state does not match the current plan")
 		}
-		deferred = savedDeferred
+		deferred = saved
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return candidates, deferred, err
 	}
@@ -293,9 +293,50 @@ func loadIncrementalBuildState(dir string, activeHash, sourceHash, manifestHash 
 			return candidates, deferred, fmt.Errorf("invalid or stale incremental deferred row %s", id)
 		}
 	}
+	receipts, err := readIncrementalReceipts(dir)
+	if err != nil {
+		return candidates, deferred, err
+	}
+	usage, err := loadLLMUsage(dir)
+	if err != nil {
+		return candidates, deferred, err
+	}
+	receiptByID := make(map[string]incrementalReceipt)
+	lastReservedThrough := manifest.UsageChars
+	for _, receipt := range receipts {
+		if receipt.ManifestSHA256 != manifestHash {
+			continue
+		}
+		sourceRow, ok := allowed[receipt.ID]
+		if !ok || receipt.ActiveSHA256 != activeHash || receipt.SourceSHA256 != sourceHash ||
+			receipt.SourceSHA256Row != sourceRow.SourceSHA256 ||
+			receipt.SourceChars != utf8.RuneCountInString(sourceRow.Source) ||
+			receipt.ReservedChars != receipt.SourceChars ||
+			receipt.UsageBefore < lastReservedThrough ||
+			receipt.UsageBefore+receipt.ReservedChars > usage.Chars ||
+			receiptByID[receipt.ID].ID != "" {
+			return candidates, deferred, fmt.Errorf("incremental receipt does not match durable quota and source state: %s", receipt.ID)
+		}
+		lastReservedThrough = receipt.UsageBefore + receipt.ReservedChars
+		receiptByID[receipt.ID] = receipt
+	}
+	for id := range candidates.Rows {
+		receipt, ok := receiptByID[id]
+		if !ok || receipt.Outcome != "stored" {
+			return candidates, deferred, fmt.Errorf("incremental candidate has no matching durable receipt: %s", id)
+		}
+	}
+	for id := range deferred.Rows {
+		receipt, ok := receiptByID[id]
+		if !ok || receipt.Outcome != "deferred_english" {
+			return candidates, deferred, fmt.Errorf("incremental deferred row has no matching durable receipt: %s", id)
+		}
+	}
+	if len(receiptByID) != len(candidates.Rows)+len(deferred.Rows) {
+		return candidates, deferred, errors.New("incremental receipt exists without a committed candidate or deferred outcome")
+	}
 	return candidates, deferred, nil
 }
-
 func remainingIncrementalRows(manifest incrementalManifest, candidates incrementalCandidateSet, deferred incrementalDeferredSet) ([]incrementalRow, int) {
 	rows := make([]incrementalRow, 0)
 	chars := 0
