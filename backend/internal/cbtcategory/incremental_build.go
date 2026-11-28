@@ -23,9 +23,9 @@ type incrementalCandidateRow struct {
 }
 
 type incrementalCandidateSet struct {
-	ActiveSHA256   string                            `json:"active_sha256"`
-	SourceSHA256   string                            `json:"source_sha256"`
-	ManifestSHA256 string                            `json:"manifest_sha256"`
+	ActiveSHA256   string                             `json:"active_sha256"`
+	SourceSHA256   string                             `json:"source_sha256"`
+	ManifestSHA256 string                             `json:"manifest_sha256"`
 	Rows           map[string]incrementalCandidateRow `json:"rows"`
 }
 
@@ -37,54 +37,54 @@ type incrementalDeferredSet struct {
 }
 
 type incrementalPending struct {
-	ActiveSHA256   string    `json:"active_sha256"`
-	SourceSHA256   string    `json:"source_sha256"`
-	ManifestSHA256 string    `json:"manifest_sha256"`
-	ID             string    `json:"id"`
-	SourceSHA256Row string   `json:"row_source_sha256"`
-	SourceChars    int       `json:"source_chars"`
-	UsageBefore    int       `json:"usage_before_chars"`
-	StartedAt      time.Time `json:"started_at"`
+	ActiveSHA256    string    `json:"active_sha256"`
+	SourceSHA256    string    `json:"source_sha256"`
+	ManifestSHA256  string    `json:"manifest_sha256"`
+	ID              string    `json:"id"`
+	SourceSHA256Row string    `json:"row_source_sha256"`
+	SourceChars     int       `json:"source_chars"`
+	UsageBefore     int       `json:"usage_before_chars"`
+	StartedAt       time.Time `json:"started_at"`
 }
 
 type incrementalReceipt struct {
-	ActiveSHA256   string    `json:"active_sha256"`
-	SourceSHA256   string    `json:"source_sha256"`
-	ManifestSHA256 string    `json:"manifest_sha256"`
-	ID             string    `json:"id"`
-	SourceSHA256Row string   `json:"row_source_sha256"`
-	SourceChars    int       `json:"source_chars"`
-	ReservedChars  int       `json:"reserved_chars"`
-	UsageBefore    int       `json:"usage_before_chars"`
-	Outcome        string    `json:"outcome"`
-	CompletedAt    time.Time `json:"completed_at"`
+	ActiveSHA256    string    `json:"active_sha256"`
+	SourceSHA256    string    `json:"source_sha256"`
+	ManifestSHA256  string    `json:"manifest_sha256"`
+	ID              string    `json:"id"`
+	SourceSHA256Row string    `json:"row_source_sha256"`
+	SourceChars     int       `json:"source_chars"`
+	ReservedChars   int       `json:"reserved_chars"`
+	UsageBefore     int       `json:"usage_before_chars"`
+	Outcome         string    `json:"outcome"`
+	CompletedAt     time.Time `json:"completed_at"`
 }
 
 type IncrementalBuildReport struct {
-	Selected                 int               `json:"selected"`
-	Completed                int               `json:"completed"`
-	Deferred                 int               `json:"deferred_english"`
-	RemainingRows            int               `json:"remaining_rows"`
-	RemainingSourceChars     int               `json:"remaining_source_chars"`
-	PlannedRemainingChars    int               `json:"planned_remaining_chars"`
-	ReservedChars            int               `json:"reserved_chars"`
-	UsageBefore              int               `json:"usage_before_chars"`
-	UsageChars               int               `json:"usage_chars"`
-	BudgetChars              int               `json:"budget_chars"`
-	BudgetFits               bool              `json:"budget_fits"`
-	Attempts                 []incrementalReceipt `json:"attempts,omitempty"`
+	Selected              int                  `json:"selected"`
+	Completed             int                  `json:"completed"`
+	Deferred              int                  `json:"deferred_english"`
+	RemainingRows         int                  `json:"remaining_rows"`
+	RemainingSourceChars  int                  `json:"remaining_source_chars"`
+	PlannedRemainingChars int                  `json:"planned_remaining_chars"`
+	ReservedChars         int                  `json:"reserved_chars"`
+	UsageBefore           int                  `json:"usage_before_chars"`
+	UsageChars            int                  `json:"usage_chars"`
+	BudgetChars           int                  `json:"budget_chars"`
+	BudgetFits            bool                 `json:"budget_fits"`
+	Attempts              []incrementalReceipt `json:"attempts,omitempty"`
 }
 
 type IncrementalAssembleReport struct {
-	ActiveSHA256       string            `json:"active_sha256"`
-	SourceSHA256       string            `json:"source_sha256"`
-	ManifestSHA256     string            `json:"manifest_sha256"`
-	CandidateSHA256    string            `json:"candidate_sha256"`
-	ReviewSHA256       string            `json:"review_sha256"`
-	ApprovalTemplate   string            `json:"approval_template"`
-	Counts             incrementalCounts `json:"counts"`
-	ReviewRows         int               `json:"review_rows"`
-	DeferredEnglish    int               `json:"deferred_english"`
+	ActiveSHA256     string            `json:"active_sha256"`
+	SourceSHA256     string            `json:"source_sha256"`
+	ManifestSHA256   string            `json:"manifest_sha256"`
+	CandidateSHA256  string            `json:"candidate_sha256"`
+	ReviewSHA256     string            `json:"review_sha256"`
+	ApprovalTemplate string            `json:"approval_template"`
+	Counts           incrementalCounts `json:"counts"`
+	ReviewRows       int               `json:"review_rows"`
+	DeferredEnglish  int               `json:"deferred_english"`
 }
 
 func verifyIncrementalReceipts(dir string) error {
@@ -461,28 +461,28 @@ type incrementalReviewRow struct {
 }
 
 type incrementalReview struct {
-	ActiveSHA256   string                 `json:"active_sha256"`
-	SourceSHA256   string                 `json:"source_sha256"`
-	ManifestSHA256 string                 `json:"manifest_sha256"`
-	CandidateSHA256 string                `json:"candidate_sha256"`
-	Rows           []incrementalReviewRow `json:"rows"`
+	ActiveSHA256    string                 `json:"active_sha256"`
+	SourceSHA256    string                 `json:"source_sha256"`
+	ManifestSHA256  string                 `json:"manifest_sha256"`
+	CandidateSHA256 string                 `json:"candidate_sha256"`
+	Rows            []incrementalReviewRow `json:"rows"`
 }
 
 type incrementalApprovalRow struct {
-	ID                   string `json:"id"`
-	SourceSHA256         string `json:"source_sha256"`
-	Accepted             bool   `json:"accepted"`
-	FinalLabel           string `json:"final_label"`
-	AcceptEnglishFallback bool  `json:"accept_english_fallback"`
+	ID                    string `json:"id"`
+	SourceSHA256          string `json:"source_sha256"`
+	Accepted              bool   `json:"accepted"`
+	FinalLabel            string `json:"final_label"`
+	AcceptEnglishFallback bool   `json:"accept_english_fallback"`
 }
 
 type incrementalApproval struct {
-	ActiveSHA256    string                  `json:"active_sha256"`
-	SourceSHA256    string                  `json:"source_sha256"`
-	ManifestSHA256  string                  `json:"manifest_sha256"`
-	CandidateSHA256 string                  `json:"candidate_sha256"`
-	ReviewSHA256    string                  `json:"review_sha256"`
-	Reviewer        string                  `json:"reviewer"`
+	ActiveSHA256    string                   `json:"active_sha256"`
+	SourceSHA256    string                   `json:"source_sha256"`
+	ManifestSHA256  string                   `json:"manifest_sha256"`
+	CandidateSHA256 string                   `json:"candidate_sha256"`
+	ReviewSHA256    string                   `json:"review_sha256"`
+	Reviewer        string                   `json:"reviewer"`
 	Rows            []incrementalApprovalRow `json:"rows"`
 }
 
