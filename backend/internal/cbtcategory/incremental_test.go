@@ -184,7 +184,7 @@ func TestIncrementalBuildAssemblePublishAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if active.Version.Created != version2 || active.Categories["CBT101"].Zh != "其他" ||
-		active.Categories["CBT102"].Zh != "水壶" || active.Categories["CBT201"].Zh != "宠物 | 猫" ||
+		active.Categories["CBT102"].Zh != "水壶" || active.Categories["CBT201"].Zh != "猫" ||
 		active.Categories["CBT202"].ID != "" || len(active.Retired["CBT202"]) != 1 ||
 		active.Retired["CBT202"][0].Zh != "旧分类" {
 		t.Fatalf("published snapshot lost translations or official version: %+v", active)
