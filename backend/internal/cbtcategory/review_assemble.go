@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -32,8 +33,11 @@ type ReleaseCandidateReport struct {
 	LLM            int               `json:"llm"`
 	Deferred       int               `json:"deferred_english"`
 	Unsafe         int               `json:"unsafe_english"`
-	PriorExcluded  int               `json:"prior_excluded"`
-	Usage          int               `json:"usage_chars"`
+	PriorExcluded    int               `json:"prior_excluded"`
+	AuditEligible    int               `json:"audit_eligible"`
+	AuditSelected    int               `json:"audit_selected"`
+	ExclusionsSHA256 string            `json:"exclusions_sha256"`
+	Usage            int               `json:"usage_chars"`
 	AuditRows      []releaseAuditRow `json:"audit_rows"`
 }
 
@@ -146,6 +150,19 @@ func AssembleLLMCandidate(dir, seed string, sample int, exclusions map[string]bo
 	if eligible < sample {
 		return out, errors.New("insufficient independent audit rows")
 	}
+	out.AuditEligible = eligible
+	ids := make([]string, 0, len(exclusions))
+	for id := range exclusions {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var exclusionBytes strings.Builder
+	for _, id := range ids {
+		exclusionBytes.WriteString(id)
+		exclusionBytes.WriteByte('\\n')
+	}
+	exclusionHash := sha256.Sum256([]byte(exclusionBytes.String()))
+	out.ExclusionsSHA256 = fmt.Sprintf("%x", exclusionHash)
 	slices.Sort(roots)
 	for offset := 0; len(out.AuditRows) < sample; offset++ {
 		for _, root := range roots {
@@ -154,6 +171,7 @@ func AssembleLLMCandidate(dir, seed string, sample int, exclusions map[string]bo
 			}
 		}
 	}
+	out.AuditSelected = len(out.AuditRows)
 	// saveJSON uses json.Encoder.Encode: canonical map keys and trailing LF.
 	// Compute the exact bytes with the same encoder (including HTML escaping).
 	raw, err := json.Marshal(s)
@@ -171,7 +189,7 @@ func AssembleLLMCandidate(dir, seed string, sample int, exclusions map[string]bo
 }
 
 func validateReleaseIdentity(official, candidate snapshot) error {
-	if official.Version != candidate.Version || len(official.Categories) != len(candidate.Categories) {
+	if official.Version != candidate.Version || len(official.Categories) != len(candidate.Categories) || !reflect.DeepEqual(official.Retired, candidate.Retired) {
 		return errors.New("release candidate version or category count changed")
 	}
 	for id, a := range official.Categories {

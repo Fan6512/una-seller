@@ -52,7 +52,7 @@ func TestAssembleLLMCandidateOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	report, err := AssembleLLMCandidate(dir, "fixed", 2, excluded)
-	if err != nil || report.Manual != 1 || report.LLM != 2 || report.Deferred != 1 || report.PriorExcluded != 1 || len(report.AuditRows) != 2 {
+	if err != nil || report.Manual != 1 || report.LLM != 2 || report.Deferred != 1 || report.PriorExcluded != 1 || report.AuditEligible != 2 || report.AuditSelected != 2 || len(report.ExclusionsSHA256) != 64 || len(report.AuditRows) != 2 {
 		t.Fatalf("bad release candidate %+v %v", report, err)
 	}
 	assembled, err := loadSnapshot(filepath.Join(dir, llmReleaseCandidateFile))
