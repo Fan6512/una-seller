@@ -166,7 +166,7 @@ func TestIncrementalBuildAssemblePublishAndRollback(t *testing.T) {
 	for i := range approval.Rows {
 		approval.Rows[i].Accepted = true
 	}
-	approvalRaw, err := incrementalJSON(approval)
+	approvalRaw, _, err := incrementalJSON(approval)
 	if err != nil {
 		t.Fatal(err)
 	}
