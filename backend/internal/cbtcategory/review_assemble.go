@@ -23,22 +23,23 @@ type releaseAuditRow struct {
 }
 
 type ReleaseCandidateReport struct {
-	Version        version           `json:"version"`
-	SnapshotSHA256 string            `json:"snapshot_sha256"`
-	Seed           string            `json:"seed"`
-	Enabled        int               `json:"enabled"`
-	Disabled       int               `json:"disabled"`
-	Manual         int               `json:"manual"`
-	Glossary       int               `json:"glossary"`
-	LLM            int               `json:"llm"`
-	Deferred       int               `json:"deferred_english"`
-	Unsafe         int               `json:"unsafe_english"`
+	Version          version           `json:"version"`
+	SnapshotSHA256   string            `json:"snapshot_sha256"`
+	Seed             string            `json:"seed"`
+	Enabled          int               `json:"enabled"`
+	Disabled         int               `json:"disabled"`
+	Manual           int               `json:"manual"`
+	Glossary         int               `json:"glossary"`
+	LLM              int               `json:"llm"`
+	Deferred         int               `json:"deferred_english"`
+	Unsafe           int               `json:"unsafe_english"`
 	PriorExcluded    int               `json:"prior_excluded"`
 	AuditEligible    int               `json:"audit_eligible"`
 	AuditSelected    int               `json:"audit_selected"`
 	ExclusionsSHA256 string            `json:"exclusions_sha256"`
 	Usage            int               `json:"usage_chars"`
-	AuditRows      []releaseAuditRow `json:"audit_rows"`
+	AuditRows        []releaseAuditRow `json:"audit_rows"`
+}
 }
 
 // AssembleLLMCandidate is intentionally offline. It does not write active,
