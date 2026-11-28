@@ -167,6 +167,108 @@ func ensureNoIncrementalPending(dir string) error {
 	return nil
 }
 
+func incrementalProgressExists(dir string) (bool, error) {
+	for _, name := range []string{
+		incrementalCandidatesFile, incrementalDeferredFile, incrementalReceiptsFile,
+		incrementalCandidateFile, incrementalReviewFile, incrementalApprovalFile,
+	} {
+		_, err := os.Lstat(filepath.Join(dir, name))
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+func archiveIncrementalArtifacts(dir, manifestHash string) error {
+	archiveDir := filepath.Join(dir, "incremental-archive")
+	if err := os.MkdirAll(archiveDir, 0700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(archiveDir)
+	if err != nil || !info.IsDir() {
+		return errors.New("incremental archive path is not a directory")
+	}
+	prefix := manifestHash
+	if len(prefix) > 12 {
+		prefix = prefix[:12]
+	}
+	for _, name := range []string{
+		incrementalSourceFile, incrementalManifestFile, incrementalCandidatesFile,
+		incrementalDeferredFile, incrementalPendingFile, incrementalReceiptsFile,
+		incrementalCandidateFile, incrementalReviewFile, incrementalApprovalFile,
+	} {
+		sourcePath := filepath.Join(dir, name)
+		if _, err := os.Lstat(sourcePath); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		if _, err := readIncrementalFile(sourcePath); err != nil {
+			return err
+		}
+		destination := filepath.Join(archiveDir, prefix+"-"+name)
+		for suffix := 1; ; suffix++ {
+			_, err := os.Lstat(destination)
+			if errors.Is(err, os.ErrNotExist) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			destination = filepath.Join(archiveDir, fmt.Sprintf("%s-%d-%s", prefix, suffix, name))
+		}
+		if err := os.Rename(sourcePath, destination); err != nil {
+			return err
+		}
+	}
+	if err := syncIncrementalDir(archiveDir); err != nil {
+		return err
+	}
+	return syncIncrementalDir(dir)
+}
+
+func prepareIncrementalPlanRotation(dir string, active snapshot, activeHash string) error {
+	manifestPath := filepath.Join(dir, incrementalManifestFile)
+	raw, err := readIncrementalFile(manifestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var previous incrementalManifest
+	if json.Unmarshal(raw, &previous) != nil || !validReleaseHash(previous.ActiveSHA256) ||
+		!validReleaseHash(previous.SourceSHA256) {
+		return errors.New("previous incremental manifest is invalid; archive and inspect before continuing")
+	}
+	manifestHash := incrementalHash(raw)
+	if previous.ActiveSHA256 == activeHash {
+		if previous.NoOp {
+			return archiveIncrementalArtifacts(dir, manifestHash)
+		}
+		progress, err := incrementalProgressExists(dir)
+		if err != nil {
+			return err
+		}
+		if progress {
+			return errors.New("an incremental run is already in progress for this active snapshot; resume it or explicitly rollback before planning again")
+		}
+		return nil
+	}
+	if active.Version != previous.SourceVersion {
+		return errors.New("active dictionary changed outside the previous incremental release; manual investigation required")
+	}
+	backup, err := readIncrementalFile(filepath.Join(dir, releaseBackupName(previous.ActiveSHA256)))
+	if err != nil || incrementalHash(backup) != previous.ActiveSHA256 {
+		return errors.New("previous incremental release backup is missing or invalid; cannot rotate its evidence")
+	}
+	return archiveIncrementalArtifacts(dir, manifestHash)
+}
+
 func compareIncrementalVersions(active, source version) (int, error) {
 	activeTime, err := time.Parse(time.RFC3339Nano, active.Created)
 	if err != nil {
@@ -346,6 +448,9 @@ func planIncremental(ctx context.Context, dir string, client *http.Client, endpo
 		return out, err
 	}
 	activeHash := incrementalHash(activeRaw)
+	if err := prepareIncrementalPlanRotation(dir, active, activeHash); err != nil {
+		return out, err
+	}
 	resp, officialVersion, err := fetchDump(ctx, client, endpoint)
 	if err != nil {
 		return out, err
