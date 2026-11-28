@@ -20,4 +20,4 @@ una-seller-api cbt-categories publish -active-sha256 ACTIVE -approval /path/appr
 una-seller-api cbt-categories rollback -active-sha256 CURRENT -backup-sha256 PREVIOUS
 ```
 
-回滚只恢复 active.json，保留人工覆盖、源数据、额度及审查证据；不恢复普通翻译。发布后检查 Reader 热加载、真实客户端类目中文/官方ID不变、匿名认证及API健康、回退英文。发布/回滚实际切换前先持久化 llm-release-managed.json，旧普通 update 在同一 update.lock 下、联网前 fail closed；标记即使回滚或发布中途异常也保留。Dry-run 不创建标记。务必使用含该保护的已审核二进制并保持普通翻译和 timer 禁用；旧二进制不认识保护标记，禁止使用旧二进制执行 update。每日增量另行开发，不能直接启用现有 updater，也不能通过删除标记绕过。本切片未实际部署或发布，需 CI/真实离线验收及单独批准。
+回滚只恢复 active.json，保留人工覆盖、源数据、额度及审查证据；不恢复普通翻译。发布后检查 Reader 热加载、真实客户端类目中文/官方ID不变、匿名认证及API健康、回退英文。发布/回滚实际切换前先持久化 llm-release-managed.json，旧普通 update 在同一 update.lock 下、联网前 fail closed；标记即使回滚或发布中途异常也保留。Dry-run 不创建标记。务必使用含该保护的已审核二进制并保持普通翻译和 timer 禁用；旧二进制不认识保护标记，禁止使用旧二进制执行 update。每日增量另行开发，不能直接启用现有 updater，也不能通过删除标记绕过。代码已由 #131 Squash Merge 至 main（合并提交 `20404c6aec2bb4b0399fa5286f5712c30df161c7`），PR CI `46111706636` 与合并后主线/台账 CI `46112258186` 均 PASS；尚未部署生产、未执行真实离线验收、未写入 managed 标记、未发布。正式发布仍需独立批准。生产必须先运行含本保护的新二进制；旧回滚二进制不识别 managed 标记，发布后不得使用旧二进制执行普通 update 或回退服务版本。
