@@ -236,3 +236,39 @@ func TestIncrementalBuildBudgetAndPendingFailClosed(t *testing.T) {
 		t.Fatal("assemble accepted unresolved incremental pending attempt")
 	}
 }
+
+
+func TestIncrementalPlanNoOpAndSameTimestampCollision(t *testing.T) {
+	dir := t.TempDir()
+	fixture := generatedVersion(t, version1, fixtureTree())
+	active, err := readDump(bytes.NewReader(fixture.body), fixture.version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Categories["CBT101"] = categoryWithLabel(active.Categories["CBT101"], "其他")
+	if err := saveJSON(dir, activeFile, active); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, llmReleaseManagedFile), []byte("{\"managed\":true}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReconcileLLMUsage(dir, 100); err != nil {
+		t.Fatal(err)
+	}
+	server, latest := fixtureServer(t)
+	result, err := planIncremental(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all")
+	if err != nil || !result.NoOp || result.Counts.Added+result.Counts.ChangedPath+
+		result.Counts.MetadataChanged+result.Counts.Removed+result.Counts.TranslationNeeded != 0 {
+		t.Fatalf("same official version should be a no-op: %+v %v", result, err)
+	}
+	tree := fixtureTree()
+	leaf := tree["CBT101"]
+	allowed := false
+	leaf.Settings.ListingAllowed = &allowed
+	tree["CBT101"] = leaf
+	latest.Store(generatedVersion(t, version1, tree))
+	if _, err := planIncremental(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all"); err == nil ||
+		!strings.Contains(err.Error(), "same creation time but a different MD5") {
+		t.Fatalf("same timestamp with different official dump must fail closed: %v", err)
+	}
+}
