@@ -299,5 +299,16 @@ func RollbackIncremental(dir, expectedActive, backupHash string, apply bool) (ou
 		return out, err
 	}
 	out.Applied = true
+	manifestRaw, manifestErr := readIncrementalFile(filepath.Join(dir, incrementalManifestFile))
+	if manifestErr == nil {
+		var previous incrementalManifest
+		var published snapshot
+		if json.Unmarshal(manifestRaw, &previous) == nil && json.Unmarshal(current, &published) == nil &&
+			previous.ActiveSHA256 == backupHash && previous.SourceVersion == published.Version {
+			if err := archiveIncrementalArtifacts(dir, incrementalHash(manifestRaw)); err != nil {
+				return out, fmt.Errorf("rollback applied but incremental evidence archival failed: %w", err)
+			}
+		}
+	}
 	return out, nil
 }
