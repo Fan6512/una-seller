@@ -55,6 +55,7 @@ type incrementalManifest struct {
 	ActiveSHA256       string            `json:"active_sha256"`
 	ActiveVersion      version           `json:"active_version"`
 	SourceSHA256       string            `json:"source_sha256"`
+	OverridesSHA256    string            `json:"overrides_sha256"`
 	SourceVersion      version           `json:"source_version"`
 	Counts             incrementalCounts `json:"counts"`
 	AddedIDs           []string          `json:"added_ids,omitempty"`
@@ -180,7 +181,7 @@ func compareIncrementalVersions(active, source version) (int, error) {
 		return -1, errors.New("official CBT dump version is older than the active dictionary")
 	case sourceTime.Equal(activeTime) && source.MD5 != active.MD5:
 		return 0, errors.New("official CBT dump has the same creation time but a different MD5; manual investigation required")
-	case source == active:
+	case sourceTime.Equal(activeTime) && source.MD5 == active.MD5:
 		return 0, nil
 	case sourceTime.Equal(activeTime):
 		return 0, errors.New("official CBT dump version is ambiguous")
@@ -299,7 +300,9 @@ func buildIncrementalManifest(active, source snapshot, activeHash string, overri
 			out.Counts.TranslationNeeded++
 		}
 	}
-	out.NoOp = source.Version == active.Version
+	activeTime, _ := time.Parse(time.RFC3339Nano, active.Version.Created)
+	sourceTime, _ := time.Parse(time.RFC3339Nano, source.Version.Created)
+	out.NoOp = active.Version.MD5 == source.Version.MD5 && activeTime.Equal(sourceTime)
 	return out
 }
 
@@ -355,11 +358,21 @@ func planIncremental(ctx context.Context, dir string, client *http.Client, endpo
 	if _, err := compareIncrementalVersions(active.Version, source.Version); err != nil {
 		return out, err
 	}
+	overrideRaw, overrideErr := readIncrementalFile(filepath.Join(dir, overrideFile))
+	if overrideErr != nil && !errors.Is(overrideErr, os.ErrNotExist) {
+		return out, overrideErr
+	}
+	overridesHash := incrementalHash(overrideRaw)
 	overrides, err := loadOverrides(filepath.Join(dir, overrideFile))
 	if err != nil {
 		return out, err
 	}
 	manifest := buildIncrementalManifest(active, source, activeHash, overrides)
+	manifest.OverridesSHA256 = overridesHash
+	if manifest.NoOp && (manifest.Counts.Added+manifest.Counts.ChangedPath+
+		manifest.Counts.MetadataChanged+manifest.Counts.Removed != 0) {
+		return out, errors.New("official dump version matches active but category identity differs; manual investigation required")
+	}
 	sourceHash := ""
 	if _, sourceHash, err = incrementalJSON(source); err != nil {
 		return out, err
