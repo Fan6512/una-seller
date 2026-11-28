@@ -256,7 +256,7 @@ func loadIncrementalBuildState(dir string, activeHash, sourceSnapshotHash, manif
 	if err == nil {
 		var saved incrementalCandidateSet
 		if json.Unmarshal(candidateRaw, &saved) != nil || saved.ActiveSHA256 != activeHash ||
-			saved.SourceSHA256 != sourceHash || saved.ManifestSHA256 != manifestHash || saved.Rows == nil {
+			saved.SourceSHA256 != sourceSnapshotHash || saved.ManifestSHA256 != manifestHash || saved.Rows == nil {
 			return candidates, deferred, errors.New("incremental candidates do not match the current plan")
 		}
 		candidates = saved
@@ -267,7 +267,7 @@ func loadIncrementalBuildState(dir string, activeHash, sourceSnapshotHash, manif
 	if err == nil {
 		var saved incrementalDeferredSet
 		if json.Unmarshal(deferredRaw, &saved) != nil || saved.ActiveSHA256 != activeHash ||
-			saved.SourceSHA256 != sourceHash || saved.ManifestSHA256 != manifestHash || saved.Rows == nil {
+			saved.SourceSHA256 != sourceSnapshotHash || saved.ManifestSHA256 != manifestHash || saved.Rows == nil {
 			return candidates, deferred, errors.New("incremental deferred state does not match the current plan")
 		}
 		deferred = saved
