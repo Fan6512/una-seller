@@ -16,7 +16,11 @@ import (
 func prepareIncrementalFixture(t *testing.T) (string, snapshot, []byte, *httptest.Server, *fixtureVersion) {
 	t.Helper()
 	dir := t.TempDir()
-	initial := generatedVersion(t, version1, fixtureTree())
+	initialTree := fixtureTree()
+	oldLeaf := PathNode{ID: "CBT202", Name: "Old"}
+	initialTree["CBT200"] = fixtureNode(petsPath[:1], []PathNode{petsPath[1], oldLeaf}, "enabled")
+	initialTree["CBT202"] = fixtureNode([]PathNode{petsPath[0], oldLeaf}, nil, "enabled")
+	initial := generatedVersion(t, version1, initialTree)
 	active, err := readDump(bytes.NewReader(initial.body), initial.version)
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +29,7 @@ func prepareIncrementalFixture(t *testing.T) (string, snapshot, []byte, *httptes
 	active.Categories["CBT101"] = categoryWithLabel(active.Categories["CBT101"], "其他")
 	active.Categories["CBT200"] = categoryWithLabel(active.Categories["CBT200"], "宠物")
 	active.Categories["CBT201"] = categoryWithLabel(active.Categories["CBT201"], "其他")
+	active.Categories["CBT202"] = categoryWithLabel(active.Categories["CBT202"], "旧分类")
 	if err := saveJSON(dir, activeFile, active); err != nil {
 		t.Fatal(err)
 	}
@@ -72,9 +77,10 @@ func runIncrementalPlanFixture(t *testing.T, dir string, server *httptest.Server
 func TestIncrementalPlanProtectsManagedSnapshotAndDetectsDelta(t *testing.T) {
 	dir, _, activeRaw, server, _ := prepareIncrementalFixture(t)
 	result := runIncrementalPlanFixture(t, dir, server)
-	if result.Counts.Added != 1 || result.Counts.ChangedPath != 1 ||
+	if result.Counts.Added != 1 || result.Counts.ChangedPath != 1 || result.Counts.Removed != 1 ||
 		result.Counts.TranslationNeeded != 1 || result.Counts.ReviewRequired != 2 ||
-		!slices.Contains(result.AddedIDs, "CBT102") || !slices.Contains(result.ChangedPathIDs, "CBT201") {
+		!slices.Contains(result.AddedIDs, "CBT102") || !slices.Contains(result.ChangedPathIDs, "CBT201") ||
+		!slices.Contains(result.RemovedIDs, "CBT202") {
 		t.Fatalf("unexpected incremental plan: %+v", result)
 	}
 	if result.SourceChars != len([]rune("Pets | Cats")) || result.BudgetRemaining != LLMReviewHardLimit-1000 || !result.BudgetFits {
@@ -178,7 +184,9 @@ func TestIncrementalBuildAssemblePublishAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if active.Version.Created != version2 || active.Categories["CBT101"].Zh != "其他" ||
-		active.Categories["CBT102"].Zh != "水壶" || active.Categories["CBT201"].Zh != "宠物 | 猫" {
+		active.Categories["CBT102"].Zh != "水壶" || active.Categories["CBT201"].Zh != "宠物 | 猫" ||
+		active.Categories["CBT202"].ID != "" || len(active.Retired["CBT202"]) != 1 ||
+		active.Retired["CBT202"][0].Zh != "旧分类" {
 		t.Fatalf("published snapshot lost translations or official version: %+v", active)
 	}
 	if err := ensureIncrementalManaged(dir); err != nil {
