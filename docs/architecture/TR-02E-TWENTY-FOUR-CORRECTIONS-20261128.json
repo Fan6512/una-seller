@@ -1,0 +1,294 @@
+[
+  {
+    "id": "CBT430680",
+    "path_names": [
+      "Sports and Fitness",
+      "Martial Arts & Boxing",
+      "Clothing",
+      "Shorts & Bermuda Shorts"
+    ],
+    "original_llm": "短裤与短裙",
+    "suggested_zh": "短裤与百慕大短裤",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT457948",
+    "path_names": [
+      "Electronics, Audio and Video",
+      "Projectors & Screens",
+      "Electric Screens"
+    ],
+    "original_llm": "电子屏幕",
+    "suggested_zh": "电动投影幕",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT66807",
+    "path_names": [
+      "Cell Phones and Phones",
+      "Tariffers and Cabins",
+      "Cabins"
+    ],
+    "original_llm": "机舱",
+    "suggested_zh": "电话亭",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT417127",
+    "path_names": [
+      "Clothing and Accessories",
+      "Fashion Accessories",
+      "Glasses & Accessories",
+      "Frames & non-Rx glasses"
+    ],
+    "original_llm": "镜框及非近视眼镜",
+    "suggested_zh": "镜框及非处方眼镜",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT455352",
+    "path_names": [
+      "Home, Furniture and Garden",
+      "Gardens & Outdoors",
+      "Swimming Pools",
+      "Pool Replacement Parts",
+      "Plugs"
+    ],
+    "original_llm": "插头",
+    "suggested_zh": "排水塞",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT435256",
+    "path_names": [
+      "Health and Health Supplies",
+      "Health Care",
+      "Anti-Snoring Devices",
+      "Mouth Guards"
+    ],
+    "original_llm": "口腔护理",
+    "suggested_zh": "防鼾牙套",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT457116",
+    "path_names": [
+      "Industries and Offices",
+      "Farming",
+      "Livestock Production",
+      "Tools and Accessories",
+      "Cattle Herders"
+    ],
+    "original_llm": "养牛户",
+    "suggested_zh": "赶牛器具",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT388931",
+    "path_names": [
+      "Vehicle Accessories",
+      "Motorcycle Replacement Parts",
+      "Chassis",
+      "Commands",
+      "Other Commands"
+    ],
+    "original_llm": "其他指令",
+    "suggested_zh": "其他操纵件",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT438144",
+    "path_names": [
+      "Appliances",
+      "Air Conditioning",
+      "Space Heaters",
+      "Wood Heaters"
+    ],
+    "original_llm": "燃气取暖器",
+    "suggested_zh": "燃木取暖器",
+    "source": "first-200"
+  },
+  {
+    "id": "CBT437354",
+    "path_names": [
+      "Vehicle Accessories",
+      "Performance",
+      "Engine",
+      "Distribution"
+    ],
+    "original_llm": "分配",
+    "suggested_zh": "配气系统",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT456699",
+    "path_names": [
+      "Vehicle Accessories",
+      "Heavy Line Replacement Parts",
+      "HVAC",
+      "Air Conditioners",
+      "AC Receivers Dryers"
+    ],
+    "original_llm": "空调接收器 烘干机",
+    "suggested_zh": "空调储液干燥器",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT458782",
+    "path_names": [
+      "Vehicle Accessories",
+      "Car & Truck Replacement Parts",
+      "Engine",
+      "Pumps",
+      "Primer Pumps"
+    ],
+    "original_llm": "底漆泵",
+    "suggested_zh": "手油泵",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT456993",
+    "path_names": [
+      "Vehicle Accessories",
+      "Heavy Line Replacement Parts",
+      "HVAC",
+      "Commands"
+    ],
+    "original_llm": "指令",
+    "suggested_zh": "空调控制面板",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT456960",
+    "path_names": [
+      "Vehicle Accessories",
+      "Heavy Line Replacement Parts",
+      "Cabin Parts",
+      "Switches",
+      "Of Windshield Wiper"
+    ],
+    "original_llm": "挡风玻璃雨刷",
+    "suggested_zh": "雨刮开关",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT445771",
+    "path_names": [
+      "Vehicle Accessories",
+      "Scheduled Service",
+      "Motor",
+      "Fuel Bombs Change"
+    ],
+    "original_llm": "燃油弹更换",
+    "suggested_zh": "燃油泵更换",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT75214",
+    "path_names": [
+      "Vehicle Accessories",
+      "Car & Truck Replacement Parts",
+      "Interior Parts",
+      "Lighters"
+    ],
+    "original_llm": "点火器",
+    "suggested_zh": "点烟器",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT457293",
+    "path_names": [
+      "Vehicle Accessories",
+      "Heavy Line Replacement Parts",
+      "Steering & Suspension",
+      "CV Axles and Joints",
+      "Tripod Joints"
+    ],
+    "original_llm": "三脚架接头",
+    "suggested_zh": "三球销万向节",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT436113",
+    "path_names": [
+      "Home, Furniture and Garden",
+      "Home Care & Laundry",
+      "Laundry Accessories",
+      "Buckets, Washbowls & Tubs"
+    ],
+    "original_llm": "桶、洗脸盆和浴缸",
+    "suggested_zh": "桶、洗脸盆和洗衣盆",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT114885",
+    "path_names": [
+      "Sports and Fitness",
+      "Handball",
+      "Balls"
+    ],
+    "original_llm": "球类",
+    "suggested_zh": "手球",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT1334",
+    "path_names": [
+      "Sports and Fitness",
+      "Voleyball",
+      "Balls"
+    ],
+    "original_llm": "球类",
+    "suggested_zh": "排球",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT1345",
+    "path_names": [
+      "Sports and Fitness",
+      "Golf",
+      "Balls"
+    ],
+    "original_llm": "球类",
+    "suggested_zh": "高尔夫球",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT412728",
+    "path_names": [
+      "Computers",
+      "Printing",
+      "Spare Parts",
+      "For Toners",
+      "Toner Drums"
+    ],
+    "original_llm": "墨盒",
+    "suggested_zh": "感光鼓",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT3560",
+    "path_names": [
+      "Computers",
+      "Printing",
+      "Printing Supplies",
+      "Toner Cartridges"
+    ],
+    "original_llm": "墨盒",
+    "suggested_zh": "碳粉盒",
+    "source": "final-300"
+  },
+  {
+    "id": "CBT455066",
+    "path_names": [
+      "Appliances",
+      "Cooking",
+      "Spare Parts & Accessories",
+      "For Ranges & Ovens",
+      "Resistances"
+    ],
+    "original_llm": "电阻",
+    "suggested_zh": "加热管",
+    "source": "final-300"
+  }
+]
