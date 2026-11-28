@@ -40,7 +40,6 @@ type ReleaseCandidateReport struct {
 	Usage            int               `json:"usage_chars"`
 	AuditRows        []releaseAuditRow `json:"audit_rows"`
 }
-}
 
 // AssembleLLMCandidate is intentionally offline. It does not write active,
 // staging, progress, overrides or the quota counter, and cannot publish.
