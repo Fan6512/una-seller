@@ -4,7 +4,7 @@
 
 ## 后端核验
 
-负责人要求若已升级则跳过。本轮只读确认 ubuntu@152.136.41.105、VM-0-13-ubuntu，una-seller-api 用户 una-seller，PID 1650639、active、NRestarts=0。磁盘与运行进程 SHA-256 均为 `5d11e2d92faa5a2dfa38822f63adf9e6b443c3718a39a87710b08f8ab9f42284`。Go 构建信息 linux/amd64、vcs.revision 为固定提交、vcs.modified=false。公网健康200、匿名stores401。因此跳过后端部署；未重复切换、重启或执行迁移。
+负责人要求若已升级则跳过。本轮只读确认生产服务 active、NRestarts=0，PID 1650639。磁盘与运行进程 SHA-256 均为 `5d11e2d92faa5a2dfa38822f63adf9e6b443c3718a39a87710b08f8ab9f42284`。Go 构建信息 linux/amd64、vcs.revision 为固定提交、vcs.modified=false。公网健康200、匿名stores401。因此跳过后端部署；未重复切换、重启或执行迁移。
 
 既有加密备份服务于17:33:08完成，Result=success、ExecMainStatus=0；`app-20261127T093308375228157Z.dump.gpg`，328955字节，SHA-256 `83cb6621392475c5edd520aef9d0bc40efcedf1812f795ec9562c301ba62aca6`。既有脚本包含解密及pg_restore归档检查，本轮未另做隔离恢复。本轮未独立验证授权订单、商品、财务、翻译配置及通知消费；不以匿名401代替授权业务验收。
 
