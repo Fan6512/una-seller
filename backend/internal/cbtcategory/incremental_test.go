@@ -105,6 +105,16 @@ func TestIncrementalPlanProtectsManagedSnapshotAndDetectsDelta(t *testing.T) {
 		manifest.Rows[1].Origin != "pending" || !manifest.Rows[1].NeedsTranslation {
 		t.Fatalf("manual override priority or path delta incorrect: %+v", manifest.Rows)
 	}
+	if err := os.WriteFile(filepath.Join(dir, incrementalCandidatesFile), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planIncremental(context.Background(), dir, server.Client(), server.URL+"/sites/CBT/categories/all"); err == nil ||
+		!strings.Contains(err.Error(), "already in progress") {
+		t.Fatalf("a new plan overwrote an in-progress incremental run: %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, incrementalCandidatesFile)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(filepath.Join(dir, llmReleaseManagedFile)); err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +205,15 @@ func TestIncrementalBuildAssemblePublishAndRollback(t *testing.T) {
 	if _, err := update(context.Background(), dir, nil, "", nil, 0); err == nil ||
 		!strings.Contains(err.Error(), "ordinary CBT dictionary updater disabled") {
 		t.Fatalf("ordinary updater was not blocked after incremental release: %v", err)
+	}
+	if err := prepareIncrementalPlanRotation(dir, active, published.AfterSHA256); err != nil {
+		t.Fatalf("next incremental cycle could not archive completed evidence: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, incrementalManifestFile)); !os.IsNotExist(err) {
+		t.Fatal("completed incremental manifest was not archived for the next cycle")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "incremental-archive")); err != nil {
+		t.Fatal("completed incremental evidence archive was not created")
 	}
 	rolled, err := RollbackIncremental(dir, published.AfterSHA256, plan.ActiveSHA256, true)
 	if err != nil || !rolled.Applied {
