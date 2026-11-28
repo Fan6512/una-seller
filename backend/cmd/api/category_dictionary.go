@@ -72,6 +72,9 @@ func configuredTranslator() *httpapi.TranslationService {
 }
 
 func updateCBTCategories(args []string, dir string, translator *httpapi.TranslationService) error {
+	if len(args) > 0 && (args[0] == "publish" || args[0] == "rollback") {
+		return releaseCBTCategories(args, dir)
+	}
 	if len(args) > 0 && args[0] == "review" {
 		return reviewCBTCategories(args[1:], dir)
 	}
@@ -207,4 +210,44 @@ func reviewCBTCategories(args []string, dir string) error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(plan)
+}
+
+func releaseCBTCategories(args []string, dir string) error {
+	command := flag.NewFlagSet("cbt-categories "+args[0], flag.ContinueOnError)
+	apply := command.Bool("apply", false, "explicitly change active.json after all checks; default dry-run")
+	active := command.String("active-sha256", "", "expected current active snapshot SHA256")
+	if args[0] == "rollback" {
+		backup := command.String("backup-sha256", "", "content-addressed backup SHA256")
+		if err := command.Parse(args[1:]); err != nil {
+			return err
+		}
+		if command.NArg() != 0 {
+			return errors.New("invalid rollback arguments")
+		}
+		result, err := cbtcategory.RollbackLLMRelease(dir, *active, *backup, *apply)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
+	approval := command.String("approval", "", "operator-approved review JSON")
+	approvalHash := command.String("approval-sha256", "", "exact approved JSON SHA256")
+	audit := command.String("audit", "", "frozen original 300-row audit report")
+	baseline := command.String("baseline", "", "frozen candidate before new audit corrections")
+	exclude := command.String("exclude-ids", "", "frozen historical exclusions JSON")
+	corrections := command.String("corrections", "", "approved known-error correction list")
+	if err := command.Parse(args[1:]); err != nil {
+		return err
+	}
+	if command.NArg() != 0 {
+		return errors.New("invalid publish arguments")
+	}
+	result, err := cbtcategory.PublishLLMRelease(dir, cbtcategory.ReleasePublishInput{
+		Approval: *approval, ApprovalSHA256: *approvalHash, ActiveSHA256: *active,
+		Audit: *audit, Baseline: *baseline, Exclusions: *exclude, Corrections: *corrections,
+	}, *apply)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
 }

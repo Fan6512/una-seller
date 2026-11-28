@@ -58,63 +58,8 @@ func AssembleLLMCandidate(dir, seed string, sample int, exclusions map[string]bo
 		return out, err
 	}
 	defer lock.Close()
-	plan, s, completed, deferred, err := buildPlanLocked(dir, seed, LLMReviewHardLimit, false)
+	out, s, origins, err := releaseSnapshotLocked(dir, seed)
 	if err != nil {
-		return out, err
-	}
-	if plan.Pending || !plan.BudgetFits || plan.Selected != 0 {
-		return out, errors.New("LLM build not complete, unresolved pending or quota invalid")
-	}
-	_, _, manual, err := reviewSnapshot(dir)
-	if err != nil {
-		return out, err
-	}
-	out.Version, out.Seed, out.Usage = s.Version, seed, plan.Usage
-	// Work only on local values. Keep official category identities, status,
-	// listing permissions and retired history unchanged.
-	s.Skipped = nil
-	origins := make(map[string]string)
-	for id, item := range s.Categories {
-		if item.Status != "enabled" {
-			out.Disabled++
-			continue
-		}
-		out.Enabled++
-		switch {
-		case manual[pathKey(item.Path)] != "":
-			item.Zh = manual[pathKey(item.Path)]
-			out.Manual++
-			origins[id] = "manual"
-		case reviewGlossaryProtected(item):
-			out.Glossary++
-			origins[id] = "glossary"
-		case completed[id].ID != "":
-			item.Zh = completed[id].Candidate
-			out.LLM++
-			origins[id] = "llm"
-		case deferred.Rows[id] != "":
-			item.Zh = ""
-			out.Deferred++
-			origins[id] = "deferred_english"
-		case !safeReviewSource(reviewSource(item.Path, true)):
-			item.Zh = ""
-			out.Unsafe++
-			origins[id] = "unsafe_english"
-		default:
-			return out, fmt.Errorf("unaccounted enabled category %s", id)
-		}
-		s.Categories[id] = item
-	}
-	if out.Enabled != out.Manual+out.Glossary+out.LLM+out.Deferred+out.Unsafe {
-		return out, errors.New("release candidate coverage mismatch")
-	}
-	// Compare official identities to the underlying local snapshot, including
-	// disabled nodes and the complete parent graph. Only enabled Zh may change.
-	official, err := loadSnapshot(filepath.Join(dir, plan.Snapshot))
-	if err != nil {
-		return out, err
-	}
-	if err := validateReleaseIdentity(official, s); err != nil {
 		return out, err
 	}
 	// Round-robin root strata, deterministic hash order, no prior reviewed
@@ -151,18 +96,7 @@ func AssembleLLMCandidate(dir, seed string, sample int, exclusions map[string]bo
 		return out, errors.New("insufficient independent audit rows")
 	}
 	out.AuditEligible = eligible
-	ids := make([]string, 0, len(exclusions))
-	for id := range exclusions {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	var exclusionBytes strings.Builder
-	for _, id := range ids {
-		exclusionBytes.WriteString(id)
-		exclusionBytes.WriteByte('\n')
-	}
-	exclusionHash := sha256.Sum256([]byte(exclusionBytes.String()))
-	out.ExclusionsSHA256 = fmt.Sprintf("%x", exclusionHash)
+	out.ExclusionsSHA256 = releaseExclusionsHash(exclusions)
 	slices.Sort(roots)
 	for offset := 0; len(out.AuditRows) < sample; offset++ {
 		for _, root := range roots {
@@ -186,6 +120,87 @@ func AssembleLLMCandidate(dir, seed string, sample int, exclusions map[string]bo
 		return out, err
 	}
 	return out, nil
+}
+
+func releaseExclusionsHash(exclusions map[string]bool) string {
+	ids := make([]string, 0, len(exclusions))
+	for id := range exclusions {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var exclusionBytes strings.Builder
+	for _, id := range ids {
+		exclusionBytes.WriteString(id)
+		exclusionBytes.WriteByte('\n')
+	}
+	exclusionHash := sha256.Sum256([]byte(exclusionBytes.String()))
+	return fmt.Sprintf("%x", exclusionHash)
+}
+
+// releaseSnapshotLocked derives the final bytes from the current build inputs.
+// The caller must hold both the LLM run lock and update.lock.
+func releaseSnapshotLocked(dir, seed string) (ReleaseCandidateReport, snapshot, map[string]string, error) {
+	var out ReleaseCandidateReport
+	plan, s, completed, deferred, err := buildPlanLocked(dir, seed, LLMReviewHardLimit, false)
+	if err != nil {
+		return out, s, nil, err
+	}
+	if plan.Pending || !plan.BudgetFits || plan.Selected != 0 {
+		return out, s, nil, errors.New("LLM build not complete, unresolved pending or quota invalid")
+	}
+	_, _, manual, err := reviewSnapshot(dir)
+	if err != nil {
+		return out, s, nil, err
+	}
+	out.Version, out.Seed, out.Usage = s.Version, seed, plan.Usage
+	// Work only on local values. Keep official category identities, status,
+	// listing permissions and retired history unchanged.
+	s.Skipped = nil
+	origins := make(map[string]string)
+	for id, item := range s.Categories {
+		if item.Status != "enabled" {
+			out.Disabled++
+			continue
+		}
+		out.Enabled++
+		switch {
+		case manual[pathKey(item.Path)] != "":
+			item.Zh = manual[pathKey(item.Path)]
+			out.Manual++
+			origins[id] = "manual"
+		case reviewGlossaryProtected(item):
+			out.Glossary++
+			origins[id] = "glossary"
+		case completed[id].ID != "":
+			item.Zh = completed[id].Candidate
+			out.LLM++
+			origins[id] = "llm"
+		case deferred.Rows[id] != "":
+			item.Zh = ""
+			out.Deferred++
+			origins[id] = "deferred_english"
+		case !safeReviewSource(reviewSource(item.Path, true)):
+			item.Zh = ""
+			out.Unsafe++
+			origins[id] = "unsafe_english"
+		default:
+			return out, s, nil, fmt.Errorf("unaccounted enabled category %s", id)
+		}
+		s.Categories[id] = item
+	}
+	if out.Enabled != out.Manual+out.Glossary+out.LLM+out.Deferred+out.Unsafe {
+		return out, s, nil, errors.New("release candidate coverage mismatch")
+	}
+	// Compare official identities to the underlying local snapshot, including
+	// disabled nodes and the complete parent graph. Only enabled Zh may change.
+	official, err := loadSnapshot(filepath.Join(dir, plan.Snapshot))
+	if err != nil {
+		return out, s, nil, err
+	}
+	if err := validateReleaseIdentity(official, s); err != nil {
+		return out, s, nil, err
+	}
+	return out, s, origins, nil
 }
 
 func validateReleaseIdentity(official, candidate snapshot) error {
