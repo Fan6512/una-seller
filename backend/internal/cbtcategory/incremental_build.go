@@ -42,6 +42,7 @@ type incrementalPending struct {
 	ManifestSHA256  string    `json:"manifest_sha256"`
 	ID              string    `json:"id"`
 	SourceSHA256Row string    `json:"row_source_sha256"`
+	ResultSHA256    string    `json:"result_sha256"`
 	SourceChars     int       `json:"source_chars"`
 	UsageBefore     int       `json:"usage_before_chars"`
 	StartedAt       time.Time `json:"started_at"`
@@ -107,7 +108,7 @@ func readIncrementalReceipts(dir string) ([]incrementalReceipt, error) {
 		if json.Unmarshal(scanner.Bytes(), &receipt) != nil ||
 			!idPattern.MatchString(receipt.ID) || !validReleaseHash(receipt.ActiveSHA256) ||
 			!validReleaseHash(receipt.SourceSHA256) || !validReleaseHash(receipt.ManifestSHA256) ||
-			!validReleaseHash(receipt.SourceSHA256Row) || receipt.SourceChars <= 0 ||
+			!validReleaseHash(receipt.SourceSHA256Row) || !validReleaseHash(receipt.ResultSHA256) || receipt.SourceChars <= 0 ||
 			receipt.ReservedChars <= 0 || receipt.UsageBefore < 0 ||
 			(receipt.Outcome != "stored" && receipt.Outcome != "deferred_english") ||
 			receipt.CompletedAt.IsZero() {
@@ -460,6 +461,7 @@ func runIncrementalBuild(ctx context.Context, dir string, maxRows, budget int, p
 				return out, err
 			}
 			receipt.Outcome = "stored"
+			receipt.ResultSHA256 = sourceHash(label)
 			out.Completed++
 		case validName(label) && !strings.ContainsAny(label, "\r\n|｜"):
 			deferred.Rows[row.ID] = row.SourceSHA256
@@ -467,6 +469,7 @@ func runIncrementalBuild(ctx context.Context, dir string, maxRows, budget int, p
 				return out, err
 			}
 			receipt.Outcome = "deferred_english"
+			receipt.ResultSHA256 = sourceHash(row.Original)
 			out.Deferred++
 		default:
 			return out, fmt.Errorf("incremental LLM row %s returned an invalid label; pending marker retained", row.ID)
