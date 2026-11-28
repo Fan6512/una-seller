@@ -256,8 +256,6 @@ func releaseCBTCategories(args []string, dir string) error {
 }
 
 
-const incrementalApprovalFile = "llm-incremental-approval.json"
-
 func incrementalCBTCategories(args []string, dir string) error {
 	if len(args) == 0 {
 		return errors.New("usage: api cbt-categories incremental {plan|build|assemble|publish|rollback}")
@@ -306,7 +304,7 @@ func incrementalCBTCategories(args []string, dir string) error {
 		command := flag.NewFlagSet("cbt-categories incremental publish", flag.ContinueOnError)
 		apply := command.Bool("apply", false, "explicitly replace active.json; default is a read-only dry-run")
 		active := command.String("active-sha256", "", "expected active snapshot SHA256")
-		approval := command.String("approval", cbtcategory.IncrementalApprovalFile, "operator-approved incremental approval JSON")
+		approval := command.String("approval", "llm-incremental-approval.json", "operator-approved incremental approval JSON")
 		approvalHash := command.String("approval-sha256", "", "exact approved JSON SHA256")
 		if err := command.Parse(args[1:]); err != nil {
 			return err
